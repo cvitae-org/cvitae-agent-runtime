@@ -38,7 +38,32 @@ const HOST = process.env.HOST ?? '127.0.0.1';
  * Callers with a tighter budget — cvitae's route sits under Vercel's 60s — send
  * their own `timeoutMs` and get the shorter one.
  */
-const DEFAULT_TIMEOUT_MS = Number(process.env.RUN_TIMEOUT_MS ?? 300_000);
+/**
+ * Reads the budget from the environment, refusing values that would disable it.
+ *
+ * `Number('')` is 0 and `Number('5min')` is NaN, and `setTimeout` treats both as
+ * "fire now" — so a blank or mistyped `RUN_TIMEOUT_MS` would abort every run
+ * before it started, answering 504 with a message advising the reader to raise
+ * the very variable they had just set. A bad value falls back to the default and
+ * says so, because the alternative is a service that looks broken in a way that
+ * points away from the cause.
+ */
+const timeoutFromEnv = (raw: string | undefined, fallback: number): number => {
+  if (raw === undefined) return fallback;
+
+  const parsed = Number(raw);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.warn(
+      `RUN_TIMEOUT_MS is "${raw}", which is not a positive number of milliseconds. Using ${fallback}.`
+    );
+    return fallback;
+  }
+
+  return parsed;
+};
+
+const DEFAULT_TIMEOUT_MS = timeoutFromEnv(process.env.RUN_TIMEOUT_MS, 300_000);
 const MAX_TIMEOUT_MS = 600_000;
 
 const server = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' } });
