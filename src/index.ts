@@ -243,6 +243,18 @@ export type { CvDocument, ExperienceEntry } from './store/cvDocument.js';
 export { mergeDocument } from './store/merge.js';
 export type { MergeReport } from './store/merge.js';
 export { readSources, SourceError } from './sources/index.js';
+export {
+  fetchOffer,
+  scrapeOffer,
+  resolveOffer,
+  applyBoardFacts,
+  isScraperEnabled
+} from './offers/index.js';
+export type {
+  BoardOffer,
+  ResolvedOffer,
+  StatedFacts
+} from './offers/index.js';
 export type { SourceInput, SourceRecord, ReadOutcome } from './sources/index.js';
 export type { ExtractCvInput, ExtractCvResult } from './capabilities/extractCv.js';
 export { runtimeHome, documentPath, lancePath } from './store/paths.js';

@@ -29,17 +29,7 @@ const PORT = Number(process.env.PORT ?? 8788);
 const HOST = process.env.HOST ?? '127.0.0.1';
 
 /**
- * How long a run may take before it is abandoned.
- *
- * Five minutes is deliberately generous, because the ceiling exists to catch a
- * hang rather than to enforce a latency budget: one offer was measured at 143s
- * on gemma4:12b against a local GPU that runs the five steps one at a time, and
- * a default that killed a working configuration would be worse than no default.
- * Callers with a tighter budget — cvitae's route sits under Vercel's 60s — send
- * their own `timeoutMs` and get the shorter one.
- */
-/**
- * Reads the budget from the environment, refusing values that would disable it.
+ * Reads the run budget from the environment, refusing values that would disable it.
  *
  * `Number('')` is 0 and `Number('5min')` is NaN, and `setTimeout` treats both as
  * "fire now" — so a blank or mistyped `RUN_TIMEOUT_MS` would abort every run
@@ -63,6 +53,16 @@ const timeoutFromEnv = (raw: string | undefined, fallback: number): number => {
   return parsed;
 };
 
+/**
+ * How long a run may take before it is abandoned.
+ *
+ * Five minutes is deliberately generous, because the ceiling exists to catch a
+ * hang rather than to enforce a latency budget: one offer was measured at 143s
+ * on gemma4:12b against a local GPU that runs the five steps one at a time, and
+ * a default that killed a working configuration would be worse than no default.
+ * Callers with a tighter budget — cvitae's route sits under Vercel's 60s — send
+ * their own `timeoutMs` and get the shorter one.
+ */
 const DEFAULT_TIMEOUT_MS = timeoutFromEnv(process.env.RUN_TIMEOUT_MS, 300_000);
 const MAX_TIMEOUT_MS = 600_000;
 
@@ -437,6 +437,11 @@ const replyForError = (
     const status =
       error.code === 'invalid_input' || error.code === 'unknown_capability'
         ? 400
+        : // Not a failure of this service: the board refused, or published
+          // nothing a server can read. 422 rather than 502 because the request
+          // was well formed and the remedy is the caller's — supply the text.
+          error.code === 'unreadable_source'
+          ? 422
         : // An `aborted` reaching here was not cancelled by this request — the
           // caller passed its own signal, or one fired between the run ending
           // and `settle`. Reported as a timeout rather than a bad gateway,

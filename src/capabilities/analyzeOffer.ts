@@ -22,8 +22,11 @@
  */
 
 import { z } from 'zod';
-import type { Capability, Plan } from '../core/types.js';
+import type { Capability, Plan, TransformStep } from '../core/types.js';
+import { RuntimeError } from '../core/types.js';
 import { EXTRACTION_RULES, renderOffer } from '../prompt/builder.js';
+import { resolveOffer } from '../offers/resolve.js';
+import { applyBoardFacts, type StatedFacts } from '../offers/boardFacts.js';
 
 export const workModes = ['remote', 'hybrid', 'onsite', 'unknown'] as const;
 
@@ -89,12 +92,39 @@ const dutiesSchema = z.object({
     .describe('Every skill, technology or qualification the offer requires.')
 });
 
-export const inputSchema = z.object({
-  offerText: z.string().min(1, 'The offer text is required.'),
-  locale: z.string().default('en')
-});
+/**
+ * Either the text or a URL to read it from.
+ *
+ * Text wins when both are given, because the caller having it means the fetch
+ * already failed or was never wanted — cvitae passes the stored scrape of an
+ * imported row this way, along with the board's own figures so that re-analysing
+ * cannot lose them.
+ */
+export const inputSchema = z
+  .object({
+    offerText: z.string().optional(),
+    url: z.string().optional(),
+    locale: z.string().default('en'),
+    /**
+     * What the board published as data, replayed by a caller holding a stored
+     * row. A live fetch produces the same thing itself, so this is only for text
+     * that arrives without one.
+     */
+    boardFacts: z.custom<StatedFacts>().optional()
+  })
+  .refine(
+    (input) => Boolean(input.offerText?.trim()) || Boolean(input.url?.trim()),
+    { message: 'Provide either offerText or url.' }
+  );
 
 export type AnalyzeOfferInput = z.infer<typeof inputSchema>;
+
+/** How the text was obtained, so a caller can say so without guessing. */
+export type OfferSource = {
+  source_url: string;
+  source_mode: 'url' | 'manual';
+  via: 'scraper' | 'builtin' | 'provided';
+};
 
 export const analyzeOffer: Capability<AnalyzeOfferInput> = {
   name: 'analyze_offer',
@@ -102,8 +132,71 @@ export const analyzeOffer: Capability<AnalyzeOfferInput> = {
     'Read a job offer and extract a structured record: company, role, pay, logistics and duties.',
   input: inputSchema,
 
-  plan: (input): Plan => {
-    const prompt = renderOffer(input.offerText);
+  plan: async (input, context): Promise<Plan> => {
+    // Read while planning, not as a step, because every extraction step needs
+    // the text in its prompt — the same reason `extract_cv` reads its sources
+    // here. A fetch that fails therefore fails the run before any model call is
+    // paid for, which is the right order: there is nothing to analyse.
+    const provided = input.offerText?.trim() ?? '';
+    const url = input.url?.trim() ?? '';
+
+    let text = provided;
+    let stated: StatedFacts | undefined = input.boardFacts;
+    const origin: OfferSource = {
+      source_url: url,
+      source_mode: provided ? 'manual' : 'url',
+      via: 'provided'
+    };
+
+    if (!text && url) {
+      const outcome = await resolveOffer(url, context.signal);
+
+      if (outcome.status !== 'ok') {
+        // Carries the reader's own reason — bot-blocked, robots-disallowed, a
+        // board the scraper will not crawl — because those already end with what
+        // the user can do about it, and "the offer could not be read" does not.
+        throw new RuntimeError(outcome.detail, 'unreadable_source');
+      }
+
+      text = outcome.text;
+      stated = outcome.board ?? stated;
+      origin.source_url = outcome.finalUrl;
+      origin.via = outcome.via;
+    }
+
+    const prompt = renderOffer(text);
+
+    /**
+     * Lays the board's own figures over the model's reading.
+     *
+     * A `transform`, so it runs after the extraction steps and its values merge
+     * last — which is what makes it an override rather than a suggestion. After
+     * rather than before, because a degraded step fills its fields with "Not
+     * stated" and those are exactly the gaps worth covering.
+     */
+    const overlay: TransformStep = {
+      kind: 'transform',
+      name: 'board_facts',
+      critical: false,
+      run: async (runContext) => {
+        const merged: Record<string, unknown> = {};
+        for (const value of Object.values(runContext.completed)) {
+          Object.assign(merged, value);
+        }
+
+        const { analysis, applied } = stated
+          ? applyBoardFacts(merged, stated)
+          : { analysis: {}, applied: [] as string[] };
+
+        // Only the overridden keys: everything else is already in the merge, and
+        // returning the whole record would restate it for no reason.
+        const overrides = Object.fromEntries(
+          applied.map((key) => [key, analysis[key]])
+        );
+
+        return { ...overrides, ...origin, board_facts_applied: applied };
+      }
+    };
 
     return {
       capability: 'analyze_offer',
@@ -186,7 +279,8 @@ export const analyzeOffer: Capability<AnalyzeOfferInput> = {
           maxOutputTokens: 2_500,
           critical: false,
           fallback: { responsibilities: [], required_skills: [] }
-        }
+        },
+        overlay
       ]
     };
   }

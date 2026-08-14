@@ -150,6 +150,15 @@ export class RuntimeError extends Error {
       | 'unknown_capability'
       | 'invalid_input'
       | 'step_failed'
+      /**
+       * The source could not be read at all: a board that blocked us, one that
+       * renders client-side, one robots.txt forbids. Distinct from
+       * `step_failed` because nothing failed — there was simply nothing to
+       * analyse, and the only way forward is for a person to supply the text.
+       * cvitae turns this into its "paste it manually" prompt, so collapsing it
+       * into a generic failure would cost the user the one action that works.
+       */
+      | 'unreadable_source'
       | 'aborted'
   ) {
     super(message);
