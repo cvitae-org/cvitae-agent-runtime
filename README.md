@@ -225,6 +225,7 @@ anything but this machine.
 | GET    | `/health`    | capabilities and tools currently registered    |
 | GET    | `/state`     | what is indexed — check this when search is empty |
 | POST   | `/run/:name` | run a capability; body is the envelope below   |
+| POST   | `/run-batch/:name` | run it over many inputs; streams SSE      |
 | POST   | `/document`  | replace the CV document and reindex            |
 | POST   | `/reindex`   | rebuild the chunk index from `cv.json`         |
 
@@ -255,6 +256,52 @@ calls against a 50-request daily quota should not keep spending it on a page tha
 has closed. Neither is reported as a step failure: an abort rejects every
 in-flight call at once, and degrading them one by one would hand back a record
 full of `"Not stated"` as though the model had read the offer and found nothing.
+
+### Batches
+
+```jsonc
+{
+  "inputs":      [ { "offerText": "…" }, { "offerText": "…" } ],
+  "model":       { "providerId": "local" },  // optional
+  "timeoutMs":   120000,                      // optional, bounds ONE input
+  "concurrency": 2                            // optional
+}
+```
+
+```
+event: result
+data: {"index":1,"status":"ok","data":{…},"degraded":[],"elapsedMs":28004}
+
+event: result
+data: {"index":0,"status":"failed","reason":"timeout","error":"…"}
+
+event: done
+data: {"completed":1,"failed":1,"elapsedMs":33005,"aborted":false}
+```
+
+A batch is M plans, not one plan of M×5 steps — flattening them would break the
+aggregator, which shallow-merges outcomes into a single object and would have
+offer two's `company` overwrite offer one's.
+
+**Results stream because that is what makes a batch safe to interrupt.** Twenty
+offers against a local model is several minutes; one JSON response means a
+dropped connection loses all of it. Streaming means the caller has already
+written the finished ones to storage, and only the rest need running again.
+There is no job store and no resuming, because there is nothing to resume — the
+work that survived is on the caller's disk and the work that did not is simply
+still to do. Measured: a three-offer batch cut off after the first delivered
+that first offer intact and logged `Batch cancelled after 1 of 3` at the instant
+of the disconnect, rather than grinding on for the remaining two.
+
+Emission is in completion order, not input order, which is why every item
+carries its `index`. One input failing never stops the others: nineteen analysed
+offers and one error is a good outcome.
+
+`timeoutMs` bounds one input rather than the batch, and its clock starts when
+that input starts — at a concurrency of one the twentieth input begins several
+minutes in, and a timer started at the top would fail the tail of every long
+batch for taking too long over work it had not begun. A batch has no overall
+deadline: it runs until it is done or the caller leaves.
 
 ## Status
 

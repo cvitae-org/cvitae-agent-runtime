@@ -20,6 +20,12 @@ import { defaultCapabilities } from './capabilities/index.js';
 import { route, validateInput, routeWithModel, type CapabilityMap } from './core/router.js';
 import { plan as buildPlan } from './core/planner.js';
 import { executePlan } from './core/orchestrator.js';
+import {
+  executeBatch,
+  resolveBatchConcurrency,
+  type BatchItem,
+  type BatchSummary
+} from './core/batch.js';
 import { mergeOutcomes } from './core/aggregator.js';
 import { resolveModel, resolveEmbeddingModel, type ModelOverride } from './providers/resolve.js';
 import type { RunContext, RunResult } from './core/types.js';
@@ -36,6 +42,13 @@ export type RuntimeOptions = {
 export type RunOptions = {
   model?: ModelOverride;
   signal?: AbortSignal;
+};
+
+export type BatchOptions = RunOptions & {
+  /** How many inputs run at once. Defaults by provider — see `resolveBatchConcurrency`. */
+  concurrency?: number;
+  /** Bounds one input, not the batch. A batch has no honest total. */
+  timeoutMs?: number;
 };
 
 export class Runtime {
@@ -134,6 +147,59 @@ export class Runtime {
   }
 
   /**
+   * Runs one capability over many inputs, emitting each result as it finishes.
+   *
+   * Separate from `run` rather than a variant of it, because the two differ in
+   * what a failure means. `run` throws; this one reports per input and carries
+   * on, since nineteen analysed offers and one error is a good outcome and
+   * discarding the nineteen for the sake of the one is not.
+   *
+   * Nothing is buffered. The caller is expected to persist each item as it
+   * arrives, which is what lets an interrupted batch keep everything it had
+   * already finished — and is why there is no job store here.
+   */
+  async runBatch<T = Record<string, unknown>>(
+    capabilityName: string,
+    inputs: unknown[],
+    options: BatchOptions = {},
+    onItem: (item: BatchItem<T>) => void | Promise<void>
+  ): Promise<BatchSummary> {
+    // Checked once, up front. A wrong capability name is a programming error,
+    // and discovering it twenty times over is neither faster nor clearer.
+    route(this.capabilities, capabilityName);
+
+    // Resolved once to learn the provider, because how many inputs may run at
+    // once depends on it and has to be known before the first one starts. The
+    // per-input resolution below hits the same cache entry and costs nothing.
+    const { providerId } = await resolveModel({
+      ...this.options.model,
+      ...options.model
+    });
+
+    return executeBatch<T>({
+      inputs,
+      concurrency: resolveBatchConcurrency(providerId, options.concurrency),
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+      onItem,
+      run: async (input, _index, itemSignal) => {
+        // The composed signal, not the caller's: it carries this input's own
+        // deadline as well as the batch-wide cancellation.
+        const result = await this.run(capabilityName, input, {
+          model: options.model,
+          signal: itemSignal
+        });
+
+        return {
+          data: result.data as T,
+          degraded: result.degraded,
+          elapsedMs: result.elapsedMs
+        };
+      }
+    });
+  }
+
+  /**
    * Runs whatever capability a free-text request seems to want.
    *
    * Costs an extra model round trip, so it is separate from `run` rather than a
@@ -167,6 +233,7 @@ export type {
   RunResult,
   StepOutcome
 } from './core/types.js';
+export type { BatchItem, BatchSummary } from './core/batch.js';
 export { defineTool, ToolRegistry } from './tools/registry.js';
 export type { ToolDefinition } from './tools/registry.js';
 export { Store } from './store/store.js';
