@@ -200,6 +200,7 @@ something to measure against.
 | `EMBEDDING_MODEL`                               | `nomic-embed-text`            | 768d, 274MB                              |
 | `LOCAL_BASE_URL`                                | `http://localhost:11434/v1`   | must be loopback                         |
 | `CVITAE_HOME`                                   | `~/.cvitae`                   |                                          |
+| `SCRAPER_URL`                                   | `http://127.0.0.1:8787`       | cvitae-scrapper; empty disables it        |
 | `PORT` / `HOST`                                 | `8788` / `127.0.0.1`          | keep on loopback                         |
 | `RUN_TIMEOUT_MS`                                | `300000`                      | ceiling for one run; a request may send its own `timeoutMs` |
 | `ENV_FILE`                                      | `.env`                        | read by the entry points only, never by the library |
