@@ -12,6 +12,8 @@
  * the runtime's own logic, not the provider's.
  */
 
+import '../src/env.js';
+
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

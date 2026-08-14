@@ -73,6 +73,17 @@ export const executePlan = async (
       return;
     }
 
+    // An abort is not a step failing, and must not be reported as one. Every
+    // in-flight call rejects at once when the signal fires, so degrading them
+    // individually would hand back a record filled with fallbacks — "salary:
+    // Not stated", "company: Unknown" — as though the model had read the offer
+    // and found nothing. It never read it. The run did not finish, and only the
+    // `aborted` code says so; `step_failed` would send the caller looking for a
+    // bug in a step that was working.
+    if (context.signal?.aborted) {
+      throw new RuntimeError(`Aborted during step "${step.name}".`, 'aborted');
+    }
+
     if (step.critical) {
       throw new RuntimeError(
         `The "${step.name}" step failed: ${describe(result.reason)}`,

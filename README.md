@@ -201,6 +201,8 @@ something to measure against.
 | `LOCAL_BASE_URL`                                | `http://localhost:11434/v1`   | must be loopback                         |
 | `CVITAE_HOME`                                   | `~/.cvitae`                   |                                          |
 | `PORT` / `HOST`                                 | `8788` / `127.0.0.1`          | keep on loopback                         |
+| `RUN_TIMEOUT_MS`                                | `300000`                      | ceiling for one run; a request may send its own `timeoutMs` |
+| `ENV_FILE`                                      | `.env`                        | read by the entry points only, never by the library |
 
 Retrieval needs an embedding model, and neither installed Ollama model can
 embed:
@@ -222,9 +224,37 @@ anything but this machine.
 | ------ | ------------ | --------------------------------------------- |
 | GET    | `/health`    | capabilities and tools currently registered    |
 | GET    | `/state`     | what is indexed — check this when search is empty |
-| POST   | `/run/:name` | run a capability; body is its input            |
+| POST   | `/run/:name` | run a capability; body is the envelope below   |
 | POST   | `/document`  | replace the CV document and reindex            |
 | POST   | `/reindex`   | rebuild the chunk index from `cv.json`         |
+
+### The run envelope
+
+```jsonc
+{
+  "input":     { "offerText": "…" },   // the capability's own fields
+  "model":     { "providerId": "local", "modelId": "gemma3:4b" },  // optional
+  "timeoutMs": 55000                    // optional; default RUN_TIMEOUT_MS
+}
+```
+
+`input` is nested rather than being the body itself, because zod strips unknown
+keys: a flat body carrying a stray `model` beside the capability's fields would
+validate cleanly with the override silently discarded, and "my model setting did
+nothing" is close to undebuggable from outside. A body with no `input` is
+rejected with a message saying so.
+
+`model` never carries a credential. Those stay in this process's environment,
+which is most of the point of moving them out of cvitae — the provider name is
+checked against the enum and `baseURL` goes through the loopback guard.
+
+Two things cancel a run, and they answer differently. Exceeding the budget
+returns **504** with `reason: "timeout"`. A caller that hangs up gets **499** and
+no body — the run is aborted rather than left to finish, because five parallel
+calls against a 50-request daily quota should not keep spending it on a page that
+has closed. Neither is reported as a step failure: an abort rejects every
+in-flight call at once, and degrading them one by one would hand back a record
+full of `"Not stated"` as though the model had read the offer and found nothing.
 
 ## Status
 
@@ -237,7 +267,10 @@ Not built: the offers extractor. Its seam is `store.saveOffers`, and the shape t
 copy is `extract_cv` — read sources into text, one narrow step per artefact, merge
 rather than write.
 
-Not wired into cvitae. `src/libs/jobs/analyzeOffer.ts` there is still what runs.
+The HTTP surface now carries everything cvitae sends: a per-request provider and
+model, and a time budget. Until this, `/run/:name` dropped both on the floor —
+`RunOptions` existed in the library and no route passed it — so delegating
+research would have quietly ignored whichever model the user picked in Settings.
 
 Nothing here is wired into cvitae yet. `src/libs/jobs/analyzeOffer.ts` there is
 still the code that runs in production.

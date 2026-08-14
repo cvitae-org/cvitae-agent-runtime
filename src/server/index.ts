@@ -13,8 +13,13 @@
  * `HOST` should not be changed without putting something in front of it.
  */
 
+// First, and before anything below reads `process.env`. ESM evaluates imports
+// ahead of the importing module's body, so the constants underneath see it.
+import '../env.js';
+
 import Fastify from 'fastify';
 import type { FastifyReply } from 'fastify';
+import { z } from 'zod';
 import { createRuntime } from '../index.js';
 import { RuntimeError } from '../core/types.js';
 import { AiConfigError } from '../providers/resolve.js';
@@ -22,6 +27,19 @@ import { runtimeHome } from '../store/paths.js';
 
 const PORT = Number(process.env.PORT ?? 8788);
 const HOST = process.env.HOST ?? '127.0.0.1';
+
+/**
+ * How long a run may take before it is abandoned.
+ *
+ * Five minutes is deliberately generous, because the ceiling exists to catch a
+ * hang rather than to enforce a latency budget: one offer was measured at 143s
+ * on gemma4:12b against a local GPU that runs the five steps one at a time, and
+ * a default that killed a working configuration would be worse than no default.
+ * Callers with a tighter budget — cvitae's route sits under Vercel's 60s — send
+ * their own `timeoutMs` and get the shorter one.
+ */
+const DEFAULT_TIMEOUT_MS = Number(process.env.RUN_TIMEOUT_MS ?? 300_000);
+const MAX_TIMEOUT_MS = 600_000;
 
 const server = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' } });
 const runtime = createRuntime();
@@ -53,14 +71,127 @@ server.get('/state', async () => {
   };
 });
 
+/**
+ * The run envelope.
+ *
+ * `input` is nested rather than being the body itself. That is a change from
+ * the shape this route started with, and the reason is that zod strips unknown
+ * keys: a flat body carrying a stray `model` alongside the capability's own
+ * fields would validate cleanly with the override silently dropped, and "my
+ * model setting did nothing" is close to undebuggable from the outside. Nesting
+ * makes the two unambiguous, and a body with no `input` is rejected outright
+ * rather than quietly treated as an empty one.
+ */
+const runRequestSchema = z.object({
+  input: z.unknown(),
+  /**
+   * Which provider and model to use for this call. Never a credential: those
+   * stay in this process's environment, which is most of the point of moving
+   * them out of cvitae. `resolveModel` checks the provider name against the
+   * enum and puts `baseURL` through the loopback guard, so this only has to
+   * establish that they are strings.
+   */
+  model: z
+    .object({
+      providerId: z.string().optional(),
+      modelId: z.string().optional(),
+      baseURL: z.string().optional()
+    })
+    .optional(),
+  timeoutMs: z.number().int().positive().max(MAX_TIMEOUT_MS).optional()
+});
+
+/** Why a run was cancelled, which decides what the caller is owed. */
+type Cancelled = 'timeout' | 'disconnect';
+
+/**
+ * The run's abort signal, and a record of what fired it.
+ *
+ * The two cancellations are worth telling apart. A timeout means the work is
+ * still wanted and took too long, so someone is listening for the answer. A
+ * disconnect means nobody is — and the reason to abort rather than let the run
+ * finish is that five parallel calls against a 50-request daily quota should
+ * not keep spending it on a page that has closed.
+ *
+ * `close` on the response is the signal that distinguishes them from the
+ * server's side. The obvious alternative, listening on the *request* stream,
+ * does not work: Node emits `close` there as soon as the body has been read,
+ * which for a small JSON POST is long before the run finishes, and would cancel
+ * every call immediately.
+ */
+const cancellation = (reply: FastifyReply, timeoutMs: number) => {
+  const controller = new AbortController();
+  let cancelled: Cancelled | null = null;
+
+  const timer = setTimeout(() => {
+    cancelled = 'timeout';
+    controller.abort();
+  }, timeoutMs);
+
+  const onClose = () => {
+    // `close` also fires on an ordinary completed response; the write state is
+    // what separates "the caller left" from "we answered".
+    if (reply.raw.writableEnded) return;
+    cancelled = 'disconnect';
+    controller.abort();
+  };
+
+  reply.raw.on('close', onClose);
+
+  return {
+    signal: controller.signal,
+    reason: (): Cancelled | null => cancelled,
+    /** Always call this: a live timer would hold the process open for minutes. */
+    settle: () => {
+      clearTimeout(timer);
+      reply.raw.off('close', onClose);
+    }
+  };
+};
+
 server.post<{ Params: { name: string }; Body: unknown }>(
   '/run/:name',
   async (request, reply) => {
+    const body = request.body ?? {};
+
+    // Checked by hand rather than by the schema, because zod treats an absent
+    // `unknown` as a present undefined — a flat body would parse here and fail
+    // one layer down against the capability's own schema, reporting a missing
+    // `offerText` when the real mistake was sending the fields unwrapped. That
+    // error names the wrong thing, and this is the one shape mistake a new
+    // caller actually makes.
+    if (typeof body !== 'object' || body === null || !('input' in body)) {
+      return reply.status(400).send({
+        error:
+          'The body must be an envelope: {"input": { … }}, optionally with "model" and "timeoutMs". The capability\'s own fields go inside "input".',
+        reason: 'invalid_input'
+      });
+    }
+
+    const parsed = runRequestSchema.safeParse(body);
+
+    if (!parsed.success) {
+      const detail = parsed.error.issues
+        .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+        .join('; ');
+
+      return reply
+        .status(400)
+        .send({ error: `Invalid request body. ${detail}`, reason: 'invalid_input' });
+    }
+
+    const { input, model, timeoutMs } = parsed.data;
+    const run = cancellation(reply, timeoutMs ?? DEFAULT_TIMEOUT_MS);
+
     try {
-      const result = await runtime.run(request.params.name, request.body ?? {});
-      return result;
+      return await runtime.run(request.params.name, input, {
+        model,
+        signal: run.signal
+      });
     } catch (error) {
-      return replyForError(reply, error);
+      return replyForError(reply, error, run.reason());
+    } finally {
+      run.settle();
     }
   }
 );
@@ -101,12 +232,42 @@ server.post('/reindex', async (_request, reply) => {
  * the second into a settings prompt, and collapsing both into 500 makes a
  * missing API key look like a bug in the request.
  */
-const replyForError = (reply: FastifyReply, error: unknown) => {
+const replyForError = (
+  reply: FastifyReply,
+  error: unknown,
+  cancelled: Cancelled | null = null
+) => {
+  // Checked before the error itself, because a cancelled run throws from
+  // wherever it happened to be — usually a step reporting that its model call
+  // was aborted. That message describes the symptom; the cancellation is the
+  // cause, and it is the only one of the two the caller can act on.
+  if (cancelled === 'disconnect') {
+    // Nobody is listening, so there is nothing to say and no body to send. At
+    // info rather than warn: a closed tab is an ordinary event.
+    server.log.info('The caller disconnected; the run was aborted.');
+    return reply.status(499).send();
+  }
+
+  if (cancelled === 'timeout') {
+    server.log.warn('The run exceeded its time budget and was aborted.');
+    return reply.status(504).send({
+      error:
+        'The run took longer than its time budget and was stopped. A local model on one GPU runs each step in turn, so a large model can exceed it on a long offer — raise RUN_TIMEOUT_MS, send a larger timeoutMs, or use a smaller model.',
+      reason: 'timeout'
+    });
+  }
+
   if (error instanceof RuntimeError) {
     const status =
       error.code === 'invalid_input' || error.code === 'unknown_capability'
         ? 400
-        : 502;
+        : // An `aborted` reaching here was not cancelled by this request — the
+          // caller passed its own signal, or one fired between the run ending
+          // and `settle`. Reported as a timeout rather than a bad gateway,
+          // which is the closer of the two.
+          error.code === 'aborted'
+          ? 504
+          : 502;
 
     server.log.warn({ code: error.code }, error.message);
     return reply.status(status).send({ error: error.message, reason: error.code });
