@@ -1,0 +1,33 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# build
+/dist
+*.tsbuildinfo
+
+# testing
+/coverage
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+
+# Local runtime state. Never commit this: it is the user's CV and offer
+# history, which is the one thing this project exists to keep off a server.
+/.cvitae
+/data
+
+# cursor
+.cursor
+.history
+.history/*
