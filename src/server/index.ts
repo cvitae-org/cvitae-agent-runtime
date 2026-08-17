@@ -66,7 +66,22 @@ const timeoutFromEnv = (raw: string | undefined, fallback: number): number => {
 const DEFAULT_TIMEOUT_MS = timeoutFromEnv(process.env.RUN_TIMEOUT_MS, 300_000);
 const MAX_TIMEOUT_MS = 600_000;
 
-const server = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' } });
+/**
+ * Room for an uploaded CV, which Fastify's 1MB default does not leave.
+ *
+ * `extract_cv` accepts `kind: 'upload'` sources carrying base64 bytes, and
+ * base64 adds a third — so a 1.1MB PDF arrives as roughly 1.5MB of JSON and
+ * would be refused with a bare 413 that says nothing about which of several
+ * attachments was too large. `sources/index.ts` enforces the meaningful per-file
+ * limit; this only has to be above it. 32MB leaves room for a few files in one
+ * import without letting the process be asked to buffer something absurd.
+ */
+const BODY_LIMIT_BYTES = 32 * 1024 * 1024;
+
+const server = Fastify({
+  logger: { level: process.env.LOG_LEVEL ?? 'info' },
+  bodyLimit: BODY_LIMIT_BYTES
+});
 const runtime = createRuntime();
 
 /**

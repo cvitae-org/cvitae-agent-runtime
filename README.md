@@ -48,7 +48,9 @@ await runtime.run('extract_cv', {
   sources: [
     { kind: 'file', path: '/Users/me/cv.pdf' },
     { kind: 'file', path: '/Users/me/linkedin-screenshot.png' },
-    { kind: 'text', label: 'linkedin', content: pastedProfileText }
+    { kind: 'text', label: 'linkedin', content: pastedProfileText },
+    // For callers holding bytes rather than a path — see below.
+    { kind: 'upload', filename: 'cv.pdf', content: base64OrDataUrl }
   ]
 });
 ```
@@ -56,6 +58,64 @@ await runtime.run('extract_cv', {
 Everything is reduced to text first — `.txt`/`.md` directly, `.pdf` through `unpdf`,
 images through a vision-capable model — then seven narrow extractions run over the
 combined corpus and the result is **merged** into `cv.json`.
+
+`kind: 'upload'` exists because cvitae is a browser application: a file picker
+there yields a `File` — bytes and a name, never a location this process could
+open — so `kind: 'file'` is unreachable from the app that owns the CV. Base64
+travels in the ordinary JSON envelope rather than as multipart, because
+`/run/:name` takes one envelope shape for every capability and a second content
+type for one of them would fork that; the cost is a third more bytes over
+loopback. A `data:…;base64,` prefix is accepted, since `readAsDataURL` produces
+one. Per-file ceiling is 12MB, and the server's body limit is 32MB.
+
+Uploads take the same reader as paths — the two differ only in where the buffer
+comes from — so an uploaded PDF and the same PDF on disk cannot diverge.
+
+One thing worth knowing before pointing this at a CV that cvitae exported: those
+PDFs are rasterised by html2canvas and carry **no text layer**, so they are
+refused with the scan message rather than imported. Import the original, not the
+export.
+
+### One section at a time
+
+The seven extractions are independent passes over the same corpus, and on one
+local GPU the orchestrator runs them in turn — so a whole import costs their sum
+inside a single request budget. On `gemma4:12b` that exceeded four minutes and
+failed the entire import for want of the last step.
+
+`sections` narrows a run to the artefacts named, which makes each request one
+model call:
+
+```ts
+const first = await runtime.run('extract_cv', {
+  sources, persist: false, sections: ['skills']
+});
+
+// Reuse the corpus rather than re-reading the files. For a PDF that saves a
+// parse; for a screenshot it saves a second vision call, which is the whole
+// cost of reading it.
+await runtime.run('extract_cv', {
+  sources: [{ kind: 'text', content: first.text }],
+  persist: false,
+  sections: ['certificates'],
+  // Certificates and spoken languages are cross-checked against extracted
+  // skills. A request that did not extract skills has nothing to check
+  // against, so what is already known is carried forward.
+  known_skills: [...first.document.skills.frameworks /* … */]
+});
+```
+
+Measured on the real CV with `gemma3:4b`: personal 6.8s, role_description 0s
+(it is a parse), skills 5.7s, experience 17.6s, education 2.5s, certificates
+2.6s, languages 2.8s. **The point is not that 38s beats 30s — it does not.** It
+is that the longest single request is 17.6s, so a budget has to cover one step
+rather than seven, and a section that fails costs that section instead of the
+import.
+
+`known_skills` matters more than it looks. Split into separate requests without
+it, `certificates` returned `ICP Blockchain SDK` again — the exact hallucination
+`isCertificate` was added to stop — because the guard had no skills to compare
+against. Passing them back restored it: 2 entries to 1.
 
 Merge policy, which is the part worth knowing: an import **may add and may fill a
 blank, but never overwrites**. This is not the usual "newest wins", and the
@@ -310,6 +370,39 @@ deadline: it runs until it is done or the caller leaves.
 model today; `ask_profile` demonstrates the tool loop. Extraction is verified
 against the real cvitae CV: 7 of 7 jobs with 25 bullets, correct dates, correct
 summary and spoken languages, on `gemma3:4b` in about 30 seconds.
+
+Re-verified through `kind: 'upload'`, which is the path cvitae actually uses: the
+same CV as a posted PDF gave 7 jobs and 25 bullets in 35.9s, and as a posted
+`.txt` 7 jobs and 24 bullets in 39.7s, both with no degraded steps.
+
+Extraction steps decode greedily — `temperature: 0`, set in `core/executor.ts`.
+Nothing set one before, so the provider's default applied (0.8 on Ollama), which
+is a sampling width for prose applied to steps that only copy values already in
+the prompt. Five runs each of the same CV, before and after: bullets went from
+`25,25,25,24,25` to `25,25,25,25,25`, and the run time stopped varying between
+29.3s and 37.6s, settling at 29.7–30.0s.
+
+Greedy decoding is not the same as correct, and it is worth being clear about
+what it changed. The certificates step was returning `ICP Blockchain SDK` — a
+line lifted from the skills list — beside the real certificate, on two runs in
+five. At temperature 0 it did so on every run. That is an improvement only
+because a reliable fault can be seen; the fix is `isCertificate`, the same
+cross-check against extracted skills that spoken languages already use.
+
+The language guard still has a hole, and there is now a deterministic
+reproduction of it. `isSpokenLanguage` cross-checks against the *extracted
+skills*, so a technology named only in prose escapes: a certificate described as
+"Project using Rust, Vue and Typescript" puts `Vue — "Used in project"` into
+spoken languages, because Vue is nowhere in the skills arrays to check against.
+`NOT_SPOKEN` cannot list every framework — the original finding — and this is the
+same hole from the other side. An allow-list of human languages would close both,
+since they are a closed set and frameworks are not.
+
+One thing that surprised: **the filename is part of the prompt.** Sources are
+labelled into the corpus as `=== SOURCE: cv.pdf ===`, so the same bytes under a
+different name are a different input. Measured — identical PDF, `cv.pdf` gives
+`[English]` and `cv-textlayer.pdf` gives `[English, Vue]`, each reproducibly.
+Worth knowing before reading two runs as a comparison of anything else.
 
 Not built: the offers extractor. Its seam is `store.saveOffers`, and the shape to
 copy is `extract_cv` — read sources into text, one narrow step per artefact, merge

@@ -42,27 +42,88 @@ const withMalformedRetry = async <T>(
   }
 };
 
+
+/**
+ * Extraction is decoding, not writing, so it is run greedily.
+ *
+ * Nothing set a temperature before this, which meant the provider's default
+ * applied — 0.8 on Ollama. That is a sampling width chosen for prose, and every
+ * step here is copying values that are already in the prompt: there is no
+ * variety worth having in which job title comes back, only the risk that a less
+ * likely token wins and takes a bullet or an entry with it.
+ *
+ * Measured over five runs of the same CV on `gemma3:4b`, before and after:
+ *
+ *   default (0.8)   bullets 25,25,25,24,25   certs 1,1,2,1,2   29.3–37.6s
+ *   temperature 0   bullets 25,25,25,25,25   certs 2,2,2,2,2   29.7–30.0s
+ *
+ * Jobs were 7/7 on all ten runs, so the headline count was never the unstable
+ * part; the drift was underneath it, in a dropped bullet and a wandering
+ * certificate count. Bullets are now fixed, and the run time stopped varying by
+ * eight seconds, which is the same determinism showing up as a schedule.
+ *
+ * The certificates line is the finding worth keeping. Greedy decoding did not
+ * make that step correct — it made it *consistently wrong*: the second
+ * certificate is "ICP Blockchain SDK", which is not a certificate at all but an
+ * entry from the skills list, and it now appears on every run instead of two in
+ * five. Determinism converts an intermittent hallucination into a reliable one,
+ * which is better only because a reliable fault can be seen and fixed. This one
+ * is the same shape as the spoken-languages bug already recorded in
+ * `extractCv.ts`: a section pulling material from a neighbouring one.
+ */
 const runExtract = async (
   step: Extract<Step, { kind: 'extract' }>,
   context: RunContext
 ): Promise<Record<string, unknown>> => {
   const { generateObject, NoObjectGeneratedError } = await loadAiModule();
 
-  const result = await withMalformedRetry(
-    () =>
-      generateObject({
-        model: context.model,
-        schema: step.schema,
-        system: step.system,
-        prompt: step.prompt,
-        maxOutputTokens: step.maxOutputTokens,
-        abortSignal: context.signal
-      }),
-    (error) => NoObjectGeneratedError.isInstance(error),
-    step.name
-  );
+  /**
+   * The model spent its whole budget and said nothing.
+   *
+   * `finishReason: 'length'` with empty text is not a truncated answer — it is
+   * no answer, and it is not a ceiling that wants raising. Measured on
+   * `gemma4:12b` against a real CV's skills section: 1200 output tokens
+   * consumed with `text: ""`, then the same again at 4000. `gemma3:4b` returned
+   * the same section in 3.5s. The README records this model doing the same
+   * thing once before under a different prompt wording.
+   *
+   * Told apart from a malformed object because it changes what to do about it.
+   * Malformed JSON is worth one retry; this is deterministic, and retrying only
+   * spends another forty-five seconds to arrive in the same place — which is
+   * what the step was doing, taking ninety-five seconds to degrade.
+   */
+  const producedNothing = (error: unknown): boolean =>
+    NoObjectGeneratedError.isInstance(error) &&
+    error.finishReason === 'length' &&
+    !String(error.text ?? '').trim();
 
-  return result.object as Record<string, unknown>;
+  try {
+    const result = await withMalformedRetry(
+      () =>
+        generateObject({
+          model: context.model,
+          schema: step.schema,
+          system: step.system,
+          prompt: step.prompt,
+          maxOutputTokens: step.maxOutputTokens,
+          temperature: 0,
+          abortSignal: context.signal
+        }),
+      (error) => NoObjectGeneratedError.isInstance(error) && !producedNothing(error),
+      step.name
+    );
+
+    return result.object as Record<string, unknown>;
+  } catch (error) {
+    if (!producedNothing(error)) throw error;
+
+    // Rewritten because the generic message — "no object generated" — sends the
+    // reader to the schema, and the schema is fine. The model is the variable.
+    throw new RuntimeError(
+      `The model produced no output for "${step.name}": it used its whole token budget and returned nothing. This is not a truncated answer and a larger budget does not help — the model is unable to answer this step. Try a smaller, faster model for extraction.`,
+      'step_failed'
+    );
+  }
 };
 
 /**

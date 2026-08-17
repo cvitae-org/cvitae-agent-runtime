@@ -18,7 +18,6 @@
  * a plausible CV from nothing.
  */
 
-import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import type { LanguageModel } from 'ai';
 import { SourceError } from './types.js';
@@ -31,11 +30,9 @@ const MEDIA_TYPES: Record<string, string> = {
   '.gif': 'image/gif'
 };
 
-export const isImagePath = (path: string): boolean =>
-  extname(path).toLowerCase() in MEDIA_TYPES;
-
-export const mediaTypeFor = (path: string): string | undefined =>
-  MEDIA_TYPES[extname(path).toLowerCase()];
+/** Doubles as the "is this an image" test: a name with no media type is not one. */
+export const mediaTypeFor = (nameOrPath: string): string | undefined =>
+  MEDIA_TYPES[extname(nameOrPath).toLowerCase()];
 
 const TRANSCRIBE = `Transcribe all text visible in this image, in reading order.
 Include headings, dates, job titles, company names, and bullet points.
@@ -49,29 +46,24 @@ If the image contains no text, answer exactly: NO TEXT`;
  */
 const MAX_OUTPUT_TOKENS = 4_000;
 
-export const readImage = async ({
-  path,
+/**
+ * Takes bytes rather than a path, for the reason given on `readPdfBytes`: an
+ * uploaded screenshot and one on disk differ only in where the buffer came
+ * from, and the prompt is the part that must not diverge between them.
+ */
+export const readImageBytes = async ({
+  bytes,
+  mediaType,
+  reference,
   model,
   signal
 }: {
-  path: string;
+  bytes: Uint8Array;
+  mediaType: string;
+  reference: string;
   model: LanguageModel;
   signal?: AbortSignal;
 }): Promise<string> => {
-  const mediaType = mediaTypeFor(path);
-
-  if (!mediaType) {
-    throw new SourceError(`${path} is not an image this runtime can read.`);
-  }
-
-  let bytes: Buffer;
-
-  try {
-    bytes = await readFile(path);
-  } catch (error) {
-    throw new SourceError(`Could not read ${path}: ${(error as Error).message}`);
-  }
-
   const { generateText } = await import('ai');
 
   const { text } = await generateText({
@@ -83,7 +75,7 @@ export const readImage = async ({
         role: 'user',
         content: [
           { type: 'text', text: TRANSCRIBE },
-          { type: 'image', image: new Uint8Array(bytes), mediaType }
+          { type: 'image', image: bytes, mediaType }
         ]
       }
     ]
@@ -92,7 +84,7 @@ export const readImage = async ({
   const trimmed = text.trim();
 
   if (!trimmed || trimmed === 'NO TEXT') {
-    throw new SourceError(`No readable text in ${path}.`);
+    throw new SourceError(`No readable text in ${reference}.`);
   }
 
   return trimmed;

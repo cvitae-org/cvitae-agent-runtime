@@ -25,7 +25,7 @@
  */
 
 import { z } from 'zod';
-import type { Capability, Plan, RunContext, TransformStep } from '../core/types.js';
+import type { Capability, Plan, RunContext, Step, TransformStep } from '../core/types.js';
 import { RuntimeError } from '../core/types.js';
 import { cvDocumentSchema, type CvDocument } from '../store/cvDocument.js';
 import { mergeDocument, type MergeReport } from '../store/merge.js';
@@ -174,6 +174,25 @@ const isSpokenLanguage = (name: string, technical: Set<string>): boolean => {
 };
 
 /**
+ * Rejects a "certificate" that is just a skill the CV listed elsewhere.
+ *
+ * The same cross-check as `isSpokenLanguage`, against the same set, because it
+ * is the same failure: a section reaching into a neighbouring one. Measured on
+ * the real CV, the certificates step returned `ICP Blockchain SDK` — a line
+ * from `libraries_and_tools` — beside the genuine certificate. It did that on
+ * two runs in five at the provider's default temperature and on every run once
+ * decoding went greedy, which is what made it worth a guard rather than a note.
+ *
+ * Matched on the whole name only. A real certificate is usually named after the
+ * technology it covers, so anything looser would throw away "AWS Certified
+ * Cloud Practitioner" for containing "AWS".
+ */
+const isCertificate = (name: string, technical: Set<string>): boolean => {
+  const key = name.trim().toLowerCase();
+  return Boolean(key) && !technical.has(key);
+};
+
+/**
  * Kept short and declarative, for the reason recorded in `prompt/builder.ts`:
  * with a small model the phrasing is load-bearing, and emphatic instructions
  * measurably did worse than plain ones.
@@ -190,7 +209,14 @@ export const inputSchema = z.object({
           label: z.string().optional(),
           content: z.string().min(1)
         }),
-        z.object({ kind: z.literal('file'), path: z.string().min(1) })
+        z.object({ kind: z.literal('file'), path: z.string().min(1) }),
+        // For callers with bytes and no path — see `sources/types.ts`. The
+        // browser application this runtime exists to serve is one of them.
+        z.object({
+          kind: z.literal('upload'),
+          filename: z.string().min(1),
+          content: z.string().min(1)
+        })
       ])
     )
     .min(1, 'At least one source is required.'),
@@ -199,7 +225,51 @@ export const inputSchema = z.object({
    * capability exists to populate `cv.json`, and the merge cannot destroy
    * anything, so the safe default is the useful one.
    */
-  persist: z.boolean().default(true)
+  persist: z.boolean().default(true),
+  /**
+   * Which artefacts to extract. All of them when omitted.
+   *
+   * The seven extractions are independent passes over the same corpus, and on
+   * one local GPU the orchestrator runs them in turn — so a whole import is the
+   * sum of seven model calls, and the caller pays for all of it inside a single
+   * request budget. A 12B model on a full CV exceeded four minutes of it, which
+   * fails the entire import for want of the last step.
+   *
+   * Naming a subset makes each request one model call. Nothing about the
+   * pipeline changes — these steps never depended on each other, which is what
+   * makes splitting them a scheduling decision rather than a redesign.
+   */
+  sections: z
+    .array(
+      z.enum([
+        'personal',
+        'role_description',
+        'skills',
+        'experience',
+        'education',
+        'certificates',
+        'languages'
+      ])
+    )
+    .min(1)
+    .optional(),
+  /**
+   * Technical skills already known, for the guards that cross-check against
+   * them.
+   *
+   * `isSpokenLanguage` and `isCertificate` both reject a value that the CV
+   * lists as a skill elsewhere — which works only while the `skills` step ran
+   * beside them. Splitting sections into separate requests broke that silently:
+   * asked for `certificates` alone, the run has no skills to compare with, and
+   * `ICP Blockchain SDK` came back as a certificate again, exactly as it did
+   * before the guard existed. Measured on the real CV, both guards regressed
+   * the moment the request was narrowed.
+   *
+   * So a caller running section by section passes back what it already has. The
+   * guards then behave the same whether the seven steps ran together or apart,
+   * which is the property that makes splitting them safe.
+   */
+  known_skills: z.array(z.string()).optional()
 });
 
 export type ExtractCvInput = z.infer<typeof inputSchema>;
@@ -208,6 +278,16 @@ export type ExtractCvResult = {
   document: CvDocument;
   merge: MergeReport | null;
   sources: SourceRecord[];
+  /**
+   * The corpus the extractions read.
+   *
+   * Returned so a caller running section by section can read the files once and
+   * pass this back as a `text` source for the remaining sections. Without it,
+   * splitting an import into seven requests re-reads the sources seven times —
+   * which is merely wasteful for a PDF and genuinely expensive for a screenshot,
+   * because reading an image *is* a model call.
+   */
+  text: string;
   skipped: { reference: string; reason: string }[];
   indexed: { embedded: number; removed: number; total: number } | null;
   /** Set when the document was saved but the index could not be rebuilt. */
@@ -244,7 +324,9 @@ const endDate = (value: unknown): string | null => {
  */
 const assembleDocument = (
   completed: Record<string, Record<string, unknown>>,
-  records: SourceRecord[]
+  records: SourceRecord[],
+  /** Skills from earlier requests, when this run did not extract them itself. */
+  knownSkills: string[] = []
 ): Partial<CvDocument> => {
   const personal = completed.personal ?? {};
   const links = Object.fromEntries(
@@ -264,8 +346,9 @@ const assembleDocument = (
     [
       ...asStringArray(skills.programming_languages),
       ...asStringArray(skills.frameworks),
-      ...asStringArray(skills.libraries_and_tools)
-    ].map((value) => value.toLowerCase())
+      ...asStringArray(skills.libraries_and_tools),
+      ...knownSkills
+    ].map((value) => value.trim().toLowerCase()).filter(Boolean)
   );
 
   return cvDocumentSchema.partial().parse({
@@ -312,7 +395,7 @@ const assembleDocument = (
         started: asString(entry.started),
         finished: endDate(entry.finished)
       }))
-      .filter((entry) => entry.name),
+      .filter((entry) => isCertificate(entry.name, technical)),
     languages: asArray(completed.languages?.languages)
       .map((entry) => ({ name: asString(entry.name), level: asString(entry.level) }))
       .filter((entry) => isSpokenLanguage(entry.name, technical)),
@@ -368,9 +451,21 @@ export const extractCv: Capability<ExtractCvInput> = {
       // is caught rather than written out as an empty CV.
       critical: true,
       run: async (runContext) => {
-        const extracted = assembleDocument(runContext.completed, records);
+        const extracted = assembleDocument(
+          runContext.completed,
+          records,
+          input.known_skills
+        );
 
-        if (isEmpty(extracted)) {
+        /**
+         * Only a whole import can be judged empty.
+         *
+         * This guard exists to catch sources that were not a CV at all, and it
+         * reads a run's total emptiness as that failure. A run of one named
+         * section cannot support the inference: asking only for certificates,
+         * from a CV that has none, is a correct answer that looks identical.
+         */
+        if (!input.sections && isEmpty(extracted)) {
           throw new Error(
             'Nothing could be extracted from the sources. They may not be a CV, or the model may have returned nothing usable.'
           );
@@ -382,6 +477,7 @@ export const extractCv: Capability<ExtractCvInput> = {
             document: preview.document,
             merge: preview.report,
             sources: records,
+            text,
             skipped,
             indexed: null,
             index_error: null,
@@ -413,6 +509,7 @@ export const extractCv: Capability<ExtractCvInput> = {
           document: saved,
           merge: report,
           sources: records,
+          text,
           skipped,
           indexed,
           index_error: indexError,
@@ -421,11 +518,7 @@ export const extractCv: Capability<ExtractCvInput> = {
       }
     };
 
-    return {
-      capability: 'extract_cv',
-      source: 'declared',
-      concurrency: 'auto',
-      steps: [
+    const extractionSteps: Step[] = [
         {
           kind: 'extract',
           name: 'personal',
@@ -507,9 +600,27 @@ ${RULES}`,
           maxOutputTokens: 600,
           critical: false,
           fallback: {}
-        },
-        assemble
-      ]
+        }
+    ];
+
+    /**
+     * Kept in declared order rather than the caller's.
+     *
+     * `assemble` reads `completed` by step name, so order does not affect the
+     * document — but it does decide what runs first when several sections are
+     * asked for at once, and reading a CV top-down is the order a person would
+     * expect a partially-filled preview to arrive in.
+     */
+    const wanted = input.sections;
+    const steps = wanted
+      ? extractionSteps.filter((step) => wanted.includes(step.name as typeof wanted[number]))
+      : extractionSteps;
+
+    return {
+      capability: 'extract_cv',
+      source: 'declared',
+      concurrency: 'auto',
+      steps: [...steps, assemble]
     };
   },
 

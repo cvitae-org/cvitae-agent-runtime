@@ -25,6 +25,27 @@ export type SourceInput =
       kind: 'file';
       /** Absolute path. Read once, never stored — only the text it yields is. */
       path: string;
+    }
+  | {
+      /**
+       * Bytes sent with the request, for callers that have no path to give.
+       *
+       * cvitae is the reason this exists. It is a browser application, and a
+       * file picker there yields a `File` — bytes and a name, never a location
+       * the runtime could open. `kind: 'file'` is unreachable from it, so
+       * without this the only importable source from the app that owns the CV
+       * would have been pasted text.
+       *
+       * Base64 in the JSON envelope rather than multipart, because `/run/:name`
+       * takes one envelope shape for every capability and a second content type
+       * for one of them would fork that. The cost is a third more bytes on a
+       * loopback hop, which is not worth a special case.
+       */
+      kind: 'upload';
+      /** Original name. Only the extension is read — it decides the format. */
+      filename: string;
+      /** Base64, with or without a `data:…;base64,` prefix. */
+      content: string;
     };
 
 /** What one source produced, kept so the document can say where a field came from. */

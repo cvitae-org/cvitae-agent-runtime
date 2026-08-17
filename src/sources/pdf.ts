@@ -13,7 +13,6 @@
  * handed to the image path, which can actually read it.
  */
 
-import { readFile } from 'node:fs/promises';
 import { SourceError } from './types.js';
 
 /**
@@ -30,17 +29,22 @@ export type PdfOutcome =
   /** Read fine, but there is no text in it. The image path can still try. */
   | { status: 'no_text_layer'; pages: number };
 
-export const readPdf = async (path: string): Promise<PdfOutcome> => {
-  let bytes: Buffer;
-
-  try {
-    bytes = await readFile(path);
-  } catch (error) {
-    throw new SourceError(
-      `Could not read ${path}: ${(error as Error).message}`
-    );
-  }
-
+/**
+ * Takes bytes rather than a path, because the two callers have different ones.
+ *
+ * A file on disk and a file posted by a browser differ only in where the buffer
+ * came from, and `sources/index.ts` resolves that before getting here. Reading
+ * the file in this module instead would mean an upload needed a second parse
+ * beside this one, and the "no text layer" threshold could then drift between
+ * a PDF opened locally and the same PDF uploaded.
+ *
+ * `reference` is what error messages name — a path for one caller, a filename
+ * for the other.
+ */
+export const readPdfBytes = async (
+  bytes: Uint8Array,
+  reference: string
+): Promise<PdfOutcome> => {
   const { getDocumentProxy, extractText } = await import('unpdf');
 
   let pages: number;
@@ -54,7 +58,7 @@ export const readPdf = async (path: string): Promise<PdfOutcome> => {
     text = Array.isArray(extracted.text) ? extracted.text.join('\n') : extracted.text;
   } catch (error) {
     throw new SourceError(
-      `${path} could not be parsed as a PDF: ${(error as Error).message}`
+      `${reference} could not be parsed as a PDF: ${(error as Error).message}`
     );
   }
 
