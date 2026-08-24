@@ -82,6 +82,7 @@ const runExtract = async (
   context: RunContext
 ): Promise<Record<string, unknown>> => {
   const { generateObject, NoObjectGeneratedError } = await loadAiModule();
+  const model = await context.model();
 
   /**
    * The model spent its whole budget and said nothing.
@@ -119,7 +120,7 @@ const runExtract = async (
           input: summarizeText('text', step.system, step.prompt),
           call: () =>
             generateObject({
-              model: context.model,
+              model,
               schema: step.schema,
               system: step.system,
               prompt: step.prompt,
@@ -170,6 +171,7 @@ const runGenerate = async (
   context: RunContext
 ): Promise<Record<string, unknown>> => {
   const { generateText } = await loadAiModule();
+  const model = await context.model();
 
   const result = await withAiLogging({
     logger: context.aiLogger,
@@ -184,7 +186,7 @@ const runGenerate = async (
     input: summarizeText('text', step.system, step.prompt),
     call: () =>
       generateText({
-        model: context.model,
+        model,
         system: step.system,
         prompt: step.prompt,
         maxOutputTokens: step.maxOutputTokens,
@@ -228,6 +230,7 @@ const runToolLoop = async (
   context: RunContext
 ): Promise<Record<string, unknown>> => {
   const { generateText, stepCountIs } = await loadAiModule();
+  const model = await context.model();
 
   const tools = context.tools.toolSet(step.tools, context);
 
@@ -245,7 +248,7 @@ const runToolLoop = async (
     tools: { offered: step.tools },
     call: () =>
       generateText({
-        model: context.model,
+        model,
         system: step.system,
         prompt: step.prompt,
         tools,

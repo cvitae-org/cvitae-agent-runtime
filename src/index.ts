@@ -10,7 +10,16 @@
  * provider to be configured or Ollama to be running, because the process may
  * only want to read the CV document — and failing at construction would make
  * storage unavailable whenever generation happened to be misconfigured.
+ *
+ * That now holds for running as well as for constructing. A run resolves a
+ * model when a step reaches for one, so a capability that reaches for none
+ * needs no credential — `verify_recipient` is entirely fetches and comparisons
+ * unless its web tier is asked for, and it used to refuse over a key it was
+ * never going to spend. What has not changed is what a *missing* model means:
+ * see the `AiConfigError` branch in the orchestrator.
  */
+
+import type { LanguageModel } from 'ai';
 
 import { Store } from './store/store.js';
 import { createEmbedder, type Embedder } from './retrieval/embed.js';
@@ -27,7 +36,12 @@ import {
   type BatchSummary
 } from './core/batch.js';
 import { mergeOutcomes } from './core/aggregator.js';
-import { resolveModel, resolveEmbeddingModel, type ModelOverride } from './providers/resolve.js';
+import {
+  describeModel,
+  resolveModel,
+  resolveEmbeddingModel,
+  type ModelOverride
+} from './providers/resolve.js';
 import type { RunContext, RunResult } from './core/types.js';
 import { RuntimeError } from './core/types.js';
 import {
@@ -122,10 +136,27 @@ export class Runtime {
     options: RunOptions,
     traceId = crypto.randomUUID()
   ): Promise<RunContext> {
-    const [{ model, providerId, modelId }, store] = await Promise.all([
-      resolveModel({ ...this.options.model, ...options.model }),
-      this.store()
-    ]);
+    const override = { ...this.options.model, ...options.model };
+
+    // The names are free; the model is not. Naming the provider needs no
+    // credential, so a plan is built and its transforms run whether or not this
+    // process holds a key — and a run that never reaches a model step never
+    // asks for one. See `describeModel`.
+    const { providerId, modelId } = describeModel(override);
+    const store = await this.store();
+
+    let modelPromise: Promise<LanguageModel> | null = null;
+    const model = () => {
+      if (!modelPromise) {
+        modelPromise = resolveModel(override).then((resolved) => resolved.model);
+        // A failed resolve must not be remembered as the answer for the rest of
+        // the run; the next step should ask again and fail on its own terms.
+        modelPromise.catch(() => {
+          modelPromise = null;
+        });
+      }
+      return modelPromise;
+    };
 
     return {
       model,
@@ -194,10 +225,12 @@ export class Runtime {
     // and discovering it twenty times over is neither faster nor clearer.
     route(this.capabilities, capabilityName);
 
-    // Resolved once to learn the provider, because how many inputs may run at
-    // once depends on it and has to be known before the first one starts. The
-    // per-input resolution below hits the same cache entry and costs nothing.
-    const { providerId } = await resolveModel({
+    // Named once to learn the provider, because how many inputs may run at once
+    // depends on it and has to be known before the first one starts. Naming it
+    // rather than building it: the batch would otherwise demand a credential
+    // before deciding a concurrency, which is not something a batch of
+    // transforms has any use for.
+    const { providerId } = describeModel({
       ...this.options.model,
       ...options.model
     });

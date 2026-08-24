@@ -69,6 +69,7 @@ export const planWithModel = async ({
   const available = context.tools.describe();
 
   const { generateObject } = await loadAiModule();
+  const model = await context.model();
 
   let selected: string[] = available.map((tool) => tool.name);
 
@@ -94,7 +95,7 @@ export const planWithModel = async ({
       input: summarizeText('text', selectionSystem, selectionPrompt),
       call: () =>
         generateObject({
-          model: context.model,
+          model,
           schema: selectionSchema,
           system: selectionSystem,
           prompt: selectionPrompt,

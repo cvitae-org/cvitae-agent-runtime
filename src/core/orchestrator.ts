@@ -26,6 +26,7 @@ import type {
   Concurrency
 } from './types.js';
 import { RuntimeError } from './types.js';
+import { AiConfigError } from '../providers/resolve.js';
 
 /**
  * A local server is one GPU, so overlapping calls contend rather than overlap.
@@ -82,6 +83,25 @@ export const executePlan = async (
     // bug in a step that was working.
     if (context.signal?.aborted) {
       throw new RuntimeError(`Aborted during step "${step.name}".`, 'aborted');
+    }
+
+    /**
+     * A model that cannot be configured is not a step failing.
+     *
+     * The distinction matters because the degradation policy above is built for
+     * a step that tried and did not manage it — a small model dropping one call
+     * in twenty — and a missing credential is not that. Every model step in the
+     * plan would fail identically, so degrading them one at a time hands back a
+     * record of fallbacks with the cause named nowhere the caller can read it.
+     *
+     * Rethrown unchanged rather than wrapped, so it reaches the HTTP boundary
+     * as `ai_not_configured` — the reason cvitae switches on to answer 500 and
+     * say the provider is not set up, rather than the 502 a `step_failed` earns.
+     * This is what the runtime did before models resolved lazily, and moving
+     * *when* a model is resolved should not have moved what a missing one means.
+     */
+    if (result.reason instanceof AiConfigError) {
+      throw result.reason;
     }
 
     if (step.critical) {

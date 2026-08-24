@@ -99,6 +99,7 @@ export const routeWithModel = async (
 
   try {
     const { generateObject } = await loadAiModule();
+    const model = await context.model();
 
     const routingSystem =
       'Choose the capability that best fits the request. Use only a name from the list.';
@@ -118,7 +119,7 @@ export const routeWithModel = async (
       input: summarizeText('text', routingSystem, routingPrompt),
       call: () =>
         generateObject({
-          model: context.model,
+          model,
           schema: choiceSchema,
           system: routingSystem,
           prompt: routingPrompt,

@@ -138,8 +138,18 @@ export type Plan = {
 
 /** Everything a step is allowed to reach. Nothing reads globals. */
 export type RunContext = {
-  /** The generation model, already resolved from provider settings. */
-  model: LanguageModel;
+  /**
+   * The generation model, resolved from provider settings on first use.
+   *
+   * A function rather than the model itself, because resolving one needs a
+   * credential and not every run needs a model. A plan that is all transforms
+   * makes no call at all — `verify_recipient` is one — and resolving up front
+   * turned a missing key for a provider the run never reaches into a refusal of
+   * the whole run.
+   *
+   * Memoised per run, so a plan with five model steps still resolves once.
+   */
+  model: () => Promise<LanguageModel>;
   providerId: string;
   modelId: string;
   /** Correlates routing, planning, generation, tools and embeddings in one run. */

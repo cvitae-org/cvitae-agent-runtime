@@ -247,9 +247,28 @@ const buildModel = async (
   })(modelId);
 };
 
-export const resolveModel = async (
-  override: ModelOverride = {}
-): Promise<ResolvedModel> => {
+export type ModelChoice = {
+  providerId: ProviderId;
+  modelId: string;
+  /** Only ever set for `local`; the hosted providers have fixed endpoints. */
+  baseURL: string | undefined;
+};
+
+/**
+ * Which provider and model a run would use, without asking for the credential.
+ *
+ * Split out of `resolveModel` because knowing *what* would be called is not the
+ * same as being able to call it, and two callers only need the first: the batch
+ * runner, which sizes its concurrency from the provider, and the run context,
+ * which carries these names into every log line. Both used to build a whole
+ * model to read two strings off it.
+ *
+ * The cost of that was a run refusing over a credential it had no use for.
+ * `verify_recipient` with `search_web` off is transforms end to end — it is
+ * tested for exactly that — and it still answered "Missing OPENROUTER_API_KEY",
+ * naming a provider it was never going to reach.
+ */
+export const describeModel = (override: ModelOverride = {}): ModelChoice => {
   const configured = override.providerId?.trim() || process.env.AI_PROVIDER?.trim();
 
   let providerId: ProviderId = defaultProviderId;
@@ -268,9 +287,19 @@ export const resolveModel = async (
     process.env.AI_MODEL?.trim() ||
     providers[providerId].defaultModel;
 
-  // Only the local provider may be repointed; the hosted ones have fixed
-  // endpoints and accepting a URL for them would be an open proxy.
-  const baseURL = providerId === 'local' ? localBaseUrl(override.baseURL) : undefined;
+  return {
+    providerId,
+    modelId,
+    // Only the local provider may be repointed; the hosted ones have fixed
+    // endpoints and accepting a URL for them would be an open proxy.
+    baseURL: providerId === 'local' ? localBaseUrl(override.baseURL) : undefined
+  };
+};
+
+export const resolveModel = async (
+  override: ModelOverride = {}
+): Promise<ResolvedModel> => {
+  const { providerId, modelId, baseURL } = describeModel(override);
 
   const suppliedKey = override.apiKey?.trim();
 

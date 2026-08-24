@@ -429,7 +429,7 @@ export const extractCv: Capability<ExtractCvInput> = {
     // slowest part of the run.
     const { text, records, skipped } = await readSources({
       inputs: input.sources as SourceInput[],
-      model: context.model,
+      model: await context.model(),
       signal: context.signal,
       ai: {
         aiLogger: context.aiLogger,
