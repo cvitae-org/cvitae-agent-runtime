@@ -14,6 +14,7 @@
 import { z } from 'zod';
 import type { Capability, RunContext } from './types.js';
 import { RuntimeError } from './types.js';
+import { summarizeObject, summarizeText, withAiLogging } from '../ai/logging.js';
 
 import type * as Ai from 'ai';
 type AiModule = typeof Ai;
@@ -99,16 +100,36 @@ export const routeWithModel = async (
   try {
     const { generateObject } = await loadAiModule();
 
-    const { object } = await generateObject({
-      model: context.model,
-      schema: choiceSchema,
-      system:
-        'Choose the capability that best fits the request. Use only a name from the list.',
-      prompt: `REQUEST:\n${request}\n\nCAPABILITIES:\n${entries
-        .map((entry) => `- ${entry.name}: ${entry.describe}`)
-        .join('\n')}`,
-      maxOutputTokens: 300,
-      abortSignal: context.signal
+    const routingSystem =
+      'Choose the capability that best fits the request. Use only a name from the list.';
+    const routingPrompt = `REQUEST:\n${request}\n\nCAPABILITIES:\n${entries
+      .map((entry) => `- ${entry.name}: ${entry.describe}`)
+      .join('\n')}`;
+
+    const { object } = await withAiLogging({
+      logger: context.aiLogger,
+      traceId: context.traceId,
+      operation: 'generateObject',
+      purpose: 'router',
+      providerId: context.providerId,
+      modelId: context.modelId,
+      step: 'capability_selection',
+      signal: context.signal,
+      input: summarizeText('text', routingSystem, routingPrompt),
+      call: () =>
+        generateObject({
+          model: context.model,
+          schema: choiceSchema,
+          system: routingSystem,
+          prompt: routingPrompt,
+          maxOutputTokens: 300,
+          abortSignal: context.signal
+        }),
+      summarizeResult: (generated) => ({
+        output: summarizeObject(generated.object),
+        finishReason: generated.finishReason,
+        usage: generated.usage
+      })
     });
 
     const chosen = capabilities[object.capability];

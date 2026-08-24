@@ -27,6 +27,10 @@ npm-debug.log*
 /.cvitae
 /data
 
+# Netlify CLI's local link and build cache. `netlify.toml` is committed; this
+# is the per-developer state that says which site it is linked to.
+/.netlify
+
 # cursor
 .cursor
 .history

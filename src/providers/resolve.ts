@@ -10,10 +10,16 @@
  * all, so the common setup — generate on a hosted free tier, embed locally
  * through Ollama — is not expressible with a single provider setting.
  *
- * The second is that credentials live in this process and nowhere else. cvitae
- * currently holds them because it makes the model calls; once it delegates to
- * the runtime, the browser and the Next.js server both stop being places a key
- * can leak from.
+ * The second is that credentials are resolved here, and by default live in this
+ * process and nowhere else. cvitae currently holds them because it makes the
+ * model calls; once it delegates to the runtime, the browser and the Next.js
+ * server both stop being places a key can leak from.
+ *
+ * "By default", because a caller may send its own key with a call — see
+ * `credentialFor`. That is not a hole in the arrangement above but the case it
+ * did not cover: a user who supplies their own credential in cvitae's Settings
+ * rather than relying on the server's. Such a key is used for the one call and
+ * kept nowhere, which is what the cache bypass in `resolveModel` enforces.
  */
 
 import type { EmbeddingModel, LanguageModel } from 'ai';
@@ -151,8 +157,28 @@ const loadCompatibleModule = async (): Promise<OpenAICompatibleImport> => {
   return compatibleModulePromise;
 };
 
-const credentialFor = (providerId: ProviderId): string => {
+/**
+ * The key this call should spend.
+ *
+ * A key sent with the request wins over the environment, and that ordering is
+ * the whole feature: cvitae lets a user enter their own credential in Settings,
+ * and until this existed there was nowhere to put it. The request had only
+ * `providerId`, `modelId` and `baseURL`, so a delegated run answered on the
+ * server's key or — once cvitae started refusing rather than substituting —
+ * did not run at all.
+ *
+ * Trusting a caller with this is not a new grant. Anything that can reach this
+ * process can already spend the server's credential, so arriving with your own
+ * is strictly less privileged; and the key only ever travels to the provider
+ * pinned by `providerId`, whose endpoint is fixed here and, for `local`, is put
+ * through the loopback guard. There is nowhere else for it to go.
+ */
+const credentialFor = (providerId: ProviderId, supplied?: string): string => {
   const provider = providers[providerId];
+
+  const fromRequest = supplied?.trim();
+
+  if (fromRequest) return fromRequest;
 
   if (provider.apiKeyEnvVar === '') return 'local';
 
@@ -160,7 +186,7 @@ const credentialFor = (providerId: ProviderId): string => {
 
   if (!key) {
     throw new AiConfigError(
-      `Missing ${provider.apiKeyEnvVar}. It is required when the provider is "${providerId}" (${provider.label}).`
+      `Missing ${provider.apiKeyEnvVar}. It is required when the provider is "${providerId}" (${provider.label}), unless the caller sends its own key with the request.`
     );
   }
 
@@ -176,6 +202,17 @@ export type ModelOverride = {
   providerId?: string;
   modelId?: string;
   baseURL?: string;
+  /**
+   * The caller's own credential, spent for this call and forgotten after it.
+   *
+   * Optional, and normally absent: the environment is still where a key lives
+   * for a runtime serving one person. This is for the case where the caller
+   * holds a key the environment does not — cvitae's Settings page — and it is
+   * deliberately not merged into any process-wide default, so it can never
+   * outlive the request that carried it. See `credentialFor` and the cache
+   * bypass in `resolveModel`.
+   */
+  apiKey?: string;
 };
 
 export type ResolvedModel = {
@@ -189,10 +226,11 @@ const modelCache = new Map<string, Promise<LanguageModel>>();
 const buildModel = async (
   providerId: ProviderId,
   modelId: string,
-  baseURL: string | undefined
+  baseURL: string | undefined,
+  suppliedKey: string | undefined
 ): Promise<LanguageModel> => {
   const provider = providers[providerId];
-  const apiKey = credentialFor(providerId);
+  const apiKey = credentialFor(providerId, suppliedKey);
 
   if (!provider.baseURL) {
     const { createOpenAI } = await loadOpenAIModule();
@@ -234,11 +272,34 @@ export const resolveModel = async (
   // endpoints and accepting a URL for them would be an open proxy.
   const baseURL = providerId === 'local' ? localBaseUrl(override.baseURL) : undefined;
 
+  const suppliedKey = override.apiKey?.trim();
+
+  // A caller's key never enters the cache, and the cache is never read for one.
+  //
+  // The cache is keyed by provider, model and base URL — not by credential —
+  // so storing a client-built model under that key would hand the next caller
+  // a client whose Authorization header is somebody else's key. That is the
+  // exact substitution cvitae started refusing delegation to avoid, rebuilt one
+  // layer down and harder to see. Adding the key to the cache key would fix the
+  // collision and leave every key the process has ever been sent held in a
+  // module-level map for the life of the process, which is worse.
+  //
+  // Skipping it costs nothing worth measuring: the provider modules above are
+  // cached separately, and what remains is constructing a client object. No
+  // request is made here.
+  if (suppliedKey) {
+    return {
+      providerId,
+      modelId,
+      model: await buildModel(providerId, modelId, baseURL, suppliedKey)
+    };
+  }
+
   const cacheKey = `${providerId}:${modelId}:${baseURL ?? ''}`;
   let cached = modelCache.get(cacheKey);
 
   if (!cached) {
-    cached = buildModel(providerId, modelId, baseURL);
+    cached = buildModel(providerId, modelId, baseURL, undefined);
     modelCache.set(cacheKey, cached);
     // A failed build (a missing key) must not be cached, or the process keeps
     // serving the rejection after the environment is fixed.
@@ -259,10 +320,11 @@ const embeddingCache = new Map<string, Promise<EmbeddingModel<string>>>();
 const buildEmbeddingModel = async (
   providerId: ProviderId,
   modelId: string,
-  baseURL: string | undefined
+  baseURL: string | undefined,
+  suppliedKey: string | undefined
 ): Promise<EmbeddingModel<string>> => {
   const provider = providers[providerId];
-  const apiKey = credentialFor(providerId);
+  const apiKey = credentialFor(providerId, suppliedKey);
 
   if (!provider.baseURL) {
     const { createOpenAI } = await loadOpenAIModule();
@@ -320,11 +382,25 @@ export const resolveEmbeddingModel = async (
 
   const baseURL = configured === 'local' ? localBaseUrl(override.baseURL) : undefined;
 
+  const suppliedKey = override.apiKey?.trim();
+
+  // Same rule as `resolveModel`, for the same reason. Reached less often —
+  // embeddings resolve once per runtime rather than per run, and default to a
+  // local server that needs no credential — but the collision it prevents does
+  // not care how rare it is.
+  if (suppliedKey) {
+    return {
+      providerId: configured,
+      modelId,
+      model: await buildEmbeddingModel(configured, modelId, baseURL, suppliedKey)
+    };
+  }
+
   const cacheKey = `${configured}:${modelId}:${baseURL ?? ''}`;
   let cached = embeddingCache.get(cacheKey);
 
   if (!cached) {
-    cached = buildEmbeddingModel(configured, modelId, baseURL);
+    cached = buildEmbeddingModel(configured, modelId, baseURL, undefined);
     embeddingCache.set(cacheKey, cached);
     cached.catch(() => embeddingCache.delete(cacheKey));
   }

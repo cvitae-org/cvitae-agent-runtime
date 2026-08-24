@@ -17,6 +17,7 @@
  */
 
 import { fetchOffer } from './fetch.js';
+import { refuseUrl } from './page.js';
 import { scrapeOffer, type BoardOffer } from './scraper.js';
 
 export type ResolvedOffer =
@@ -39,18 +40,39 @@ const KNOWN_REASONS = new Set([
   'unsupported'
 ]);
 
+/**
+ * Where an offer URL may point.
+ *
+ * `refuseUrl` was written for the web tier, whose URLs come from a search
+ * engine and are therefore nobody's choice. An offer URL looks safer — a person
+ * pasted it — but the safety is in who chose it, and by the time it reaches
+ * this function that person may be a stranger posting to a runtime someone else
+ * is hosting. The reply is turned into text and handed back verbatim, so a URL
+ * that resolves to a private address is a way to read whatever answers there.
+ *
+ * It is applied unconditionally rather than only when the runtime is hosted,
+ * because the local deployment has the more interesting targets: cvitae-mail on
+ * :8789 holds a Gmail token, and this process's own :8788 would happily analyse
+ * its own `/health`. Nothing legitimate is lost — the addresses refused here
+ * never serve a job board — and the guard runs again at every redirect, which
+ * is the hop that actually gets used.
+ */
 export const resolveOffer = async (
   url: string,
   signal?: AbortSignal
 ): Promise<ResolvedOffer> => {
+  const refusal = await refuseUrl(url);
+
+  if (refusal) return { status: 'error', detail: refusal };
+
   const scraped = await scrapeOffer(url, signal);
 
   if (scraped.status === 'ok') {
     return {
       status: 'ok',
-      text: scraped.offer.text,
-      finalUrl: scraped.offer.source_url || url,
-      board: scraped.offer,
+      text: scraped.data.text,
+      finalUrl: scraped.data.source_url || url,
+      board: scraped.data,
       via: 'scraper'
     };
   }
@@ -63,7 +85,7 @@ export const resolveOffer = async (
   }
 
   // Only reached when the scraper is down or switched off.
-  const outcome = await fetchOffer(url, signal);
+  const outcome = await fetchOffer(url, signal, refuseUrl);
 
   if (outcome.status !== 'ok') {
     return { status: outcome.status, detail: outcome.detail };

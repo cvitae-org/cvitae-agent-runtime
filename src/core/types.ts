@@ -16,6 +16,7 @@ import type { LanguageModel } from 'ai';
 import type { z } from 'zod';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { Store } from '../store/store.js';
+import type { AiLogger } from '../ai/logging.js';
 
 /**
  * How a single step is carried out.
@@ -23,11 +24,14 @@ import type { Store } from '../store/store.js';
  *   extract   — one `generateObject` call against a narrow schema. No tool
  *               calling, so it works on models that cannot do it. This is the
  *               mode nearly everything in cvitae uses.
+ *   generate  — one `generateText` call. Prose out, no schema. For the case
+ *               where the answer *is* the text, rather than fields carved out
+ *               of it — see `GenerateStep` for why that needed its own kind.
  *   tool_loop — the model drives, calling registry tools until it stops. For
  *               work whose shape is not known in advance.
  *   transform — plain TypeScript, no model. Fetching, parsing, merging.
  */
-export type StepKind = 'extract' | 'tool_loop' | 'transform';
+export type StepKind = 'extract' | 'generate' | 'tool_loop' | 'transform';
 
 type StepBase = {
   name: string;
@@ -57,6 +61,46 @@ export type ExtractStep = StepBase & {
   fallback?: Record<string, unknown>;
 };
 
+/**
+ * One `generateText` call, for a step whose whole output is prose.
+ *
+ * This kind exists because of a measurement, not a preference. `draft_application`
+ * was first written as an `extract` step returning `{ body: string }`, which is
+ * the obvious shape — one field, one schema, same machinery as everything else.
+ * It failed completely, and the numbers are worth keeping:
+ *
+ *   gemma3:4b   generateObject   0/3   empty, empty, empty        0.5s
+ *   gemma3:4b   generateText     3/3   129, 129, 129 words        2.7s
+ *   gemma4:12b  generateObject   0/3   length, length, length    24.7s
+ *   gemma4:12b  generateText     0/3   empty, empty, empty       22.1s
+ *
+ * Six prompt variants were tried against `gemma3:4b` before this — instruction
+ * only, rules only, no system prompt, a shorter field description, the
+ * instruction moved into the user turn — and all six returned `{ }`. The wording
+ * was not the variable. Asking a small model to wrap 130 words of prose in a
+ * JSON string is: it has to hold the letter *and* the escaping, and it drops
+ * one of them. `gemma4:12b` drops the other, running to the token ceiling
+ * without ever closing the object.
+ *
+ * So a schema here is not a safeguard, it is the failure. `generateText` returns
+ * exactly what an email body is — a string — and the same 4B model that could
+ * not produce it as JSON writes it identically on every run in under three
+ * seconds.
+ *
+ * The rule this leaves behind: **`extract` is for values carved out of text,
+ * `generate` is for text.** A schema earns its place when the output has parts.
+ */
+export type GenerateStep = StepBase & {
+  kind: 'generate';
+  system: string;
+  prompt: string;
+  maxOutputTokens: number;
+  /** The key the text lands under, so the aggregator sees a named field. */
+  key: string;
+  /** Values used when this step degrades, exactly as `ExtractStep` uses them. */
+  fallback?: Record<string, unknown>;
+};
+
 export type ToolLoopStep = StepBase & {
   kind: 'tool_loop';
   system: string;
@@ -74,7 +118,7 @@ export type TransformStep = StepBase & {
   run: (context: RunContext) => Promise<Record<string, unknown>>;
 };
 
-export type Step = ExtractStep | ToolLoopStep | TransformStep;
+export type Step = ExtractStep | GenerateStep | ToolLoopStep | TransformStep;
 
 /**
  * `'auto'` resolves to 1 against a local provider and to the step count
@@ -97,6 +141,11 @@ export type RunContext = {
   /** The generation model, already resolved from provider settings. */
   model: LanguageModel;
   providerId: string;
+  modelId: string;
+  /** Correlates routing, planning, generation, tools and embeddings in one run. */
+  traceId: string;
+  aiLogger: AiLogger;
+  capability?: string;
   /** Local storage. The model never gets a handle to this — only tools do. */
   store: Store;
   tools: ToolRegistry;

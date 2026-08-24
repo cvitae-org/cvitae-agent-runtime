@@ -432,7 +432,33 @@ check(
 
 section('capability wiring');
 const runtime = createRuntime();
-check('capabilities are listed', runtime.listCapabilities().length === 3);
+/**
+ * The names, not the count.
+ *
+ * This was `length === 3` and had gone stale silently: `translate_cv` made it
+ * four and the check simply began failing with a message that named nothing.
+ * Comparing the set says which capability is missing or unexpected, and adding
+ * one is then a deliberate edit here rather than a mystery red line.
+ */
+const EXPECTED_CAPABILITIES = [
+  'analyze_offer',
+  'ask_profile',
+  'draft_application',
+  'extract_cv',
+  'translate_cv',
+  'verify_recipient'
+];
+
+const listed = runtime
+  .listCapabilities()
+  .map((capability) => capability.name)
+  .sort();
+
+check(
+  'capabilities are listed',
+  listed.join(',') === EXPECTED_CAPABILITIES.join(','),
+  listed.join(', ')
+);
 check('tools are listed', runtime.listTools().length === 3);
 
 let badInput = '';

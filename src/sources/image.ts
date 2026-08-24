@@ -21,6 +21,13 @@
 import { extname } from 'node:path';
 import type { LanguageModel } from 'ai';
 import { SourceError } from './types.js';
+import {
+  createAiLogger,
+  summarizeImage,
+  summarizeText,
+  withAiLogging,
+  type AiLogger
+} from '../ai/logging.js';
 
 const MEDIA_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -56,29 +63,60 @@ export const readImageBytes = async ({
   mediaType,
   reference,
   model,
-  signal
+  signal,
+  aiLogger,
+  traceId,
+  providerId,
+  modelId,
+  capability
 }: {
   bytes: Uint8Array;
   mediaType: string;
   reference: string;
   model: LanguageModel;
   signal?: AbortSignal;
+  aiLogger?: AiLogger;
+  traceId?: string;
+  providerId?: string;
+  modelId?: string;
+  capability?: string;
 }): Promise<string> => {
   const { generateText } = await import('ai');
+  const inferredProvider =
+    typeof model === 'string' ? 'unknown' : model.provider;
+  const inferredModel = typeof model === 'string' ? model : model.modelId;
 
-  const { text } = await generateText({
-    model,
-    maxOutputTokens: MAX_OUTPUT_TOKENS,
-    abortSignal: signal,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: TRANSCRIBE },
-          { type: 'image', image: bytes, mediaType }
+  const { text } = await withAiLogging({
+    logger: aiLogger ?? createAiLogger(),
+    traceId,
+    operation: 'generateText',
+    purpose: 'image_transcription',
+    providerId: providerId ?? inferredProvider,
+    modelId: modelId ?? inferredModel,
+    capability,
+    step: 'transcribe_image',
+    signal,
+    input: summarizeImage({ prompt: TRANSCRIBE, bytes, mediaType }),
+    call: () =>
+      generateText({
+        model,
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        abortSignal: signal,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: TRANSCRIBE },
+              { type: 'image', image: bytes, mediaType }
+            ]
+          }
         ]
-      }
-    ]
+      }),
+    summarizeResult: (generated) => ({
+      output: summarizeText('text', generated.text),
+      finishReason: generated.finishReason,
+      usage: generated.totalUsage
+    })
   });
 
   const trimmed = text.trim();

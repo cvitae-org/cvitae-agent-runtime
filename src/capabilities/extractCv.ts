@@ -430,7 +430,14 @@ export const extractCv: Capability<ExtractCvInput> = {
     const { text, records, skipped } = await readSources({
       inputs: input.sources as SourceInput[],
       model: context.model,
-      signal: context.signal
+      signal: context.signal,
+      ai: {
+        aiLogger: context.aiLogger,
+        traceId: context.traceId,
+        providerId: context.providerId,
+        modelId: context.modelId,
+        capability: context.capability
+      }
     });
 
     if (!text) {

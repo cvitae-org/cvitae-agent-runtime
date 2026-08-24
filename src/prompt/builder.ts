@@ -88,3 +88,92 @@ export const toolSystemPrompt = (role: string): string =>
     `You cannot see the user's CV or offer history directly. Use the tools to read them.
 Base every statement on what a tool returned. If the tools return nothing, say so.`
   );
+
+/**
+ * The rule set for writing an application email.
+ *
+ * Short declarative sentences, for the reason at the top of this file. Two of
+ * the four exist because of measured failures elsewhere in this project rather
+ * than general caution: the placeholder line addresses what small models
+ * actually emit in letter-writing tasks, and the invention line is the same
+ * concern `EXTRACTION_RULES` carries, in a task where there is far more room to
+ * embellish than to copy.
+ *
+ * Unlike `EXTRACTION_RULES`, **this wording is not carried over from anything
+ * that was measured.** It is a starting point. If a model starts returning empty
+ * completions or ignoring the schema, this string is the first suspect, and
+ * changing it wants something to measure against.
+ */
+export const DRAFTING_RULES = `Use only facts from the candidate summary and the listed experience. Do not invent employers, projects, dates or numbers.
+Write the finished text. Do not leave placeholders in brackets.
+Address the reader directly. Do not describe what you are writing.
+Do not restate the whole CV. Choose the two or three points that answer this offer.`;
+
+/**
+ * The candidate, as a compact factual block.
+ *
+ * Deliberately not the whole document. A small model given every field spends
+ * its output restating them, and the fields omitted here — education dates,
+ * certificate issuers, tool lists — are the ones that pad a covering letter
+ * without answering anything the offer asked.
+ */
+export const renderCandidate = ({
+  name,
+  role,
+  summary,
+  skills,
+  recent
+}: {
+  name: string;
+  role: string;
+  summary: string;
+  skills: string[];
+  recent: { company: string; title: string }[];
+}): string =>
+  compose(
+    'CANDIDATE:',
+    [
+      name && `Name: ${name}`,
+      role && `Current role: ${role}`,
+      skills.length > 0 && `Skills: ${skills.slice(0, 24).join(', ')}`,
+      recent.length > 0 &&
+        `Recent positions: ${recent
+          .slice(0, 4)
+          .map((entry) => `${entry.title} at ${entry.company}`)
+          .join('; ')}`,
+      summary && `Summary: ${summary}`
+    ]
+      .filter(Boolean)
+      .join('\n')
+  );
+
+/**
+ * What the application is answering.
+ *
+ * The offer text is cut harder than `renderOffer` cuts it. Extraction needs the
+ * whole posting because a field can appear anywhere in it; drafting needs enough
+ * to write about, and the rest is context a small model has to hold while
+ * generating prose — which is where adherence goes.
+ */
+export const renderOfferBrief = ({
+  position,
+  company,
+  requirements,
+  text
+}: {
+  position: string;
+  company: string;
+  requirements: string[];
+  text: string;
+}): string =>
+  compose(
+    'THE OFFER:',
+    [
+      position && `Position: ${position}`,
+      company && `Company: ${company}`,
+      requirements.length > 0 && `Asks for: ${requirements.slice(0, 12).join(', ')}`
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    text && `Posting:\n${text.slice(0, 4_000)}`
+  );

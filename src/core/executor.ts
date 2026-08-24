@@ -12,6 +12,12 @@
 
 import type { Step, RunContext } from './types.js';
 import { RuntimeError } from './types.js';
+import {
+  summarizeObject,
+  summarizeText,
+  summarizeToolInteractions,
+  withAiLogging
+} from '../ai/logging.js';
 
 import type * as Ai from 'ai';
 type AiModule = typeof Ai;
@@ -100,14 +106,32 @@ const runExtract = async (
   try {
     const result = await withMalformedRetry(
       () =>
-        generateObject({
-          model: context.model,
-          schema: step.schema,
-          system: step.system,
-          prompt: step.prompt,
-          maxOutputTokens: step.maxOutputTokens,
-          temperature: 0,
-          abortSignal: context.signal
+        withAiLogging({
+          logger: context.aiLogger,
+          traceId: context.traceId,
+          operation: 'generateObject',
+          purpose: 'extract',
+          providerId: context.providerId,
+          modelId: context.modelId,
+          capability: context.capability,
+          step: step.name,
+          signal: context.signal,
+          input: summarizeText('text', step.system, step.prompt),
+          call: () =>
+            generateObject({
+              model: context.model,
+              schema: step.schema,
+              system: step.system,
+              prompt: step.prompt,
+              maxOutputTokens: step.maxOutputTokens,
+              temperature: 0,
+              abortSignal: context.signal
+            }),
+          summarizeResult: (generated) => ({
+            output: summarizeObject(generated.object),
+            finishReason: generated.finishReason,
+            usage: generated.usage
+          })
         }),
       (error) => NoObjectGeneratedError.isInstance(error) && !producedNothing(error),
       step.name
@@ -127,6 +151,70 @@ const runExtract = async (
 };
 
 /**
+ * One `generateText` call, for a step whose output is prose.
+ *
+ * Nearly the simplest thing in this file, and deliberately so — the reason it
+ * exists at all is in `GenerateStep`, where the measurement is recorded. No
+ * schema, no retry: there is no malformed JSON to retry, because there is no
+ * JSON. A model that returns nothing here returns nothing twice.
+ *
+ * Greedy for the same reason extraction is, with one caveat worth stating.
+ * Temperature 0 on prose does trade variety away, and a covering letter is a
+ * place variety might be wanted — but a draft the user reads and edits benefits
+ * far more from being reproducible, and "run it again and see" is a worse
+ * experience than editing a sentence. Measured at `temperature: 0`, gemma3:4b
+ * returned the same 129-word letter on three consecutive runs.
+ */
+const runGenerate = async (
+  step: Extract<Step, { kind: 'generate' }>,
+  context: RunContext
+): Promise<Record<string, unknown>> => {
+  const { generateText } = await loadAiModule();
+
+  const result = await withAiLogging({
+    logger: context.aiLogger,
+    traceId: context.traceId,
+    operation: 'generateText',
+    purpose: 'generate',
+    providerId: context.providerId,
+    modelId: context.modelId,
+    capability: context.capability,
+    step: step.name,
+    signal: context.signal,
+    input: summarizeText('text', step.system, step.prompt),
+    call: () =>
+      generateText({
+        model: context.model,
+        system: step.system,
+        prompt: step.prompt,
+        maxOutputTokens: step.maxOutputTokens,
+        temperature: 0,
+        abortSignal: context.signal
+      }),
+    summarizeResult: (generated) => ({
+      output: summarizeText('text', generated.text),
+      finishReason: generated.finishReason,
+      usage: generated.usage
+    })
+  });
+
+  const text = result.text.trim();
+
+  // An empty completion is the failure `gemma4:12b` produces on this step, and
+  // it has to be raised rather than returned. Passing "" downstream would give
+  // the caller a draft-shaped object holding no draft, and the degradation
+  // machinery — which exists precisely for this — would never see a failure.
+  if (!text) {
+    throw new RuntimeError(
+      `The model returned nothing for "${step.name}". It finished with reason "${result.finishReason}" and produced no text. Some models return an empty completion for prose steps regardless of the prompt; try a different one.`,
+      'step_failed'
+    );
+  }
+
+  return { [step.key]: text };
+};
+
+/**
  * The mode where the model decides what to do next.
  *
  * Two things are deliberately not negotiable. The model only ever sees tools
@@ -143,13 +231,37 @@ const runToolLoop = async (
 
   const tools = context.tools.toolSet(step.tools, context);
 
-  const result = await generateText({
-    model: context.model,
-    system: step.system,
-    prompt: step.prompt,
-    tools,
-    stopWhen: stepCountIs(step.maxSteps),
-    abortSignal: context.signal
+  const result = await withAiLogging({
+    logger: context.aiLogger,
+    traceId: context.traceId,
+    operation: 'generateText',
+    purpose: 'tool_loop',
+    providerId: context.providerId,
+    modelId: context.modelId,
+    capability: context.capability,
+    step: step.name,
+    signal: context.signal,
+    input: summarizeText('text', step.system, step.prompt),
+    tools: { offered: step.tools },
+    call: () =>
+      generateText({
+        model: context.model,
+        system: step.system,
+        prompt: step.prompt,
+        tools,
+        stopWhen: stepCountIs(step.maxSteps),
+        abortSignal: context.signal
+      }),
+    summarizeResult: (generated) => {
+      const toolSummary = summarizeToolInteractions(generated);
+      return {
+        output: summarizeText('text', generated.text),
+        finishReason: generated.finishReason,
+        usage: generated.totalUsage,
+        steps: generated.steps.length,
+        tools: { offered: step.tools, ...toolSummary }
+      };
+    }
   });
 
   return {
@@ -172,6 +284,8 @@ export const runStep = async (
   switch (step.kind) {
     case 'extract':
       return runExtract(step, context);
+    case 'generate':
+      return runGenerate(step, context);
     case 'tool_loop':
       return runToolLoop(step, context);
     case 'transform':

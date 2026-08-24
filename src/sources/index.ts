@@ -20,6 +20,7 @@ import { readPdfBytes } from './pdf.js';
 import { mediaTypeFor, readImageBytes, scannedPdfRefusal } from './image.js';
 import { SourceError } from './types.js';
 import type { ReadOutcome, SourceInput, SourceRecord } from './types.js';
+import type { AiLogger } from '../ai/logging.js';
 
 export type { SourceInput, SourceRecord, ReadOutcome } from './types.js';
 export { SourceError } from './types.js';
@@ -109,7 +110,8 @@ type Binary = {
 const readBinary = async (
   { reference, extension, load }: Binary,
   model: LanguageModel | undefined,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  ai: SourceAiContext | undefined
 ): Promise<{ kind: string; text: string }> => {
   if (TEXT_EXTENSIONS.has(extension)) {
     return { kind: 'file', text: (await load()).toString('utf8').trim() };
@@ -141,7 +143,8 @@ const readBinary = async (
         mediaType,
         reference,
         model,
-        signal
+        signal,
+        ...ai
       })
     };
   }
@@ -154,7 +157,8 @@ const readBinary = async (
 const readOne = async (
   input: SourceInput,
   model: LanguageModel | undefined,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  ai: SourceAiContext | undefined
 ): Promise<{ kind: string; text: string }> => {
   if (input.kind === 'text') {
     return { kind: 'text', text: input.content.trim() };
@@ -172,7 +176,8 @@ const readOne = async (
         load: async () => decodeUpload(input.content, reference)
       },
       model,
-      signal
+      signal,
+      ai
     );
   }
 
@@ -191,19 +196,31 @@ const readOne = async (
       }
     },
     model,
-    signal
+    signal,
+    ai
   );
+};
+
+type SourceAiContext = {
+  aiLogger?: AiLogger;
+  traceId?: string;
+  providerId?: string;
+  modelId?: string;
+  capability?: string;
 };
 
 export const readSources = async ({
   inputs,
   model,
-  signal
+  signal,
+  ai
 }: {
   inputs: SourceInput[];
   /** Needed only for images. Absent is fine when there are none. */
   model?: LanguageModel;
   signal?: AbortSignal;
+  /** Optional identity for image-transcription log correlation. */
+  ai?: SourceAiContext;
 }): Promise<ReadOutcome> => {
   const records: SourceRecord[] = [];
   const skipped: { reference: string; reason: string }[] = [];
@@ -218,7 +235,7 @@ export const readSources = async ({
     const reference = label(input);
 
     try {
-      const { kind, text } = await readOne(input, model, signal);
+      const { kind, text } = await readOne(input, model, signal, ai);
 
       if (!text) {
         skipped.push({ reference, reason: 'Contained no text.' });

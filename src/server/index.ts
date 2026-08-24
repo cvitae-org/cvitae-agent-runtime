@@ -11,6 +11,11 @@
  * same decision. The service reads and writes the user's CV and holds the API
  * keys; it is not built to be reachable by anything other than this machine, so
  * `HOST` should not be changed without putting something in front of it.
+ *
+ * The exception, and the only one, is `RUNTIME_MODE=hosted` — a deployment that
+ * holds no credential and serves no storage. What it permits lives in
+ * `policy.ts`; what both it and this process agree on lives in `handlers.ts`.
+ * This file is now the Fastify half of that split and nothing more.
  */
 
 // First, and before anything below reads `process.env`. ESM evaluates imports
@@ -21,9 +26,23 @@ import Fastify from 'fastify';
 import type { FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { createRuntime } from '../index.js';
-import { RuntimeError } from '../core/types.js';
-import { AiConfigError, resolveModel } from '../providers/resolve.js';
+import { resolveModel } from '../providers/resolve.js';
 import { runtimeHome } from '../store/paths.js';
+import { createDraft, mailHealth } from '../mail/index.js';
+import {
+  errorResponse,
+  parseBatchRequest,
+  parseRunRequest,
+  type Cancelled,
+  type HttpResponse
+} from './handlers.js';
+import {
+  credentialWarning,
+  isHosted,
+  runtimeMode,
+  servedCapabilities,
+  servedTools
+} from './policy.js';
 
 const PORT = Number(process.env.PORT ?? 8788);
 const HOST = process.env.HOST ?? '127.0.0.1';
@@ -64,7 +83,6 @@ const timeoutFromEnv = (raw: string | undefined, fallback: number): number => {
  * their own `timeoutMs` and get the shorter one.
  */
 const DEFAULT_TIMEOUT_MS = timeoutFromEnv(process.env.RUN_TIMEOUT_MS, 300_000);
-const MAX_TIMEOUT_MS = 600_000;
 
 /**
  * Room for an uploaded CV, which Fastify's 1MB default does not leave.
@@ -84,6 +102,30 @@ const server = Fastify({
 });
 const runtime = createRuntime();
 
+/** Writes an `HttpResponse` from `handlers.ts`, logging whatever it asked for. */
+const send = (reply: FastifyReply, response: HttpResponse) => {
+  if (response.log) server.log[response.log.level](response.log.message);
+  return response.body === undefined
+    ? reply.status(response.status).send()
+    : reply.status(response.status).send(response.body);
+};
+
+/**
+ * The refusal the storage routes give a hosted deployment.
+ *
+ * They are unreachable there anyway — no Netlify function is mapped to them —
+ * but a mode that only changes behaviour on one transport is a mode that
+ * behaves differently depending on how it was started, which is exactly the
+ * kind of thing nobody discovers until it matters.
+ */
+const storageUnavailable = (what: string): HttpResponse => ({
+  status: 501,
+  body: {
+    error: `${what} is not available on a hosted runtime: it has no local store and no access to your machine. Run cvitae-agent-runtime on your own machine for it.`,
+    reason: 'storage_unavailable'
+  }
+});
+
 /**
  * What this process is and what it is configured to talk to.
  *
@@ -97,8 +139,16 @@ const runtime = createRuntime();
  * Resolving builds a client; it sends nothing. A missing credential is reported
  * rather than thrown, because a health check that fails when generation is
  * misconfigured cannot be used to discover that generation is misconfigured.
+ *
+ * In hosted mode there is nothing to report and reporting it would be a lie:
+ * the process holds no key and every run brings its own, so the provider is
+ * whatever the caller last said it was.
  */
 const describeModel = async () => {
+  if (isHosted()) {
+    return { byok: true, detail: 'Every run supplies its own provider and key.' };
+  }
+
   try {
     const { providerId, modelId } = await resolveModel({});
     return { providerId, modelId };
@@ -109,17 +159,20 @@ const describeModel = async () => {
 
 server.get('/health', async () => ({
   status: 'ok',
-  home: runtimeHome(),
+  mode: runtimeMode(),
+  home: isHosted() ? null : runtimeHome(),
   generation: await describeModel(),
-  capabilities: runtime.listCapabilities(),
-  tools: runtime.listTools()
+  capabilities: servedCapabilities(runtime.listCapabilities()),
+  tools: servedTools(runtime.listTools())
 }));
 
 /**
  * Reports what is indexed. Cheap, and the first thing worth checking when
  * retrieval returns nothing — the usual answer is that nothing was imported.
  */
-server.get('/state', async () => {
+server.get('/state', async (_request, reply) => {
+  if (isHosted()) return send(reply, storageUnavailable('The index'));
+
   const store = await runtime.store();
   const document = await store.documents.read();
 
@@ -134,39 +187,6 @@ server.get('/state', async () => {
     offers: await store.offers.count()
   };
 });
-
-/**
- * The run envelope.
- *
- * `input` is nested rather than being the body itself. That is a change from
- * the shape this route started with, and the reason is that zod strips unknown
- * keys: a flat body carrying a stray `model` alongside the capability's own
- * fields would validate cleanly with the override silently dropped, and "my
- * model setting did nothing" is close to undebuggable from the outside. Nesting
- * makes the two unambiguous, and a body with no `input` is rejected outright
- * rather than quietly treated as an empty one.
- */
-const runRequestSchema = z.object({
-  input: z.unknown(),
-  /**
-   * Which provider and model to use for this call. Never a credential: those
-   * stay in this process's environment, which is most of the point of moving
-   * them out of cvitae. `resolveModel` checks the provider name against the
-   * enum and puts `baseURL` through the loopback guard, so this only has to
-   * establish that they are strings.
-   */
-  model: z
-    .object({
-      providerId: z.string().optional(),
-      modelId: z.string().optional(),
-      baseURL: z.string().optional()
-    })
-    .optional(),
-  timeoutMs: z.number().int().positive().max(MAX_TIMEOUT_MS).optional()
-});
-
-/** Why a run was cancelled, which decides what the caller is owed. */
-type Cancelled = 'timeout' | 'disconnect';
 
 /**
  * The run's abort signal, and a record of what fired it.
@@ -216,35 +236,16 @@ const cancellation = (reply: FastifyReply, timeoutMs: number) => {
 server.post<{ Params: { name: string }; Body: unknown }>(
   '/run/:name',
   async (request, reply) => {
-    const body = request.body ?? {};
+    const parsed = parseRunRequest({
+      capability: request.params.name,
+      body: request.body,
+      authorization: request.headers.authorization,
+      contentLength: request.headers['content-length']
+    });
 
-    // Checked by hand rather than by the schema, because zod treats an absent
-    // `unknown` as a present undefined — a flat body would parse here and fail
-    // one layer down against the capability's own schema, reporting a missing
-    // `offerText` when the real mistake was sending the fields unwrapped. That
-    // error names the wrong thing, and this is the one shape mistake a new
-    // caller actually makes.
-    if (typeof body !== 'object' || body === null || !('input' in body)) {
-      return reply.status(400).send({
-        error:
-          'The body must be an envelope: {"input": { … }}, optionally with "model" and "timeoutMs". The capability\'s own fields go inside "input".',
-        reason: 'invalid_input'
-      });
-    }
+    if (!parsed.ok) return send(reply, parsed.response);
 
-    const parsed = runRequestSchema.safeParse(body);
-
-    if (!parsed.success) {
-      const detail = parsed.error.issues
-        .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
-        .join('; ');
-
-      return reply
-        .status(400)
-        .send({ error: `Invalid request body. ${detail}`, reason: 'invalid_input' });
-    }
-
-    const { input, model, timeoutMs } = parsed.data;
+    const { input, model, timeoutMs } = parsed.request;
     const run = cancellation(reply, timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
     try {
@@ -253,26 +254,12 @@ server.post<{ Params: { name: string }; Body: unknown }>(
         signal: run.signal
       });
     } catch (error) {
-      return replyForError(reply, error, run.reason());
+      return send(reply, errorResponse(error, run.reason()));
     } finally {
       run.settle();
     }
   }
 );
-
-const batchRequestSchema = z.object({
-  inputs: z.array(z.unknown()).min(1, 'At least one input is required.'),
-  model: z
-    .object({
-      providerId: z.string().optional(),
-      modelId: z.string().optional(),
-      baseURL: z.string().optional()
-    })
-    .optional(),
-  /** Per input, not for the batch. See the route comment. */
-  timeoutMs: z.number().int().positive().max(MAX_TIMEOUT_MS).optional(),
-  concurrency: z.number().int().positive().max(16).optional()
-});
 
 /**
  * Runs a capability over many inputs, streaming each result as it lands.
@@ -286,6 +273,10 @@ const batchRequestSchema = z.object({
  * work that survived is on the caller's disk and the work that did not is
  * simply still to do.
  *
+ * That property is what makes the endpoint usable on a serverless host at all.
+ * A platform that kills the function at 60 seconds takes the unfinished inputs
+ * with it and leaves every finished one where the caller already put it.
+ *
  * `timeoutMs` bounds each input rather than the batch. A batch has no honest
  * total — it depends on how many inputs there are and how slow the model is
  * that day — and one offer that hangs should cost that offer, not the nineteen
@@ -298,29 +289,16 @@ const batchRequestSchema = z.object({
 server.post<{ Params: { name: string }; Body: unknown }>(
   '/run-batch/:name',
   async (request, reply) => {
-    const body = request.body ?? {};
+    const parsed = parseBatchRequest({
+      capability: request.params.name,
+      body: request.body,
+      authorization: request.headers.authorization,
+      contentLength: request.headers['content-length']
+    });
 
-    if (typeof body !== 'object' || body === null || !('inputs' in body)) {
-      return reply.status(400).send({
-        error:
-          'The body must be {"inputs": [ … ]}, optionally with "model", "timeoutMs" and "concurrency". Each entry of "inputs" is one capability input.',
-        reason: 'invalid_input'
-      });
-    }
+    if (!parsed.ok) return send(reply, parsed.response);
 
-    const parsed = batchRequestSchema.safeParse(body);
-
-    if (!parsed.success) {
-      const detail = parsed.error.issues
-        .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
-        .join('; ');
-
-      return reply
-        .status(400)
-        .send({ error: `Invalid request body. ${detail}`, reason: 'invalid_input' });
-    }
-
-    const { inputs, model, timeoutMs, concurrency } = parsed.data;
+    const { inputs, model, timeoutMs, concurrency } = parsed.request;
 
     // No overall deadline: the batch runs until it is done or the caller leaves.
     // A total would have to be guessed from the input count and would cut off a
@@ -343,7 +321,7 @@ server.post<{ Params: { name: string }; Body: unknown }>(
       'X-Accel-Buffering': 'no'
     });
 
-    const send = (event: string, payload: unknown): void => {
+    const emit = (event: string, payload: unknown): void => {
       if (reply.raw.writableEnded) return;
       reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     };
@@ -353,7 +331,7 @@ server.post<{ Params: { name: string }; Body: unknown }>(
         request.params.name,
         inputs,
         { model, concurrency, timeoutMs, signal: controller.signal },
-        (item) => send('result', item)
+        (item) => emit('result', item)
       );
 
       if (summary.aborted) {
@@ -365,21 +343,15 @@ server.post<{ Params: { name: string }; Body: unknown }>(
         );
       }
 
-      send('done', summary);
+      emit('done', summary);
     } catch (error) {
       // Only reached for a failure that is not one input's: an unknown
       // capability, or a provider that cannot be resolved at all. Per-input
       // failures never land here — they are already in the stream.
-      const detail =
-        error instanceof RuntimeError || error instanceof AiConfigError
-          ? error.message
-          : 'The runtime failed to start the batch.';
+      const response = errorResponse(error);
+      if (response.log) server.log[response.log.level](response.log.message);
 
-      server.log.error(error);
-      send('error', {
-        error: detail,
-        reason: error instanceof RuntimeError ? error.code : 'error'
-      });
+      emit('error', response.body ?? { error: 'The batch could not be started.' });
     } finally {
       reply.raw.off('close', onClose);
       if (!reply.raw.writableEnded) reply.raw.end();
@@ -390,6 +362,8 @@ server.post<{ Params: { name: string }; Body: unknown }>(
 server.post<{ Body: { document?: unknown } }>(
   '/document',
   async (request, reply) => {
+    if (isHosted()) return send(reply, storageUnavailable('Storing the CV'));
+
     try {
       const store = await runtime.store();
       const saved = await store.documents.write(
@@ -401,91 +375,148 @@ server.post<{ Body: { document?: unknown } }>(
 
       return { updated_at: saved.updated_at, indexed };
     } catch (error) {
-      return replyForError(reply, error);
+      return send(reply, errorResponse(error));
     }
   }
 );
 
+/**
+ * The mailbox, proxied for the browser.
+ *
+ * cvitae runs in a browser and cvitae-mail binds to loopback, so the app cannot
+ * reach it directly and should not have to know its port. These two routes are
+ * the whole surface, and the shape of that surface is the policy:
+ *
+ *   GET  /mail/status   is a mailbox connected, and to which address
+ *   POST /mail/draft    put a message in the user's Drafts folder
+ *
+ * **There is no send route, and that is deliberate.** `mail/client.ts` exposes
+ * `sendMail` because cvitae-mail has the endpoint, but nothing here routes it.
+ * A draft that is wrong is a draft the user deletes; a sent message that is
+ * wrong is in a recruiter's inbox, and the body was written by a model reading
+ * text a stranger posted to a job board. The click in Gmail is the review step,
+ * and it costs one click.
+ *
+ * Adding a send route later is a deliberate act requiring `MAIL_ALLOW_SEND=true`
+ * on the service as well. Both switches exist so that neither can be flipped by
+ * accident.
+ *
+ * Neither route exists in hosted mode. cvitae-mail holds a Gmail token, binds
+ * to loopback, and belongs to one person; proxying it from a public host would
+ * be handing that mailbox to whoever finds the URL.
+ */
+const mailAttachmentSchema = z.object({
+  filename: z.string().min(1).max(255),
+  content_type: z.string().min(1).max(255).default('application/pdf'),
+  /** Base64, with or without the `data:` prefix a browser's FileReader adds. */
+  content_base64: z.string().min(1)
+});
+
+const mailDraftSchema = z.object({
+  to: z.array(z.string().min(3)).min(1).max(10),
+  cc: z.array(z.string().min(3)).max(10).optional(),
+  subject: z.string().max(500).default(''),
+  text: z.string().min(1).max(200_000),
+  from_name: z.string().max(200).optional(),
+  reply_to: z.string().min(3).optional(),
+  attachments: z.array(mailAttachmentSchema).max(5).optional()
+});
+
+server.get('/mail/status', async (_request, reply) => {
+  if (isHosted()) return send(reply, storageUnavailable('The mailbox'));
+
+  const outcome = await mailHealth();
+
+  if (outcome.status === 'unavailable') {
+    // Not an error. cvitae-mail is optional, and an app that shows a
+    // "connect your mailbox" prompt needs to tell "not running" apart from
+    // "running but nobody has connected".
+    return reply.send({
+      status: 'unavailable',
+      running: false,
+      connected: false,
+      detail: outcome.detail
+    });
+  }
+
+  if (outcome.status === 'failed') {
+    return reply.send({
+      status: outcome.reason,
+      running: true,
+      connected: false,
+      detail: outcome.detail
+    });
+  }
+
+  return reply.send({
+    status: 'ok',
+    running: true,
+    connected: Boolean(outcome.data.connected),
+    email: outcome.data.email ?? null,
+    /** Where a person goes to grant consent. Opened by the browser, not by us. */
+    connect_url: `${process.env.MAIL_URL?.trim() || 'http://127.0.0.1:8789'}/connect`
+  });
+});
+
+server.post<{ Body: unknown }>('/mail/draft', async (request, reply) => {
+  if (isHosted()) return send(reply, storageUnavailable('The mailbox'));
+
+  const parsed = mailDraftSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return reply.status(400).send({
+      error: `Invalid draft. ${parsed.error.issues
+        .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+        .join('; ')}`,
+      reason: 'invalid_input'
+    });
+  }
+
+  const outcome = await createDraft(parsed.data);
+
+  if (outcome.status === 'ok') {
+    server.log.info(`Drafted an application to ${parsed.data.to.join(', ')}.`);
+    return reply.send({ status: 'ok', data: outcome.data });
+  }
+
+  if (outcome.status === 'unavailable') {
+    return reply.status(503).send({
+      error: outcome.detail,
+      reason: 'mail_unavailable'
+    });
+  }
+
+  // cvitae-mail reached a decision — nothing connected, a recipient outside the
+  // allow-list, a message over the ceiling. Its own wording already ends with
+  // what the user can do, so it is passed through rather than restated.
+  return reply.status(502).send({ error: outcome.detail, reason: outcome.reason });
+});
+
 server.post('/reindex', async (_request, reply) => {
+  if (isHosted()) return send(reply, storageUnavailable('Reindexing'));
+
   try {
     const store = await runtime.store();
     return await store.reindex();
   } catch (error) {
-    return replyForError(reply, error);
+    return send(reply, errorResponse(error));
   }
 });
-
-/**
- * Maps a failure to a status the caller can act on.
- *
- * The distinction that matters is between "you asked wrongly" (400) and "this
- * machine is not set up" (500) — cvitae turns the first into a field error and
- * the second into a settings prompt, and collapsing both into 500 makes a
- * missing API key look like a bug in the request.
- */
-const replyForError = (
-  reply: FastifyReply,
-  error: unknown,
-  cancelled: Cancelled | null = null
-) => {
-  // Checked before the error itself, because a cancelled run throws from
-  // wherever it happened to be — usually a step reporting that its model call
-  // was aborted. That message describes the symptom; the cancellation is the
-  // cause, and it is the only one of the two the caller can act on.
-  if (cancelled === 'disconnect') {
-    // Nobody is listening, so there is nothing to say and no body to send. At
-    // info rather than warn: a closed tab is an ordinary event.
-    server.log.info('The caller disconnected; the run was aborted.');
-    return reply.status(499).send();
-  }
-
-  if (cancelled === 'timeout') {
-    server.log.warn('The run exceeded its time budget and was aborted.');
-    return reply.status(504).send({
-      error:
-        'The run took longer than its time budget and was stopped. A local model on one GPU runs each step in turn, so a large model can exceed it on a long offer — raise RUN_TIMEOUT_MS, send a larger timeoutMs, or use a smaller model.',
-      reason: 'timeout'
-    });
-  }
-
-  if (error instanceof RuntimeError) {
-    const status =
-      error.code === 'invalid_input' || error.code === 'unknown_capability'
-        ? 400
-        : // Not a failure of this service: the board refused, or published
-          // nothing a server can read. 422 rather than 502 because the request
-          // was well formed and the remedy is the caller's — supply the text.
-          error.code === 'unreadable_source'
-          ? 422
-        : // An `aborted` reaching here was not cancelled by this request — the
-          // caller passed its own signal, or one fired between the run ending
-          // and `settle`. Reported as a timeout rather than a bad gateway,
-          // which is the closer of the two.
-          error.code === 'aborted'
-          ? 504
-          : 502;
-
-    server.log.warn({ code: error.code }, error.message);
-    return reply.status(status).send({ error: error.message, reason: error.code });
-  }
-
-  if (error instanceof AiConfigError) {
-    server.log.error(error.message);
-    return reply
-      .status(500)
-      .send({ error: error.message, reason: 'ai_not_configured' });
-  }
-
-  server.log.error(error);
-  return reply
-    .status(500)
-    .send({ error: 'The runtime failed to complete the request.' });
-};
 
 const start = async () => {
   try {
     await server.listen({ port: PORT, host: HOST });
-    server.log.info(`cvitae-agent-runtime state lives in ${runtimeHome()}`);
+
+    const warning = credentialWarning();
+    if (warning) server.log.warn(warning);
+
+    if (isHosted()) {
+      server.log.info(
+        'RUNTIME_MODE is "hosted": no storage, no credential of its own, and every run must bring its own key.'
+      );
+    } else {
+      server.log.info(`cvitae-agent-runtime state lives in ${runtimeHome()}`);
+    }
   } catch (error) {
     server.log.error(error);
     process.exit(1);

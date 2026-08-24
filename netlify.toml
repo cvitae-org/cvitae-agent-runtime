@@ -1,0 +1,57 @@
+# Deploying the runtime as a BYOK proxy to the model providers.
+#
+# This is the second of the two deployments this project supports, and it is
+# deliberately the smaller one. The first — `pnpm serve` on your own machine —
+# holds the API keys and the CV and binds to loopback because of it. This one
+# holds neither: every run brings its own credential, nothing is written down,
+# and the four capabilities it serves are the four that never touch storage.
+#
+# `src/server/policy.ts` is where that is enforced, and is worth reading before
+# changing anything here.
+
+[build]
+  command = "pnpm build"
+  publish = "public"
+
+[build.environment]
+  # Selects the policy above. Set here rather than in the Netlify UI so that a
+  # deploy of this repository is hosted-mode by construction and cannot be one
+  # forgotten setting away from serving the local surface to the internet.
+  RUNTIME_MODE = "hosted"
+
+  # Under Netlify's 60s ceiling for a synchronous function. A run that finishes
+  # first answers 504 with a reason; one the platform kills answers nothing.
+  RUN_TIMEOUT_MS = "50000"
+
+  # Both are loopback services that exist only on a developer's machine. Left at
+  # their defaults, every offer analysis would spend a moment discovering that
+  # 127.0.0.1:8787 is not listening. Empty switches the attempt off.
+  #
+  # The scraper's absence is a real loss — it reads the boards that render
+  # client-side, which a plain GET cannot. If you run one on a public host, put
+  # its URL here.
+  SCRAPER_URL = ""
+  MAIL_URL = ""
+
+  # `verify_recipient`'s web tier. Without a Brave key it falls back to reading
+  # DuckDuckGo's HTML endpoint, which from a datacentre address is answered with
+  # a challenge more often than with results — so it is switched off, and the
+  # capability reports "the web search did not run" rather than pretending the
+  # web held nothing. Set BRAVE_API_KEY in the Netlify UI and delete this line
+  # to turn the tier back on. https://brave.com/search/api/
+  WEB_SEARCH = "off"
+
+  # Deliberately absent: OPENROUTER_API_KEY, HF_TOKEN, OPENAI_API_KEY.
+  #
+  # This deployment is defensible because it cannot spend money. A key here
+  # would be one relaxed check away from being spent by whoever finds the URL,
+  # and `credentialWarning()` says so at startup if one appears.
+
+[functions]
+  node_bundler = "esbuild"
+
+  # LanceDB is an optional dependency with a platform-specific Rust binary, and
+  # nothing a hosted function serves ever opens the index — `loadLance` is only
+  # reached from storage capabilities, which `policy.ts` refuses. Left external
+  # so esbuild does not pull the addon into every bundle.
+  external_node_modules = ["@lancedb/lancedb"]

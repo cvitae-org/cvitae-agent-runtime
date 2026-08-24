@@ -15,6 +15,13 @@
 
 import { embed, embedMany } from 'ai';
 import type { EmbeddingModel } from 'ai';
+import {
+  createAiLogger,
+  summarizeEmbeddingInput,
+  summarizeEmbeddingOutput,
+  withAiLogging,
+  type AiLogger
+} from '../ai/logging.js';
 
 /**
  * Ollama serves embeddings from one model instance, so a large parallel batch
@@ -48,11 +55,13 @@ export type Embedder = {
 export const createEmbedder = ({
   model,
   modelId,
-  providerId
+  providerId,
+  aiLogger = createAiLogger()
 }: {
   model: EmbeddingModel<string>;
   modelId: string;
   providerId: string;
+  aiLogger?: AiLogger;
 }): Embedder => {
   const maxParallelCalls =
     providerId === 'local' ? LOCAL_PARALLEL_CALLS : HOSTED_PARALLEL_CALLS;
@@ -71,7 +80,19 @@ export const createEmbedder = ({
     },
 
     async one(text: string) {
-      const { embedding } = await embed({ model, value: text });
+      const { embedding } = await withAiLogging({
+        logger: aiLogger,
+        operation: 'embed',
+        purpose: 'embedding',
+        providerId,
+        modelId,
+        input: summarizeEmbeddingInput([text]),
+        call: () => embed({ model, value: text }),
+        summarizeResult: (result) => ({
+          output: summarizeEmbeddingOutput([result.embedding]),
+          usage: result.usage
+        })
+      });
       remember(embedding);
       return normalise(embedding);
     },
@@ -79,10 +100,23 @@ export const createEmbedder = ({
     async many(texts: string[]) {
       if (texts.length === 0) return [];
 
-      const { embeddings } = await embedMany({
-        model,
-        values: texts,
-        maxParallelCalls
+      const { embeddings } = await withAiLogging({
+        logger: aiLogger,
+        operation: 'embedMany',
+        purpose: 'embedding',
+        providerId,
+        modelId,
+        input: summarizeEmbeddingInput(texts),
+        call: () =>
+          embedMany({
+            model,
+            values: texts,
+            maxParallelCalls
+          }),
+        summarizeResult: (result) => ({
+          output: summarizeEmbeddingOutput(result.embeddings),
+          usage: result.usage
+        })
       });
 
       remember(embeddings[0]);

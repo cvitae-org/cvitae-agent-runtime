@@ -107,44 +107,146 @@ const looksLikeChallenge = (html: string): boolean => {
   return CHALLENGE_MARKERS.some((marker) => head.includes(marker));
 };
 
-export const fetchOffer = async (
+/**
+ * One HTTP GET, reduced to the three answers a caller can act on.
+ *
+ * Split out of `fetchOffer` because the web tier reads careers and contact
+ * pages, which are not offers and must not inherit an offer's messages or its
+ * "this is too short to be a posting" floor. What both want is identical —
+ * a browser-shaped request, a challenge treated as terminal, redirects
+ * followed — and having it written twice is how the two drift apart.
+ */
+export type HtmlOutcome =
+  | { status: 'ok'; html: string; finalUrl: string }
+  | { status: 'blocked'; detail: string }
+  /** A guard refused this URL or one it redirected to. Never retried. */
+  | { status: 'refused'; detail: string }
+  | { status: 'error'; detail: string };
+
+export type RequestOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  /**
+   * Vetoes a URL before it is requested, and again at every redirect.
+   *
+   * Present only for URLs this project did not choose — the ones a search
+   * engine returned. Following those blind is a server-side request forgery in
+   * the ordinary sense: a page that ranks for a company name can answer 302 to
+   * `http://169.254.169.254/`, and text fetched from there would be scanned for
+   * addresses and shown to the user as evidence. Checking each hop rather than
+   * the first is the whole point, so redirects are followed by hand here.
+   *
+   * Returns a reason to refuse, or `undefined` to allow.
+   */
+  allow?: (url: string) => Promise<string | undefined>;
+};
+
+/** How many hops to follow when this is the one doing the following. */
+const MAX_REDIRECTS = 4;
+
+export const requestHtml = async (
   url: string,
-  signal?: AbortSignal
-): Promise<FetchOutcome> => {
+  { signal, timeoutMs = FETCH_TIMEOUT_MS, allow }: RequestOptions = {}
+): Promise<HtmlOutcome> => {
   if (!isHttpUrl(url)) {
     return { status: 'error', detail: 'Not a valid http(s) URL.' };
   }
 
-  let response: Response;
+  let target = url;
 
-  try {
-    response = await fetch(url, {
-      redirect: 'follow',
-      // Both clocks: the page's own budget, and the run being cancelled. A
-      // board that is merely slow must not outlive the request that wanted it.
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)])
-        : AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      headers: {
-        'User-Agent': BROWSER_UA,
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'pl,en;q=0.8'
+  for (let hop = 0; ; hop += 1) {
+    const refusal = await allow?.(target);
+
+    if (refusal) return { status: 'refused', detail: refusal };
+
+    let response: Response;
+
+    try {
+      response = await fetch(target, {
+        // Hand-followed only when there is a guard to run between hops.
+        redirect: allow ? 'manual' : 'follow',
+        // Both clocks: the page's own budget, and the run being cancelled. A
+        // board that is merely slow must not outlive the request that wanted it.
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+          : AbortSignal.timeout(timeoutMs),
+        headers: {
+          'User-Agent': BROWSER_UA,
+          Accept: 'text/html,application/xhtml+xml',
+          'Accept-Language': 'pl,en;q=0.8'
+        }
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error && error.name === 'TimeoutError'
+          ? `The page did not respond within ${timeoutMs / 1000}s.`
+          : 'The page could not be reached.';
+      return { status: 'error', detail };
+    }
+
+    if (allow && response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+
+      if (!location) {
+        return { status: 'error', detail: `The site returned HTTP ${response.status} with no location.` };
       }
-    });
-  } catch (error) {
-    const detail =
-      error instanceof Error && error.name === 'TimeoutError'
-        ? `The page did not respond within ${FETCH_TIMEOUT_MS / 1000}s.`
-        : 'The page could not be reached.';
-    return { status: 'error', detail };
+
+      if (hop >= MAX_REDIRECTS) {
+        return { status: 'error', detail: 'The site redirected too many times.' };
+      }
+
+      try {
+        target = new URL(location, target).toString();
+      } catch {
+        return { status: 'error', detail: 'The site redirected to an unreadable location.' };
+      }
+
+      continue;
+    }
+
+    const html = await response.text();
+
+    // 403/429 plus a challenge body is bot protection, which is an
+    // infrastructure obstacle rather than a missing page — say so, so the user
+    // knows pasting the text manually is the way forward.
+    if (looksLikeChallenge(html)) {
+      return {
+        status: 'blocked',
+        detail: 'The site answered with a bot-protection challenge instead of the page.'
+      };
+    }
+
+    if (!response.ok) {
+      return { status: 'error', detail: `The site returned HTTP ${response.status}.` };
+    }
+
+    return { status: 'ok', html, finalUrl: response.url || target };
   }
+};
 
-  const html = await response.text();
+/**
+ * Reads one offer page.
+ *
+ * `allow` is optional and normally absent. A URL that a person pasted into
+ * their own machine's runtime needs no vetting — they could have opened it in a
+ * browser — and refusing loopback there would break the perfectly ordinary case
+ * of testing against a board served from `localhost`.
+ *
+ * It stops being absent the moment the runtime is reachable by someone other
+ * than its owner. Then the URL is a stranger's, and fetching it is a
+ * server-side request forgery in the ordinary sense: the reply is turned into
+ * text and handed back verbatim. `resolveOffer` passes `refuseUrl` for exactly
+ * that case, and `requestHtml` follows the redirects by hand so every hop is
+ * checked rather than only the first.
+ */
+export const fetchOffer = async (
+  url: string,
+  signal?: AbortSignal,
+  allow?: RequestOptions['allow']
+): Promise<FetchOutcome> => {
+  const outcome = await requestHtml(url, { signal, allow });
 
-  // 403/429 plus a challenge body is bot protection, which is an infrastructure
-  // obstacle rather than a missing page — say so, so the user knows pasting the
-  // text manually is the way forward.
-  if (looksLikeChallenge(html)) {
+  if (outcome.status === 'blocked') {
     return {
       status: 'blocked',
       detail:
@@ -152,14 +254,15 @@ export const fetchOffer = async (
     };
   }
 
-  if (!response.ok) {
-    return {
-      status: 'error',
-      detail: `The board returned HTTP ${response.status}.`
-    };
+  if (outcome.status !== 'ok') {
+    // A `refused` is the guard talking, and its wording is about where the URL
+    // pointed rather than about a board — so it is passed through untouched.
+    return outcome.status === 'refused'
+      ? { status: 'error', detail: outcome.detail }
+      : { status: 'error', detail: outcome.detail.replace('site', 'board') };
   }
 
-  const text = extractVisibleText(html);
+  const text = extractVisibleText(outcome.html);
 
   if (text.length < MIN_USEFUL_CHARS) {
     return {
@@ -172,6 +275,6 @@ export const fetchOffer = async (
   return {
     status: 'ok',
     text: text.slice(0, MAX_TEXT_CHARS),
-    finalUrl: response.url || url
+    finalUrl: outcome.finalUrl
   };
 };

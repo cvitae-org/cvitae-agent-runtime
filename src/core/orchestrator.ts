@@ -97,7 +97,9 @@ export const executePlan = async (
       step: step.name,
       status: 'degraded',
       reason: describe(result.reason),
-      value: step.kind === 'extract' ? (step.fallback ?? {}) : {}
+      // Both model-driven kinds that declare fallbacks contribute them; a
+      // tool loop and a transform have none to give.
+      value: 'fallback' in step ? (step.fallback ?? {}) : {}
     });
     degraded.push(step.name);
   };

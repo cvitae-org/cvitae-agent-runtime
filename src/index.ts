@@ -30,6 +30,11 @@ import { mergeOutcomes } from './core/aggregator.js';
 import { resolveModel, resolveEmbeddingModel, type ModelOverride } from './providers/resolve.js';
 import type { RunContext, RunResult } from './core/types.js';
 import { RuntimeError } from './core/types.js';
+import {
+  createAiLogger,
+  withAiTrace,
+  type AiLogger
+} from './ai/logging.js';
 
 export type RuntimeOptions = {
   capabilities?: CapabilityMap;
@@ -37,6 +42,8 @@ export type RuntimeOptions = {
   /** Per-process model settings; a call may override them again. */
   model?: ModelOverride;
   embedding?: ModelOverride;
+  /** Primarily for alternate sinks and tests. Defaults to metadata JSONL. */
+  aiLogger?: AiLogger;
 };
 
 export type RunOptions = {
@@ -56,17 +63,19 @@ export class Runtime {
   private readonly tools: ToolRegistry;
   private embedderPromise: Promise<Embedder> | null = null;
   private storePromise: Promise<Store> | null = null;
+  private readonly aiLogger: AiLogger;
 
   constructor(private readonly options: RuntimeOptions = {}) {
     this.capabilities = options.capabilities ?? defaultCapabilities;
     this.tools = new ToolRegistry(options.tools ?? defaultTools);
+    this.aiLogger = options.aiLogger ?? createAiLogger();
   }
 
   private async embedder(): Promise<Embedder> {
     if (!this.embedderPromise) {
       this.embedderPromise = (async () => {
         const resolved = await resolveEmbeddingModel(this.options.embedding);
-        return createEmbedder(resolved);
+        return createEmbedder({ ...resolved, aiLogger: this.aiLogger });
       })();
 
       this.embedderPromise.catch(() => {
@@ -108,10 +117,12 @@ export class Runtime {
   }
 
   private async context(
+    capability: string | undefined,
     input: Record<string, unknown>,
-    options: RunOptions
+    options: RunOptions,
+    traceId = crypto.randomUUID()
   ): Promise<RunContext> {
-    const [{ model, providerId }, store] = await Promise.all([
+    const [{ model, providerId, modelId }, store] = await Promise.all([
       resolveModel({ ...this.options.model, ...options.model }),
       this.store()
     ]);
@@ -119,6 +130,10 @@ export class Runtime {
     return {
       model,
       providerId,
+      modelId,
+      traceId,
+      aiLogger: this.aiLogger,
+      capability,
       store,
       tools: this.tools,
       input,
@@ -135,15 +150,26 @@ export class Runtime {
   ): Promise<RunResult> {
     const capability = route(this.capabilities, capabilityName);
     const validated = validateInput(capability, input);
+    return this.runCapability(capability, validated, options);
+  }
 
+  private async runCapability(
+    capability: ReturnType<typeof route>,
+    validated: Record<string, unknown>,
+    options: RunOptions,
+    traceId = crypto.randomUUID()
+  ): Promise<RunResult> {
     const context = await this.context(
+      capability.name,
       validated as Record<string, unknown>,
-      options
+      options,
+      traceId
     );
 
-    const plan = await buildPlan(capability, validated, context);
-
-    return executePlan(plan, context, capability.aggregate ?? mergeOutcomes);
+    return withAiTrace(traceId, async () => {
+      const plan = await buildPlan(capability, validated, context);
+      return executePlan(plan, context, capability.aggregate ?? mergeOutcomes);
+    });
   }
 
   /**
@@ -207,8 +233,11 @@ export class Runtime {
    * this, and every caller inside cvitae knows.
    */
   async runFromText(request: string, options: RunOptions = {}): Promise<RunResult> {
-    const context = await this.context({ request }, options);
-    const choice = await routeWithModel(this.capabilities, request, context);
+    const traceId = crypto.randomUUID();
+    const context = await this.context(undefined, { request }, options, traceId);
+    const choice = await withAiTrace(traceId, () =>
+      routeWithModel(this.capabilities, request, context)
+    );
 
     if (!choice) {
       throw new RuntimeError(
@@ -217,7 +246,13 @@ export class Runtime {
       );
     }
 
-    return this.run(choice.capability.name, { question: request }, options);
+    const validated = validateInput(choice.capability, { question: request });
+    return this.runCapability(
+      choice.capability,
+      validated as Record<string, unknown>,
+      options,
+      traceId
+    );
   }
 }
 
@@ -257,6 +292,14 @@ export type {
 } from './offers/index.js';
 export type { SourceInput, SourceRecord, ReadOutcome } from './sources/index.js';
 export type { ExtractCvInput, ExtractCvResult } from './capabilities/extractCv.js';
+export type {
+  TranslateCvInput,
+  TranslateCvResult,
+  TranslatableCv,
+  TranslationSection
+} from './capabilities/translateCv.js';
 export { runtimeHome, documentPath, lancePath } from './store/paths.js';
 export { providers, providerIds, AiConfigError } from './providers/resolve.js';
 export type { ProviderId } from './providers/resolve.js';
+export { createAiLogger, JsonlAiLogger, NoopAiLogger } from './ai/logging.js';
+export type { AiLogEvent, AiLogger, AiLogMode } from './ai/logging.js';

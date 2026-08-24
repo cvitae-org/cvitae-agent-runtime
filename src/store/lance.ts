@@ -15,18 +15,54 @@
  * handles once here instead of at every call site.
  */
 
-import * as lancedb from '@lancedb/lancedb';
+import type * as lancedb from '@lancedb/lancedb';
 import { lancePath, ensureHome } from './paths.js';
+import { RuntimeError } from '../core/types.js';
 
 export type Row = Record<string, unknown>;
+
+type LanceModule = typeof lancedb;
+
+let modulePromise: Promise<LanceModule> | null = null;
+
+/**
+ * Loads LanceDB on first use, and tolerates it not being installed at all.
+ *
+ * The import is dynamic for the same reason the provider packages in
+ * `providers/resolve.ts` are: it is a Rust addon with a platform-specific
+ * binary, and nothing should pay to load it until something asks it a question.
+ *
+ * What is new is that it may be absent. `@lancedb/lancedb` is an optional
+ * dependency, so a deployment that serves only the capabilities which touch no
+ * storage — the hosted one — installs without it and never ships the binary.
+ * A failed import is therefore a configuration, not a crash, and is reported as
+ * the thing the caller actually lost: search.
+ */
+const loadLance = async (): Promise<LanceModule> => {
+  if (!modulePromise) {
+    modulePromise = import('@lancedb/lancedb').catch((error) => {
+      // Cleared so a later call retries rather than serving this rejection for
+      // the life of the process — the same rule as every other cache here.
+      modulePromise = null;
+
+      throw new RuntimeError(
+        `The search index is unavailable: @lancedb/lancedb is not installed in this deployment. Everything that reads or writes the CV index needs it — install it, or use a runtime that has it. (${(error as Error).message})`,
+        'step_failed'
+      );
+    });
+  }
+
+  return modulePromise;
+};
 
 let databasePromise: Promise<lancedb.Connection> | null = null;
 
 const database = async (): Promise<lancedb.Connection> => {
   if (!databasePromise) {
     databasePromise = (async () => {
+      const lance = await loadLance();
       await ensureHome();
-      return lancedb.connect(lancePath());
+      return lance.connect(lancePath());
     })();
 
     // A failed connection must not be cached, or the process keeps serving the
@@ -132,8 +168,10 @@ export class Collection<T extends Row = Row> {
       if (this.indexedColumns.has(column)) continue;
 
       try {
+        const lance = await loadLance();
+
         await table.createIndex(column, {
-          config: lancedb.Index.fts(),
+          config: lance.Index.fts(),
           replace: true
         });
         this.indexedColumns.add(column);

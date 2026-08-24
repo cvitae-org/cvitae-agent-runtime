@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>cvitae-agent-runtime</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font: 16px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 4rem auto; padding: 0 1.5rem; }
+  code { background: #f4f4f5; padding: .15em .35em; border-radius: .25em; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #e5e5e5; }
+    code { background: #27272a; }
+  }
+</style>
+<h1>cvitae-agent-runtime</h1>
+<p>
+  An API, not a site. It runs four capabilities —
+  <code>extract_cv</code>, <code>translate_cv</code>, <code>analyze_offer</code>
+  and <code>verify_recipient</code> — against whichever model provider the
+  caller names, using the API key the caller sends.
+</p>
+<p>
+  It holds no credential of its own and stores nothing: no CV, no offers, no
+  logs of what passed through. A request without a key is refused rather than
+  answered on somebody else's.
+</p>
+<p><a href="/health">/health</a> says what it will run.</p>

@@ -22,6 +22,7 @@
 
 import { z } from 'zod';
 import type { Capability, Plan, RunContext } from './types.js';
+import { summarizeObject, summarizeText, withAiLogging } from '../ai/logging.js';
 
 import type * as Ai from 'ai';
 type AiModule = typeof Ai;
@@ -74,16 +75,37 @@ export const planWithModel = async ({
   // A failed selection is not worth failing the run over: the fallback is
   // "offer every tool", which is what a runtime without a planner would do.
   try {
-    const { object } = await generateObject({
-      model: context.model,
-      schema: selectionSchema,
-      system:
-        'Choose the tools needed to accomplish the goal. Use only names from the list. Choose nothing you do not need.',
-      prompt: `GOAL:\n${goal}\n\nTOOLS:\n${available
-        .map((tool) => `- ${tool.name}: ${tool.describe}`)
-        .join('\n')}`,
-      maxOutputTokens: 400,
-      abortSignal: context.signal
+    const selectionSystem =
+      'Choose the tools needed to accomplish the goal. Use only names from the list. Choose nothing you do not need.';
+    const selectionPrompt = `GOAL:\n${goal}\n\nTOOLS:\n${available
+      .map((tool) => `- ${tool.name}: ${tool.describe}`)
+      .join('\n')}`;
+
+    const { object } = await withAiLogging({
+      logger: context.aiLogger,
+      traceId: context.traceId,
+      operation: 'generateObject',
+      purpose: 'planner',
+      providerId: context.providerId,
+      modelId: context.modelId,
+      capability: context.capability ?? capability,
+      step: 'tool_selection',
+      signal: context.signal,
+      input: summarizeText('text', selectionSystem, selectionPrompt),
+      call: () =>
+        generateObject({
+          model: context.model,
+          schema: selectionSchema,
+          system: selectionSystem,
+          prompt: selectionPrompt,
+          maxOutputTokens: 400,
+          abortSignal: context.signal
+        }),
+      summarizeResult: (generated) => ({
+        output: summarizeObject(generated.object),
+        finishReason: generated.finishReason,
+        usage: generated.usage
+      })
     });
 
     const known = new Set(available.map((tool) => tool.name));
