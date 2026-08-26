@@ -331,6 +331,23 @@ export type {
   TranslatableCv,
   TranslationSection
 } from './capabilities/translateCv.js';
+export {
+  EVIDENCE_SUMMARY_CONTRACT_VERSION,
+  EVIDENCE_SUMMARY_PROMPT_VERSION,
+  SUMMARY_MAX_CHARS_MIN,
+  SUMMARY_MAX_CHARS_MAX,
+  SUMMARY_MIN_DETAIL_RATIO,
+  evidenceSummaryInputSchema,
+  reviewEvidenceSummary,
+  summaryMinChars,
+  summaryOutputTokenBudget
+} from './capabilities/generateEvidenceSummary.js';
+export type {
+  EvidenceSummaryClaim,
+  EvidenceSummaryInput,
+  EvidenceSummaryMeta,
+  EvidenceSummaryResult
+} from './capabilities/generateEvidenceSummary.js';
 export { runtimeHome, documentPath, lancePath } from './store/paths.js';
 export { providers, providerIds, AiConfigError } from './providers/resolve.js';
 export type { ProviderId } from './providers/resolve.js';

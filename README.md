@@ -1,6 +1,6 @@
 # cvitae-agent-runtime
 
-The layer [cvitae](../cvitae) talks to instead of talking to a model.
+The layer [cvitae](https://github.com/cvitae-org/cvitae) talks to instead of talking to a model.
 
 It owns the provider credentials, the prompts, the tool definitions and the
 local store, and exposes a small surface: `runtime.run('analyze_offer', { … })`.
@@ -14,6 +14,96 @@ a URL to fetch. It emits tool calls, the runtime executes them against local
 storage, and it observes only what a tool chose to return. "User data stays on
 this machine" is therefore a property of the wiring rather than a rule someone
 has to remember.
+
+## Why this is a separate process, in business terms
+
+[cvitae](https://github.com/cvitae-org/cvitae) is a browser application for
+tailoring job applications to postings without inventing anything. That product
+needs a model, and where the model call lives turns out to decide three things
+that do not look related: how large a leak can get, who the user is locked into,
+and what running a job search costs.
+
+**Credential custody, and the size of a leak.** A key in the browser is readable
+by any script on the page — cvitae offers that only as the user's own deliberate
+choice, and says so plainly — so the operator's key has to live in a server. The
+question is which one. A single server holding the key, the CV, the mailbox
+client and whatever a job board served it that morning turns any one mistake
+into all four. Here the key sits in a process with no public listener, and the
+mailbox token is not even in this one — it is in
+[cvitae-mail](https://github.com/cvitae-org/cvitae-mail), a third process, so
+that a single mistake is a bill or an inbox and never both.
+
+**No vendor sitting between the user and their own CV.** The capability surface
+is `runtime.run('analyze_offer', { … })` and nothing above it knows what answered.
+OpenRouter, OpenAI, Hugging Face and a local Ollama are one environment
+variable apart; a run may carry its own model and key per request. That matters
+commercially in one specific way: a user who does not want to pay anyone points
+`AI_PROVIDER=local` at Ollama and the capabilities keep working — import,
+translation, drafting, retrieval — at zero marginal cost, with no request
+leaving the machine. Only the optional web tier reaches the network, because
+looking up an employer means looking at the employer. A product whose privacy
+story depends on a vendor's retention policy does not have a privacy story.
+
+**Cost that follows the work rather than the fashion.** Most of what this does
+is not writing — it is copying values that are already in a document into
+fields. That is a job for a small fast model, and one step
+([`role_description`](#one-step-does-not-use-the-model)) does not use a model at
+all, because a regex cannot hallucinate a summary paragraph and a 4B model
+demonstrably does. A full CV import runs in about 30 seconds on `gemma3:4b`. One
+model call writes the covering letter, because that is the only text genuinely
+absent from the input. The rule the codebase repeats — **generate what is not
+there, parse what is** — started as a correctness argument and pays as an
+invoice.
+
+## What the model is trusted with
+
+The organising idea above has a plain-language version: the model is a reader
+and a writer of prose, never an actor. Three consequences are worth stating
+because they are the product's actual safety guarantees, not its aspirations.
+
+- **No tool fetches a URL the model names.** Job postings are attacker-writable
+  text — anyone can put prose on a board — and this runtime puts that text into
+  model context. A model that has been talked into something by a posting can
+  return something unhelpful; it cannot reach anything.
+- **Drafting an email is deliberately not a tool.** Untrusted input, a private
+  CV and an outbound channel in the same tool set is the complete exfiltration
+  triangle. Drafting is called from a route, with a recipient a human confirmed,
+  and the third side never exists.
+- **Where an application goes is decided without a model.**
+  [`verify_recipient`](#checking-where-an-application-goes) ranks addresses on
+  facts a page cannot assert about itself — is it on the employer's own domain,
+  did two independent sources name it — because a fraudulent posting harvesting
+  CVs is a real business and a CV is a complete identity package. It suggests
+  and never chooses.
+
+## Where the data sits
+
+Everything is under `~/.cvitae` on the user's own machine, and the
+[Storage](#storage) section is the exact version. In business terms:
+
+| | |
+| --- | --- |
+| The CV | one plain `cv.json` file — diffable, correctable by hand, backed up by copying it |
+| The index | embeddings and saved offers, derived rather than authored — `POST /reindex` rebuilds it |
+| AI logs | **metadata only** — model, latency, tokens, status, content *hashes*. Never prompts, never responses, never tool values |
+| Deletion | `rm -rf ~/.cvitae`. There is no other copy, because there is no server that keeps one |
+
+The [hosted deployment](#hosting-it) is the same code with the storage removed:
+it holds no credential, keeps nothing between requests, and refuses any run that
+does not carry the caller's own key. Whoever finds that URL gets the compute,
+not the wallet.
+
+## Three ways to run it
+
+| | Who pays the model | What leaves the machine | Trade |
+| --- | --- | --- | --- |
+| Local runtime, local model (Ollama) | nobody | nothing | slower, and small models fail some steps loudly |
+| Local runtime, hosted provider | the key in `.env`, or the user's own key from cvitae's Settings | the narrowed request | the fast path; keys stay off the browser |
+| `RUNTIME_MODE=hosted` on Netlify | the caller, always their own key | the narrowed request | no retrieval, no stored offers, no mailbox, 60s per request |
+
+The third exists so cvitae works for someone unwilling to run a second process,
+and it is honest about what it gives up rather than degrading quietly — see
+[What it costs](#what-it-costs).
 
 ## Quick start
 
@@ -261,7 +351,7 @@ That last click is the review step, and it is the reason there is no send route:
 the body was written by a small model reading text a stranger posted to a job
 board, and the difference between a bad draft and a bad send is who else sees it.
 
-`mail/` is a client for [cvitae-mail](../cvitae-mail), a sibling service that
+`mail/` is a client for [cvitae-mail](https://github.com/cvitae-org/cvitae-mail), a sibling service that
 holds the Gmail credential so this process does not. It runs as its own process
 for the same reason cvitae-scrapper does, with a sharper motive: an API key can
 be rotated after a leak and the cost is a bill, while a mailbox token is read

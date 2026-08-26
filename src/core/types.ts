@@ -95,6 +95,8 @@ export type GenerateStep = StepBase & {
   system: string;
   prompt: string;
   maxOutputTokens: number;
+  /** Provider/transport retries. Omit to keep the SDK default. */
+  maxRetries?: number;
   /** The key the text lands under, so the aggregator sees a named field. */
   key: string;
   /** Values used when this step degrades, exactly as `ExtractStep` uses them. */

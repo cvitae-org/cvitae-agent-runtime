@@ -10,7 +10,7 @@
  * None of that survives being reachable from the internet, and the honest
  * response is not to weaken the arguments but to serve a smaller thing. Hosted
  * mode is that smaller thing: a stateless proxy to the model providers,
- * spending only the key the caller sent, over the four capabilities that never
+ * spending only the key the caller sent, over the capabilities that never
  * touch storage.
  *
  * `RUNTIME_MODE` selects it and defaults to `local`, so an existing setup sees
@@ -49,10 +49,11 @@ export const isHosted = (): boolean => runtimeMode() === 'hosted';
  * The capabilities a hosted deployment serves.
  *
  * Exactly the ones that read and write nothing: `extract_cv` (which cvitae
- * always calls with `persist: false`), `translate_cv`, `analyze_offer` and
- * `verify_recipient`. The two that are missing — `ask_profile` and
- * `draft_application` — need the chunk index, which needs an embedding model
- * and a LanceDB directory, neither of which exists on a serverless host.
+ * always calls with `persist: false`), `translate_cv`, `analyze_offer`,
+ * `generate_evidence_summary` and `verify_recipient`. The two that are missing
+ * — `ask_profile` and `draft_application` — need the chunk index, which needs
+ * an embedding model and a LanceDB directory, neither of which exists on a
+ * serverless host.
  *
  * They are refused rather than left to fail on their own. A tool loop with an
  * empty index does not error; it answers from nothing and says the CV appears
@@ -62,6 +63,7 @@ export const HOSTED_CAPABILITIES: ReadonlySet<string> = new Set([
   'extract_cv',
   'translate_cv',
   'analyze_offer',
+  'generate_evidence_summary',
   'verify_recipient'
 ]);
 

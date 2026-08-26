@@ -43,6 +43,7 @@ test('health names only what this deployment will actually run', async () => {
     'extract_cv',
     'translate_cv',
     'analyze_offer',
+    'generate_evidence_summary',
     'verify_recipient'
   ]);
   // Every tool reads the store, and the only capability that calls them is not

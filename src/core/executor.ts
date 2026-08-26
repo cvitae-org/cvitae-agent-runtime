@@ -190,6 +190,7 @@ const runGenerate = async (
         system: step.system,
         prompt: step.prompt,
         maxOutputTokens: step.maxOutputTokens,
+        maxRetries: step.maxRetries,
         temperature: 0,
         abortSignal: context.signal
       }),

@@ -445,6 +445,7 @@ const EXPECTED_CAPABILITIES = [
   'ask_profile',
   'draft_application',
   'extract_cv',
+  'generate_evidence_summary',
   'translate_cv',
   'verify_recipient'
 ];
