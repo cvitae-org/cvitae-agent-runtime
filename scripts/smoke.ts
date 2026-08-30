@@ -286,7 +286,7 @@ check(
 );
 
 section('offers');
-await store.saveOffers([
+const firstSave = await store.saveOffers([
   {
     id: 'offer-1',
     url: 'https://example.com/1',
@@ -297,10 +297,14 @@ await store.saveOffers([
     work_mode: 'remote',
     seniority: 'Senior',
     salary: '25000 PLN',
+    salary_min: 25000,
+    salary_max: 25000,
+    salary_currency: 'PLN',
+    salary_period: 'month',
     contract_type: 'B2B',
-    skills: 'React, TypeScript, Next.js',
+    skills: ['React', 'TypeScript', 'Next.js'],
     text: 'We need a senior React developer for a remote B2B engagement building storefronts.',
-    analysis: '{}'
+    processing: 'fetched'
   },
   {
     id: 'offer-2',
@@ -311,15 +315,22 @@ await store.saveOffers([
     location: 'Krakow',
     work_mode: 'onsite',
     seniority: 'Mid',
-    salary: '18000 PLN',
+    // Deliberately unstated. The tri-state depends on this being distinguishable
+    // from a stated zero, and every check below leans on it.
     contract_type: 'UoP',
-    skills: 'Python, Django, Postgres',
+    skills: ['Python', 'Django', 'Postgres'],
     text: 'Onsite Django role working on data pipelines and Postgres.',
-    analysis: '{}'
+    processing: 'fetched'
   }
 ]);
 
-check('both offers stored', (await store.offers.count()) === 2);
+check(
+  'a first sighting adds and embeds both',
+  firstSave.added === 2 && firstSave.updated === 0 && firstSave.embedded === 2,
+  JSON.stringify(firstSave)
+);
+check('both offers indexed', (await store.offers.count()) === 2);
+check('both offers on file', (await store.offerRecords.all()).length === 2);
 
 const remote = await store.searchOffers({ where: "work_mode = 'remote'", limit: 10 });
 check('hard filter selects only the remote role', remote.length === 1 && remote[0]?.row.id === 'offer-1');
@@ -329,6 +340,137 @@ check('keyword search finds the backend role', keyword[0]?.row.id === 'offer-2',
 
 const quoted = await store.searchOffers({ where: `company = 'O''Brien Software'`, limit: 5 });
 check('an apostrophe in a filter does not break the predicate', quoted.length === 1);
+
+section('offers: the imported_at bug');
+const before = await store.offerRecords.get('offer-1');
+
+// A re-sighting is what a standing search does every day. Under the old single
+// `imported_at`, restamped across every row on every upsert, this was the exact
+// moment a month-old offer started looking new again.
+const reseen = await store.saveOffers([
+  { id: 'offer-1', title: 'Senior React Developer', processing: 'fetched' }
+]);
+
+const after = await store.offerRecords.get('offer-1');
+
+check(
+  're-seeing an offer updates rather than adding',
+  reseen.added === 0 && reseen.updated === 1,
+  JSON.stringify(reseen)
+);
+check(
+  'first_seen_at survives a re-sighting',
+  !!after && after.first_seen_at === before?.first_seen_at,
+  after?.first_seen_at
+);
+check(
+  'last_seen_at advances',
+  !!after && !!before && after.last_seen_at >= before.last_seen_at
+);
+check('unchanged text costs no embedding', reseen.embedded === 0);
+check(
+  'a partial sighting does not blank what it omits',
+  after?.salary === '25000 PLN' && after?.company === "O'Brien Software",
+  `${after?.salary} / ${after?.company}`
+);
+
+section('offers: two axes, two writers');
+await store.offerRecords.update('offer-2', { disposition: 'dismissed' });
+
+// The round writes `processing`; the user writes `disposition`. This is the
+// case a single `status` column could not express — and the race it created.
+await store.saveOffers([{ id: 'offer-2', processing: 'rated', eligibility: 'provisional' }]);
+
+const dismissed = await store.offerRecords.get('offer-2');
+check(
+  'a round cannot overwrite the user disposition',
+  dismissed?.disposition === 'dismissed',
+  dismissed?.disposition
+);
+check(
+  'the round still advances its own axis',
+  dismissed?.processing === 'rated' && dismissed?.eligibility === 'provisional'
+);
+
+section('offers: unknown is not zero');
+const unstated = await store.offerRecords.get('offer-2');
+check('an unstated salary is null, not 0', unstated?.salary_min === null);
+
+const floor = await store.searchOffers({
+  where: "salary_min >= 20000 AND salary_currency = 'PLN'",
+  limit: 10
+});
+check(
+  'a salary floor excludes the offer that never stated one',
+  floor.length === 1 && floor[0]?.row.id === 'offer-1',
+  floor.map((hit) => hit.row.id).join(', ')
+);
+
+const unknownSalary = await store.searchOffers({ where: "salary_currency = ''", limit: 10 });
+check(
+  'and the unstated ones are still findable as unknown',
+  unknownSalary.length === 1 && unknownSalary[0]?.row.id === 'offer-2'
+);
+
+section('offers: the index is derived');
+const offerRebuild = await store.reindexOffers();
+check(
+  'a rebuild re-embeds nothing when no text changed',
+  offerRebuild.embedded === 0 && offerRebuild.total === 2,
+  JSON.stringify(offerRebuild)
+);
+
+// Planting a row from an older build: no `text_fp`, and a `status` vocabulary
+// this build does not know. Neither is visible until a predicate silently
+// matches nothing, which is what makes the drift check worth having.
+await store.offers.upsert([
+  {
+    ...({
+      id: 'offer-legacy',
+      url: 'https://example.com/legacy',
+      board: 'test',
+      title: 'Legacy Row',
+      company: 'Old Build',
+      location: '',
+      work_mode: '',
+      seniority: '',
+      contract_type: '',
+      salary: '',
+      salary_min: 0,
+      salary_max: 0,
+      salary_currency: '',
+      salary_period: '',
+      skills: '',
+      text: 'A row written before the storage split.',
+      processing: 'imported',
+      disposition: 'active',
+      eligibility: 'unrated',
+      fit: -1,
+      completeness: -1,
+      first_seen_at: '2020-01-01T00:00:00.000Z',
+      last_seen_at: '2020-01-01T00:00:00.000Z',
+      text_fp: 'x'
+    } as never),
+    vector: await stubEmbedder.one('legacy')
+  }
+]);
+
+const repaired = await store.reindexOffers();
+check(
+  'an unknown processing state rebuilds the whole table',
+  repaired.embedded === 2 && repaired.total === 2,
+  JSON.stringify(repaired)
+);
+check(
+  'and the row with no authored record is gone',
+  (await store.offers.count()) === 2,
+  String(await store.offers.count())
+);
+
+section('offers: identity dedupe');
+const twins = await store.offerRecords.findByIdentity("o'brien software", 'SENIOR REACT DEVELOPER');
+check('identity lookup is case and space insensitive', twins.length === 1 && twins[0]?.id === 'offer-1');
+check('a blank company matches nothing', (await store.offerRecords.findByIdentity('', 'x')).length === 0);
 
 section('fusion and canonicalisation');
 const fused = fuse(

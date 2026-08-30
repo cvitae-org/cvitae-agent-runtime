@@ -13,21 +13,44 @@
 
 import { Collection, fuse, type SearchHit } from './lance.js';
 import { CvDocumentStore, type CvDocument } from './cvDocument.js';
+import {
+  OfferRecordStore,
+  dispositions,
+  processingStates,
+  type OfferRecord,
+  type OfferSighting
+} from './offerRecord.js';
 import { chunkDocument, chunkKinds, type Chunk, type ChunkKind } from '../retrieval/chunk.js';
+import { fingerprint } from '../core/fingerprint.js';
 import type { Embedder } from '../retrieval/embed.js';
 
 export type ChunkRow = Chunk & { vector: number[] };
 
 /**
- * A stored offer.
+ * The queryable projection of an offer. Derived, and rebuildable.
  *
- * Flat, and stringly-typed in two places on purpose. `skills` is a joined
- * string rather than a list so that it participates in the full-text index —
- * an Arrow list column is filterable but not searchable, and "does this offer
- * mention Postgres" is the question actually being asked. `analysis` is a JSON
- * blob because its shape belongs to whichever capability produced it, and
- * promoting those fields to columns would make every extraction-schema change a
- * table change.
+ * Not the record — that lives in `offers.jsonl`. This is only what gets
+ * filtered, ranked or displayed, which is why `analysis` and `score_detail` are
+ * absent: both are blobs nobody queries, and carrying them here would make
+ * every extraction-schema change a table change for no gain.
+ *
+ * Three encodings are worth explaining, because all three look like mistakes:
+ *
+ *   `skills` is a joined string rather than a list, so that it participates in
+ *   the full-text index. An Arrow list column is filterable but not searchable,
+ *   and "does this offer mention Postgres" is the question actually being asked.
+ *
+ *   `salary_min`/`salary_max` use 0 for unstated where the record uses `null`,
+ *   and `fit`/`completeness` use -1 for unrated. LanceDB infers the Arrow schema
+ *   from the first batch written, so a first round in which nothing states a
+ *   salary would infer a Null-typed column and reject every later number with a
+ *   cast error. The sentinels keep the column numeric from the first write.
+ *
+ *   Nothing is lost by that, because the sentinel is never the thing consulted:
+ *   an unstated salary has `salary_currency = ''`, and a salary floor is always
+ *   asked within a currency — `salary_min >= 15000 AND salary_currency = 'PLN'`
+ *   excludes the unstated rows without ever comparing against the 0. Likewise
+ *   `eligibility = 'unrated'` is the real signal, not the -1.
  */
 export type OfferRow = {
   id: string;
@@ -38,26 +61,82 @@ export type OfferRow = {
   location: string;
   work_mode: string;
   seniority: string;
-  salary: string;
   contract_type: string;
+  /** As the posting stated it. For display; the numerics are for predicates. */
+  salary: string;
+  salary_min: number;
+  salary_max: number;
+  salary_currency: string;
+  salary_period: string;
   skills: string;
-  /** The offer as read. Kept so a row can be re-analysed after it is taken down. */
+  /** The offer as read. Copied from the record so BM25 has something to index. */
   text: string;
-  /** Structured analysis, serialised. */
-  analysis: string;
-  imported_at: string;
+  processing: string;
+  disposition: string;
+  eligibility: string;
+  fit: number;
+  completeness: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  /**
+   * Fingerprint of `text`, so a rebuild re-embeds only postings that changed.
+   *
+   * The chunk table gets this for free — its ids *are* content fingerprints —
+   * but an offer is keyed by its URL and its text changes when the posting is
+   * edited, so the two have to be tracked separately. Doubles as the marker for
+   * a table written by an older build: a row without it predates this schema.
+   */
+  text_fp: string;
   vector: number[];
 };
 
 const quote = (value: string): string => `'${value.replace(/'/g, "''")}'`;
 
+/** The record, flattened to the columns worth querying. */
+const project = (record: OfferRecord): Omit<OfferRow, 'vector'> => ({
+  id: record.id,
+  url: record.url,
+  board: record.board,
+  title: record.title,
+  company: record.company,
+  location: record.location,
+  work_mode: record.work_mode,
+  seniority: record.seniority,
+  contract_type: record.contract_type,
+  salary: record.salary,
+  salary_min: record.salary_min ?? 0,
+  salary_max: record.salary_max ?? 0,
+  salary_currency: record.salary_currency,
+  salary_period: record.salary_period,
+  skills: record.skills.join(', '),
+  text: record.text,
+  processing: record.processing,
+  disposition: record.disposition,
+  eligibility: record.eligibility,
+  fit: record.fit ?? -1,
+  completeness: record.completeness ?? -1,
+  first_seen_at: record.first_seen_at,
+  last_seen_at: record.last_seen_at,
+  text_fp: fingerprint(record.text)
+});
+
+/** What gets embedded for an offer. Bounded, because postings run long. */
+const embeddable = (record: OfferRecord): string =>
+  `${record.title} at ${record.company}. ${record.text}`.slice(0, 4000);
+
 export class Store {
+  /** Authored: the CV. */
   readonly documents: CvDocumentStore;
+  /** Authored: the postings seen, and what the user decided about each. */
+  readonly offerRecords: OfferRecordStore;
+  /** Derived: embeddings of the CV's retrievable parts. */
   readonly chunks: Collection<ChunkRow>;
+  /** Derived: the queryable projection of `offerRecords`. */
   readonly offers: Collection<OfferRow>;
 
   constructor(private readonly embedder: Embedder) {
     this.documents = new CvDocumentStore();
+    this.offerRecords = new OfferRecordStore();
     this.chunks = new Collection<ChunkRow>('chunks', 'id', ['text']);
     this.offers = new Collection<OfferRow>('offers', 'id', ['text']);
   }
@@ -132,8 +211,6 @@ export class Store {
   ): Promise<SearchHit<ChunkRow>[]> {
     if (await this.chunks.count() === 0) return [];
 
-    const vector = await this.embedder.one(query);
-
     // A hard predicate rather than post-filtering the hits, for the same reason
     // `searchOffers` splits `where` from `query`: filtering afterwards asks for
     // `limit` rows and then throws some away, so a caller that wanted eight
@@ -142,6 +219,8 @@ export class Store {
       kinds && kinds.length > 0
         ? `kind IN (${kinds.map(quote).join(', ')})`
         : undefined;
+
+    const vector = await this.embedder.one(query);
 
     const [semantic, lexical] = await Promise.all([
       this.chunks.searchByVector(vector, limit * 2, where),
@@ -152,30 +231,131 @@ export class Store {
   }
 
   /**
-   * Stores offers, embedding the ones that are new.
+   * Records offers a round saw, then indexes them.
+   *
+   * The ordering is the crash story, and it is the reason the split was worth
+   * making: the authored file is written first, so a failure between the two
+   * steps leaves the records intact and the index stale — and a stale index is
+   * repaired by `reindexOffers()`, which is allowed to cost whatever it costs.
+   * The reverse order would lose postings.
    *
    * Embedding an offer buys near-duplicate detection — the same posting across
    * three boards — and "more like this one". It is explicitly not how offers
    * are *found*: that is filters and keywords, below.
    */
-  async saveOffers(
-    offers: Omit<OfferRow, 'vector' | 'imported_at'>[]
-  ): Promise<number> {
-    if (offers.length === 0) return 0;
+  async saveOffers(sightings: OfferSighting[]): Promise<{
+    added: number;
+    updated: number;
+    embedded: number;
+  }> {
+    if (sightings.length === 0) return { added: 0, updated: 0, embedded: 0 };
 
-    const vectors = await this.embedder.many(
-      offers.map((offer) => `${offer.title} at ${offer.company}. ${offer.text}`.slice(0, 4000))
+    const { added, updated, records } = await this.offerRecords.sight(sightings);
+    const embedded = await this.indexOffers(records);
+
+    return { added, updated, embedded };
+  }
+
+  /**
+   * Writes rows for these records, embedding only the ones whose text changed.
+   *
+   * A round that re-sees forty offers to bump `last_seen_at` should cost zero
+   * embeddings, so the existing `text_fp` is consulted first. A row whose text
+   * is unchanged keeps the vector it already has rather than paying for an
+   * identical one — the same economy the chunk table gets from content-derived
+   * ids.
+   */
+  private async indexOffers(records: OfferRecord[]): Promise<number> {
+    if (records.length === 0) return 0;
+
+    const existing = await this.offers.all(10_000);
+
+    // `Array.from` rather than the value as returned: LanceDB hands back Arrow
+    // typed arrays, and one written straight back through `mergeInsert` is a
+    // different thing from the `number[]` the column was inferred as. Copying
+    // here is cheap and keeps the round trip lossless.
+    const known = new Map(
+      existing.map((row) => [
+        row.id,
+        { fp: row.text_fp, vector: Array.from(row.vector ?? []) as number[] }
+      ])
     );
 
-    const imported_at = new Date().toISOString();
+    const byId = new Map(records.map((record) => [record.id, record]));
+    const rows = records.map(project);
 
-    return this.offers.upsert(
-      offers.map((offer, index) => ({
-        ...offer,
-        vector: vectors[index] ?? [],
-        imported_at
+    // Every touched row is rewritten, because `last_seen_at` changed on all of
+    // them — but only the ones whose text actually moved are re-embedded.
+    const stale = rows.filter((row) => known.get(row.id)?.fp !== row.text_fp);
+
+    const fresh =
+      stale.length > 0
+        ? await this.embedder.many(
+            stale.map((row) => embeddable(byId.get(row.id) as OfferRecord))
+          )
+        : [];
+
+    const embedded = new Map(stale.map((row, index) => [row.id, fresh[index] ?? []]));
+
+    await this.offers.upsert(
+      rows.map((row) => ({
+        ...row,
+        vector: embedded.get(row.id) ?? known.get(row.id)?.vector ?? []
       }))
     );
+
+    return stale.length;
+  }
+
+  /**
+   * Rebuilds the offer index from `offers.jsonl`.
+   *
+   * The counterpart to `reindex()` for chunks, and legitimate for the same
+   * reason: every column here is a projection of an authored record, so this is
+   * a repair rather than a migration. It is also the upgrade path — a table
+   * written by an older build is detected and rebuilt rather than left to
+   * silently mismatch a predicate.
+   */
+  async reindexOffers(): Promise<{
+    embedded: number;
+    removed: number;
+    total: number;
+  }> {
+    const records = await this.offerRecords.all();
+    const existing = await this.offers.all(10_000);
+
+    // Two kinds of drift, both invisible until a query returns the wrong thing.
+    // A row with no `text_fp` predates this schema entirely; a row carrying a
+    // state this build no longer knows was written by a different vocabulary.
+    // Either way the safe read is that nothing in the table can be trusted to
+    // still mean what it says, and rebuilding is what the index is for.
+    const states = new Set<string>(processingStates);
+    const decisions = new Set<string>(dispositions);
+
+    const outdated = existing.some(
+      (row) =>
+        typeof row.text_fp !== 'string' ||
+        !states.has(row.processing) ||
+        !decisions.has(row.disposition)
+    );
+
+    if (outdated && existing.length > 0) {
+      await this.offers.delete(`id IN (${existing.map((row) => quote(row.id)).join(', ')})`);
+    }
+
+    const embedded = await this.indexOffers(records);
+
+    // Rows for records that are gone. Deleting an offer from `offers.jsonl` by
+    // hand is a supported way to forget one, and it has to reach the index or
+    // the offer keeps coming back in search results.
+    const keep = new Set(records.map((record) => record.id));
+    const orphans = outdated ? [] : existing.filter((row) => !keep.has(row.id));
+
+    if (orphans.length > 0) {
+      await this.offers.delete(`id IN (${orphans.map((row) => quote(row.id)).join(', ')})`);
+    }
+
+    return { embedded, removed: orphans.length, total: records.length };
   }
 
   /**

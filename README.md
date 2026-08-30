@@ -84,7 +84,8 @@ Everything is under `~/.cvitae` on the user's own machine, and the
 | | |
 | --- | --- |
 | The CV | one plain `cv.json` file — diffable, correctable by hand, backed up by copying it |
-| The index | embeddings and saved offers, derived rather than authored — `POST /reindex` rebuilds it |
+| Job offers | one plain `offers.jsonl` file — the postings seen and what you decided about each |
+| The index | embeddings and a queryable projection of the two files above, derived rather than authored — `POST /reindex` rebuilds it |
 | AI logs | **metadata only** — model, latency, tokens, status, content *hashes*. Never prompts, never responses, never tool values |
 | Deletion | `rm -rf ~/.cvitae`. There is no other copy, because there is no server that keeps one |
 
@@ -423,7 +424,7 @@ src/
   tools/             defineTool() + the registry that binds context, not data
   prompt/builder.ts  explicit composition — see the note below
   retrieval/         chunking and embedding
-  store/             cv.json (authored) · LanceDB (derived) · RRF fusion
+  store/             cv.json + offers.jsonl (authored) · LanceDB (derived) · RRF fusion
   mail/              cvitae-mail client — drafting, deliberately not a tool
   providers/         model resolution, credentials, loopback enforcement
   server/            optional Fastify entry point, loopback-bound
@@ -434,19 +435,37 @@ src/
 Everything lives under `~/.cvitae` (`CVITAE_HOME` moves it), split by whether it
 is authored or derived:
 
-| Path       | Holds                                  | If you delete it        |
-| ---------- | -------------------------------------- | ----------------------- |
-| `cv.json`  | the canonical CV document              | the CV is gone          |
-| `lance/`   | chunk embeddings, saved offers          | `POST /reindex` rebuilds it |
-| `ai-logs/` | metadata-only daily AI communication logs | model calls are unaffected |
+| Path            | Holds                                     | If you delete it            |
+| --------------- | ----------------------------------------- | --------------------------- |
+| `cv.json`       | the canonical CV document                 | the CV is gone              |
+| `offers.jsonl`  | job postings seen, and what you decided   | the offer history is gone   |
+| `lance/`        | chunk embeddings, the offer projection    | `POST /reindex` rebuilds it |
+| `ai-logs/`      | metadata-only daily AI communication logs | model calls are unaffected  |
 
 `cv.json` is a plain file because it is small, singular and edited: it diffs, it
 can be corrected by hand when an extraction gets a date wrong, and backing it up
 is copying one file. Writes go through a temp file and a rename, so a crash
 mid-write leaves the old document rather than half of one.
 
-The LanceDB side is derived by definition, which makes `reindex()` always a
-legitimate repair and never a migration.
+`offers.jsonl` is authored too, but by accumulation rather than by hand. It is
+one JSON object per line — so it greps, tails and pipes into `jq` — and it holds
+the text of each posting as it was read. That last part is why it cannot live in
+the index: postings are taken down within weeks, so there is nothing to rebuild
+them *from*. The table previously held the only copy, which quietly made "delete
+the index and re-index" a way to lose data.
+
+Two axes of state live there, deliberately not collapsed into one `status`
+column. `processing` (`candidate` → `fetched` → `rated`, or `unreadable`) is how
+far the runtime got; `disposition` (`active`, `dismissed`, `applied`, `expired`)
+is what you decided. One column would mean the runtime and the user both writing
+the same field and racing; split, each has exactly one writer. Unknown is a
+first-class value throughout — an unstated salary is `null`, not zero, because a
+posting that does not mention money has not failed a salary requirement.
+
+With the records moved out, the LanceDB side is derived by definition again,
+which makes `reindex()` and `reindexOffers()` always a legitimate repair and
+never a migration. Both detect a table written by an older build and rebuild it
+rather than leave a stale value to silently mismatch a filter.
 
 AI communication is recorded as one JSON object per line in daily UTC files.
 Each event carries a run `traceId`, call ID, provider/model, operation, purpose,

@@ -306,6 +306,14 @@ export { defineTool, ToolRegistry } from './tools/registry.js';
 export type { ToolDefinition } from './tools/registry.js';
 export { Store } from './store/store.js';
 export type { OfferRow, ChunkRow } from './store/store.js';
+export { OfferRecordStore, offerRecordSchema } from './store/offerRecord.js';
+export type {
+  OfferRecord,
+  OfferSighting,
+  ProcessingState,
+  Disposition,
+  Eligibility
+} from './store/offerRecord.js';
 export { cvDocumentSchema, emptyDocument } from './store/cvDocument.js';
 export type { CvDocument, ExperienceEntry } from './store/cvDocument.js';
 export { mergeDocument } from './store/merge.js';
