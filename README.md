@@ -58,7 +58,7 @@ invoice.
 ## What the model is trusted with
 
 The organising idea above has a plain-language version: the model is a reader
-and a writer of prose, never an actor. Three consequences are worth stating
+and a writer of prose, never an actor. Four consequences are worth stating
 because they are the product's actual safety guarantees, not its aspirations.
 
 - **No tool fetches a URL the model names.** Job postings are attacker-writable
@@ -75,6 +75,11 @@ because they are the product's actual safety guarantees, not its aspirations.
   did two independent sources name it — because a fraudulent posting harvesting
   CVs is a real business and a CV is a complete identity package. It suggests
   and never chooses.
+- **How good an offer is, is decided without a model.** A posting that can talk
+  its way into a high score is a posting that will. So a model may extract facts
+  from it, but [scoring](#scoring) is ordinary code comparing those facts to
+  `preferences.json` — which means the score is not something anything in the
+  posting can address, and it can be explained line by line afterwards.
 
 ## Where the data sits
 
@@ -85,6 +90,7 @@ Everything is under `~/.cvitae` on the user's own machine, and the
 | --- | --- |
 | The CV | one plain `cv.json` file — diffable, correctable by hand, backed up by copying it |
 | Job offers | one plain `offers.jsonl` file — the postings seen and what you decided about each |
+| What you want | one plain `preferences.json` file — the requirements every offer is scored against |
 | The index | embeddings and a queryable projection of the two files above, derived rather than authored — `POST /reindex` rebuilds it |
 | AI logs | **metadata only** — model, latency, tokens, status, content *hashes*. Never prompts, never responses, never tool values |
 | Deletion | `rm -rf ~/.cvitae`. There is no other copy, because there is no server that keeps one |
@@ -424,7 +430,8 @@ src/
   tools/             defineTool() + the registry that binds context, not data
   prompt/builder.ts  explicit composition — see the note below
   retrieval/         chunking and embedding
-  store/             cv.json + offers.jsonl (authored) · LanceDB (derived) · RRF fusion
+  offers/            fetching · salary parsing · deterministic scoring
+  store/             cv.json · offers.jsonl · preferences.json (authored) · LanceDB (derived)
   mail/              cvitae-mail client — drafting, deliberately not a tool
   providers/         model resolution, credentials, loopback enforcement
   server/            optional Fastify entry point, loopback-bound
@@ -439,6 +446,7 @@ is authored or derived:
 | --------------- | ----------------------------------------- | --------------------------- |
 | `cv.json`       | the canonical CV document                 | the CV is gone              |
 | `offers.jsonl`  | job postings seen, and what you decided   | the offer history is gone   |
+| `preferences.json` | what you want out of a job             | nothing filters or ranks    |
 | `lance/`        | chunk embeddings, the offer projection    | `POST /reindex` rebuilds it |
 | `ai-logs/`      | metadata-only daily AI communication logs | model calls are unaffected  |
 
@@ -461,6 +469,14 @@ is what you decided. One column would mean the runtime and the user both writing
 the same field and racing; split, each has exactly one writer. Unknown is a
 first-class value throughout — an unstated salary is `null`, not zero, because a
 posting that does not mention money has not failed a salary requirement.
+
+`preferences.json` is the other half of every score, and the smallest file of
+the three. Four slots — work mode, contract type, salary, skills — chosen
+because they are the four the runtime can actually decide; a preference nothing
+evaluates is worse than none, because it reads as a requirement and silently
+never fires. Each carries its own `must` or `prefer`, since "this rules an offer
+out" and "this makes it more interesting" are different questions, and an unset
+slot produces no criterion at all rather than an undecidable one.
 
 With the records moved out, the LanceDB side is derived by definition again,
 which makes `reindex()` and `reindexOffers()` always a legitimate repair and
@@ -534,6 +550,55 @@ detection across boards and "more like this one", not for finding.
 Hybrid results are fused with RRF in `store/lance.ts` rather than through
 LanceDB's own hybrid mode, which requires registering an embedding function on
 the table — that would fork embedding configuration away from `providers/`.
+
+## Scoring
+
+A model may read a posting and pull facts out of it. It never decides how good
+the offer is. That line matters because a job posting is untrusted input: text
+that can talk its way into a high score is text that will, and the defence is
+that the score is not something anything in the posting can address. Extraction
+produces structured values; `offers/criteria.ts` compares them to
+`preferences.json` with ordinary code, and only that comparison moves a number.
+
+Every criterion has three answers, not two:
+
+| | |
+| --- | --- |
+| `pass` | the posting states something, and it meets the requirement |
+| `fail` | the posting states something, and it does not |
+| `unknown` | the posting does not say, or the two figures are not comparable |
+
+The third is the one carrying the design. A posting that does not mention money
+has not failed a salary requirement, and — once extracted claims are verified
+against the raw text — a claim that fails its check must degrade to `unknown`
+rather than to a rejection, or verification becomes a way to discard offers.
+
+Three numbers come out, deliberately not one:
+
+**`eligibility`** filters, over `must` criteria alone. One failure is
+`ineligible`, one undecided is `provisional`, otherwise `eligible`.
+
+**`fit`** is match quality over *decided* criteria only. Unknowns leave the
+denominator instead of counting as misses.
+
+**`completeness`** is how much of the posting is known at all, over seven fixed
+facts. It never consults the preferences, because it is a property of the offer.
+
+A single ratio cannot do this. `matched / named` rewards a vague posting and
+punishes a thorough one: an offer whose only stated requirement is "JavaScript"
+scores a perfect 1.00, while one that lists eight technologies can only ever
+score a fraction. Split apart, the vague offer reads as *high fit, low
+completeness* — visibly a guess — instead of borrowing a perfect score from its
+own silence.
+
+Two things the scorer refuses rather than approximates. It applies no exchange
+rate, because a rate moves and yesterday's scores would quietly disagree with
+today's for reasons that have nothing to do with the offer. And it will not
+compare a B2B figure to a permanent-contract floor: the gap between them depends
+on tax choices this runtime does not know, so there is no honest multiplier and
+the answer is `unknown`. Conversions it *does* make — an hourly or daily rate to
+a monthly floor — run on numbers the user stated in `preferences.json`, and the
+verdict says which assumption was applied.
 
 ## Prompts are edited carefully
 

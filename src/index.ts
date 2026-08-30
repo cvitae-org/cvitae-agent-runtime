@@ -314,6 +314,15 @@ export type {
   Disposition,
   Eligibility
 } from './store/offerRecord.js';
+export {
+  PreferencesStore,
+  preferencesSchema,
+  emptyPreferences,
+  fingerprintPreferences,
+  contractTypes,
+  strengths
+} from './store/preferences.js';
+export type { Preferences, ContractType, Strength } from './store/preferences.js';
 export { cvDocumentSchema, emptyDocument } from './store/cvDocument.js';
 export type { CvDocument, ExperienceEntry } from './store/cvDocument.js';
 export { mergeDocument } from './store/merge.js';
@@ -324,12 +333,23 @@ export {
   scrapeOffer,
   resolveOffer,
   applyBoardFacts,
-  isScraperEnabled
+  isScraperEnabled,
+  parseSalary,
+  evaluate,
+  measureCompleteness,
+  readContractTypes,
+  COUNTED_FACTS,
+  SCORER_VERSION
 } from './offers/index.js';
 export type {
   BoardOffer,
   ResolvedOffer,
-  StatedFacts
+  StatedFacts,
+  ParsedSalary,
+  Verdict,
+  CriterionVerdict,
+  ScoreDetail,
+  Evaluation
 } from './offers/index.js';
 export type { SourceInput, SourceRecord, ReadOutcome } from './sources/index.js';
 export type { ExtractCvInput, ExtractCvResult } from './capabilities/extractCv.js';
@@ -356,7 +376,7 @@ export type {
   EvidenceSummaryMeta,
   EvidenceSummaryResult
 } from './capabilities/generateEvidenceSummary.js';
-export { runtimeHome, documentPath, lancePath } from './store/paths.js';
+export { runtimeHome, documentPath, offersPath, preferencesPath, lancePath } from './store/paths.js';
 export { providers, providerIds, AiConfigError } from './providers/resolve.js';
 export type { ProviderId } from './providers/resolve.js';
 export { createAiLogger, JsonlAiLogger, NoopAiLogger } from './ai/logging.js';

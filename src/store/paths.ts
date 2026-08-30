@@ -9,6 +9,10 @@
  *
  *   cv.json      the canonical CV document. Small, mutable, hand-editable when
  *                a model gets something wrong.
+ *   preferences.json
+ *                what the user wants out of a job. The other half of every
+ *                score, and the smaller half — a rating means nothing without
+ *                both the CV it was measured against and the requirements.
  *   offers.jsonl the job postings the runtime has seen, one per line, plus what
  *                the user decided about each. Authored by accumulation rather
  *                than by hand, and unrebuildable for the same reason a diary
@@ -35,6 +39,8 @@ export const runtimeHome = (): string =>
 export const documentPath = (): string => join(runtimeHome(), 'cv.json');
 
 export const offersPath = (): string => join(runtimeHome(), 'offers.jsonl');
+
+export const preferencesPath = (): string => join(runtimeHome(), 'preferences.json');
 
 export const lancePath = (): string => join(runtimeHome(), 'lance');
 

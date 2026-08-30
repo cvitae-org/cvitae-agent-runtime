@@ -7,6 +7,12 @@
  * prompts do: a capability that takes a URL is one the caller can use without
  * knowing that boards render client-side, that some refuse robots, or that
  * there is a separate scraper process to try first.
+ *
+ * `salary.ts` and `criteria.ts` are the other end of the same pipeline and
+ * touch a model even less: text in, numbers out, then numbers against the
+ * user's requirements. They sit here because they are about offers, and apart
+ * from `capabilities/` because nothing in them may be delegated to a model —
+ * see the note at the top of `criteria.ts`.
  */
 
 export { fetchOffer, extractVisibleText, isHttpUrl } from './fetch.js';
@@ -17,3 +23,13 @@ export { resolveOffer } from './resolve.js';
 export type { ResolvedOffer } from './resolve.js';
 export { applyBoardFacts } from './boardFacts.js';
 export type { StatedFacts, BoardFactsResult } from './boardFacts.js';
+export { parseSalary } from './salary.js';
+export type { ParsedSalary } from './salary.js';
+export {
+  evaluate,
+  measureCompleteness,
+  readContractTypes,
+  COUNTED_FACTS,
+  SCORER_VERSION
+} from './criteria.js';
+export type { Verdict, CriterionVerdict, ScoreDetail, Evaluation } from './criteria.js';

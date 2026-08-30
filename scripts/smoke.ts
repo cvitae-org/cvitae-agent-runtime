@@ -27,6 +27,12 @@ const { chunkDocument, chunkKinds, DRAFTING_KINDS } = await import(
   '../src/retrieval/chunk.js'
 );
 const { cvDocumentSchema } = await import('../src/store/cvDocument.js');
+const { PreferencesStore, preferencesSchema, fingerprintPreferences } = await import(
+  '../src/store/preferences.js'
+);
+const { offerRecordSchema } = await import('../src/store/offerRecord.js');
+const { parseSalary } = await import('../src/offers/salary.js');
+const { evaluate } = await import('../src/offers/criteria.js');
 const { executePlan } = await import('../src/core/orchestrator.js');
 const { ToolRegistry } = await import('../src/tools/registry.js');
 const { defaultTools } = await import('../src/tools/index.js');
@@ -471,6 +477,170 @@ section('offers: identity dedupe');
 const twins = await store.offerRecords.findByIdentity("o'brien software", 'SENIOR REACT DEVELOPER');
 check('identity lookup is case and space insensitive', twins.length === 1 && twins[0]?.id === 'offer-1');
 check('a blank company matches nothing', (await store.offerRecords.findByIdentity('', 'x')).length === 0);
+
+section('preferences');
+const prefsStore = new PreferencesStore();
+check('absent preferences read as empty, not as an error', (await prefsStore.read()).salary.floor === null);
+check(
+  'and empty preferences filter nothing',
+  (await prefsStore.read()).work_mode.accept.length === 0
+);
+
+const savedPrefs = await prefsStore.write(
+  preferencesSchema.parse({
+    work_mode: { strength: 'must', accept: ['remote', 'hybrid'] },
+    contract_type: { strength: 'prefer', accept: ['b2b', 'uop'] },
+    salary: { strength: 'must', floor: 22000, currency: 'PLN', period: 'month', basis: 'any' },
+    skills: { strength: 'prefer', require: ['React', 'TypeScript', 'Go'] }
+  })
+);
+check('preferences round-trip', (await prefsStore.read()).salary.floor === 22000);
+check('and are stamped', savedPrefs.updated_at !== '');
+
+// The fingerprint is what decides which offers need rescoring, so touching the
+// file without changing the ask must not invalidate every score on disk.
+const touched = await prefsStore.write(savedPrefs);
+check(
+  'rewriting without a change keeps the fingerprint',
+  fingerprintPreferences(touched) === fingerprintPreferences(savedPrefs),
+  `${fingerprintPreferences(touched)} vs ${fingerprintPreferences(savedPrefs)}`
+);
+check(
+  'changing the ask changes it',
+  fingerprintPreferences(preferencesSchema.parse({ ...savedPrefs, salary: { ...savedPrefs.salary, floor: 25000 } })) !==
+    fingerprintPreferences(savedPrefs)
+);
+
+// A floor with no currency is a number, not a requirement. Refused loudly
+// rather than parsed into a criterion that could never fire.
+let refused = false;
+try {
+  preferencesSchema.parse({ salary: { floor: 22000, currency: '', period: 'month' } });
+} catch {
+  refused = true;
+}
+check('a floor without a currency is refused', refused);
+
+section('salary parsing (no model)');
+for (const [line, want] of [
+  ['20 000 - 25 000 PLN netto/mies.', { min: 20000, max: 25000, currency: 'PLN', period: 'month' }],
+  ['20-25k PLN', { min: 20000, max: 25000, currency: 'PLN', period: '' }],
+  ['1 200 - 1 600 PLN/dzien B2B', { min: 1200, max: 1600, currency: 'PLN', period: 'day' }],
+  ['od 20 000 zl', { min: 20000, max: null, currency: 'PLN', period: '' }],
+  ['do 25 000 zl', { min: null, max: 25000, currency: 'PLN', period: '' }],
+  ['$120,000 - $150,000 per year', { min: 120000, max: 150000, currency: 'USD', period: 'year' }],
+  ['Not stated', { min: null, max: null, currency: '', period: '' }]
+] as const) {
+  const got = parseSalary(line);
+  check(
+    `parses ${JSON.stringify(line)}`,
+    got.min === want.min && got.max === want.max &&
+      got.currency === want.currency && got.period === want.period,
+    JSON.stringify(got)
+  );
+}
+// `b2b` carries a digit and sits on most Polish salary lines. Read naively it
+// becomes a two-zloty lower bound, and every floor comparison then passes.
+check(
+  'the 2 in B2B is not a salary',
+  parseSalary('18 000 - 24 000 PLN B2B').min === 18000,
+  JSON.stringify(parseSalary('18 000 - 24 000 PLN B2B'))
+);
+check(
+  'and a bonus beside the pay is not a lower bound',
+  parseSalary('20 000 PLN + 5 000 bonus').min === 20000,
+  JSON.stringify(parseSalary('20 000 PLN + 5 000 bonus'))
+);
+
+section('criteria: three answers, not two');
+const NOW = '2026-01-01T00:00:00.000Z';
+const scored = (over: Record<string, unknown>) =>
+  evaluate(
+    offerRecordSchema.parse({
+      id: 'scored',
+      title: 'Senior Frontend Developer',
+      company: 'Acme',
+      location: 'Warsaw',
+      work_mode: 'remote',
+      seniority: 'Senior',
+      contract_type: 'B2B',
+      salary: '20 000 - 25 000 PLN',
+      salary_min: 20000,
+      salary_max: 25000,
+      salary_currency: 'PLN',
+      salary_period: 'month',
+      skills: ['React', 'TypeScript', 'Node.js'],
+      first_seen_at: NOW,
+      last_seen_at: NOW,
+      ...over
+    }),
+    savedPrefs
+  );
+
+const match = scored({});
+check('an offer meeting every must is eligible', match.eligibility === 'eligible', match.eligibility);
+// Five of six decided criteria pass; Go is the one the posting does not name.
+check('fit counts the skill it does not name', match.fit === 0.83, String(match.fit));
+check('completeness is a property of the posting', match.completeness === 1, String(match.completeness));
+
+const wrongMode = scored({ work_mode: 'onsite' });
+check('a failed must is ineligible', wrongMode.eligibility === 'ineligible', wrongMode.eligibility);
+
+// The distinction the whole design turns on: a posting that says nothing about
+// money has not failed a salary requirement.
+const silent = scored({ salary: '', salary_min: null, salary_max: null, salary_currency: '' });
+check(
+  'an unstated salary is provisional, not ineligible',
+  silent.eligibility === 'provisional',
+  silent.detail.criteria.find((c) => c.criterion === 'salary')?.because
+);
+check(
+  'and it leaves the fit denominator rather than counting as a miss',
+  silent.fit === 0.8,
+  `${silent.fit} — four of five decided, not four of six`
+);
+check(
+  'while completeness records that something is missing',
+  silent.completeness < 1 && silent.detail.missing.includes('salary'),
+  String(silent.completeness)
+);
+
+// Same numbers, different money. There is no honest multiplier between a B2B
+// rate and a permanent salary, so the answer is that it is not known.
+const uopFloor = preferencesSchema.parse({
+  ...savedPrefs,
+  salary: { ...savedPrefs.salary, basis: 'uop' }
+});
+const incomparable = evaluate(
+  offerRecordSchema.parse({
+    id: 'b2b', work_mode: 'remote', contract_type: 'B2B',
+    salary_min: 20000, salary_max: 25000, salary_currency: 'PLN', salary_period: 'month',
+    skills: ['React'], first_seen_at: NOW, last_seen_at: NOW
+  }),
+  uopFloor
+);
+check(
+  'a B2B figure against a UoP floor is unknown, not a pass',
+  incomparable.detail.criteria.find((c) => c.criterion === 'salary')?.verdict === 'unknown',
+  incomparable.detail.criteria.find((c) => c.criterion === 'salary')?.because
+);
+
+// The failure the ratio would have hidden: a posting that states one thing and
+// matches it is not a better offer than one that states five and matches four.
+const vague = scored({
+  salary: '', salary_min: null, salary_max: null, salary_currency: '',
+  contract_type: '', seniority: '', location: '', skills: []
+});
+check(
+  'a vague posting reads as high fit and low completeness, not as a perfect match',
+  vague.fit === 1 && vague.completeness === 0.43,
+  `fit ${vague.fit}, completeness ${vague.completeness}`
+);
+check(
+  'and the detail says which criteria could not be decided',
+  vague.detail.criteria.filter((c) => c.verdict === 'unknown').length === 5,
+  vague.detail.criteria.map((c) => `${c.criterion}=${c.verdict}`).join(' ')
+);
 
 section('fusion and canonicalisation');
 const fused = fuse(
