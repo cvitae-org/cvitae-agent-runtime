@@ -20,7 +20,7 @@ import { defineTool } from './registry.js';
 export const searchProfileTool = defineTool({
   name: 'search_profile',
   describe:
-    "Search the user's CV for experience relevant to a description of work. Returns matching bullet points with the company and role they came from.",
+    "Search the user's CV for anything relevant to a description of work: experience bullet points, skills, job titles held, education, certificates and languages. Each result says which kind it is, and experience results say which employer and role they came from.",
   schema: z.object({
     query: z
       .string()
@@ -38,10 +38,15 @@ export const searchProfileTool = defineTool({
     }
 
     return {
+      // `company` and `title` are only set on the experience kinds, and are
+      // dropped rather than sent as empty strings: a certificate has neither,
+      // and two blank fields per result is context paid for on every subsequent
+      // turn to tell the model nothing.
       results: hits.map((hit) => ({
+        kind: hit.row.kind,
         text: hit.row.text,
-        company: hit.row.company,
-        title: hit.row.title
+        ...(hit.row.company ? { company: hit.row.company } : {}),
+        ...(hit.row.title ? { title: hit.row.title } : {})
       }))
     };
   }
@@ -50,7 +55,7 @@ export const searchProfileTool = defineTool({
 export const readCvSummaryTool = defineTool({
   name: 'read_cv_summary',
   describe:
-    "Read the factual summary of the user's CV: name, current role, skills, and the list of employers with dates. Does not include experience bullet points — use search_profile for those.",
+    "Read the factual summary of the user's CV: name, current role, skills, and the list of employers with dates. Does not include experience bullet points, certificates or theses — use search_profile for those.",
   schema: z.object({}),
   execute: async (_args, context) => {
     const document = await context.store.documents.read();

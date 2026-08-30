@@ -13,7 +13,7 @@
 
 import { Collection, fuse, type SearchHit } from './lance.js';
 import { CvDocumentStore, type CvDocument } from './cvDocument.js';
-import { chunkDocument, type Chunk } from '../retrieval/chunk.js';
+import { chunkDocument, chunkKinds, type Chunk, type ChunkKind } from '../retrieval/chunk.js';
 import type { Embedder } from '../retrieval/embed.js';
 
 export type ChunkRow = Chunk & { vector: number[] };
@@ -79,7 +79,18 @@ export class Store {
     const wanted = chunkDocument(source);
 
     const existing = await this.chunks.all(10_000);
-    const known = new Set(existing.map((row) => row.id));
+
+    // A row written by an older chunker carries a `kind` this build no longer
+    // uses, and nothing else would ever fix it: ids are content-derived, so an
+    // unchanged bullet is never re-upserted and keeps whatever metadata it was
+    // first written with. That stale value is invisible until something filters
+    // on `kind` and silently matches nothing. Treating the whole table as
+    // unknown rebuilds it, which the index is allowed to cost — every byte of
+    // it is derived, and this is exactly the case `reindex` exists to repair.
+    const vocabulary = new Set<string>(chunkKinds);
+    const outdated = existing.some((row) => !vocabulary.has(row.kind));
+
+    const known = outdated ? new Set<string>() : new Set(existing.map((row) => row.id));
 
     const missing = wanted.filter((chunk) => !known.has(chunk.id));
 
@@ -108,15 +119,33 @@ export class Store {
    * job offer. Hybrid, because the two halves fail differently: the keyword arm
    * catches an exact technology the offer names, and the vector arm catches the
    * bullet that describes the same work in different words.
+   *
+   * `kinds` narrows what is eligible. Omitted, the whole CV is searchable, which
+   * is what an open-ended question wants. A caller that has already stated the
+   * skill list and the job titles in its own prompt passes the subset that adds
+   * something — see `DRAFTING_KINDS` in `retrieval/chunk.ts`.
    */
-  async searchProfile(query: string, limit = 8): Promise<SearchHit<ChunkRow>[]> {
+  async searchProfile(
+    query: string,
+    limit = 8,
+    kinds?: ChunkKind[]
+  ): Promise<SearchHit<ChunkRow>[]> {
     if (await this.chunks.count() === 0) return [];
 
     const vector = await this.embedder.one(query);
 
+    // A hard predicate rather than post-filtering the hits, for the same reason
+    // `searchOffers` splits `where` from `query`: filtering afterwards asks for
+    // `limit` rows and then throws some away, so a caller that wanted eight
+    // bullets gets three because five job titles outranked them.
+    const where =
+      kinds && kinds.length > 0
+        ? `kind IN (${kinds.map(quote).join(', ')})`
+        : undefined;
+
     const [semantic, lexical] = await Promise.all([
-      this.chunks.searchByVector(vector, limit * 2),
-      this.chunks.searchByText(query, limit * 2)
+      this.chunks.searchByVector(vector, limit * 2, where),
+      this.chunks.searchByText(query, limit * 2, where)
     ]);
 
     return fuse([semantic, lexical], 'id', limit);

@@ -459,12 +459,49 @@ rotated automatically.
 
 ### Why the CV is not "in a vector database"
 
-Personal details, education, certificates and languages are singleton structured
-records — there is one `education` array, so "retrieve the relevant education"
-has no meaning. What is genuinely retrievable is the prose inside
-`experience[].highlights`: many short claims, of which a given job offer makes a
-few relevant. Those are chunked one-bullet-per-chunk and embedded; the rest is a
-document.
+`cv.json` stays a document because that is what it is: singular, small, ordered
+and hand-edited. Nothing retrieves a phone number, ordering matters when it is
+rendered back out, and one file is what makes a backup a copy. The index is a
+*projection* over it, not a replacement for it — which is what keeps `reindex()`
+a repair rather than a migration.
+
+What that projection contains changed. It used to hold the prose only, on the
+argument that everything else is looked up rather than searched for. That is
+true of a *field* and false of the *claim* the field carries: an offer that
+demands an AWS certification, a degree in the subject, or German at B2 is asking
+a question the CV can answer, and while only bullets were indexed the answer
+`search_profile` gave was whichever bullet happened to use the word.
+
+So `retrieval/chunk.ts` now emits all eight kinds — the same vocabulary as
+`candidateFactKinds` in `capabilities/generateEvidenceSummary.ts`, so that the
+index and the evidence-CV contract do not speak two dialects of one list. The
+kinds are not embedded the same way:
+
+| | |
+| --- | --- |
+| Authored prose | the summary, and one chunk per experience highlight. A bullet is already the unit a person wrote as a single claim. Gated on length — a three-word bullet retrieves nothing |
+| Synthesised records | skills, education, certificates, languages, job titles, assembled into one labelled sentence each (`Certificate: … , issued by …`) so a result says what it is without a consumer decoding it. Gated on the source values being non-blank, since the label defeats a length floor |
+
+Skills and languages are **grouped**, not one chunk per value. A bare `React` is
+six characters of context that matches half the corpus; eight of them flood the
+top-k of every query and crowd out the bullets carrying actual evidence. Grouped,
+the keyword arm still gets its exact-token hit while the vector arm gets a
+sentence it can place.
+
+`searchProfile` therefore takes an optional list of kinds, applied as a hard
+predicate for the same reason `searchOffers` splits `where` from `query`:
+filtering after ranking asks for eight rows and throws some away.
+`draft_application` passes `DRAFTING_KINDS`, because `renderCandidate` already
+states the name, current role, skill list and job titles in that same prompt and
+retrieving them again spends the budget restating a block the model was handed
+two paragraphs earlier. `search_profile` and `ask_profile` are unfiltered — an
+open-ended question should reach all of it.
+
+One consequence worth knowing: because chunk ids are content-derived, a row is
+never rewritten while its text is unchanged, so a row written by an older
+chunker would keep a retired `kind` forever and silently match no filter.
+`reindex()` detects a kind outside the current vocabulary and rebuilds the table
+instead. It costs one re-embed, once, and needs no manual step.
 
 ### Why offers are searched, not just embedded
 

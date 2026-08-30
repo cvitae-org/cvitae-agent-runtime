@@ -23,7 +23,9 @@ const home = mkdtempSync(join(tmpdir(), 'cvitae-runtime-'));
 process.env.CVITAE_HOME = home;
 
 const { Store } = await import('../src/store/store.js');
-const { chunkDocument } = await import('../src/retrieval/chunk.js');
+const { chunkDocument, chunkKinds, DRAFTING_KINDS } = await import(
+  '../src/retrieval/chunk.js'
+);
 const { cvDocumentSchema } = await import('../src/store/cvDocument.js');
 const { executePlan } = await import('../src/core/orchestrator.js');
 const { ToolRegistry } = await import('../src/tools/registry.js');
@@ -105,7 +107,27 @@ const sampleDocument = cvDocumentSchema.parse({
       skills: ['Canvas', 'JavaScript']
     }
   ],
-  languages: [{ name: 'Polish', level: 'native' }]
+  education: [
+    {
+      university: 'Warsaw University of Technology',
+      degree: 'MSc in Computer Science',
+      started: '2013-10',
+      finished: '2018-06',
+      thesis: 'Real-time volumetric rendering of medical imaging data in the browser.'
+    }
+  ],
+  certificates: [
+    {
+      name: 'AWS Certified Solutions Architect - Associate',
+      issuer: 'Amazon Web Services',
+      started: '2022-05',
+      finished: null
+    }
+  ],
+  languages: [
+    { name: 'Polish', level: 'native' },
+    { name: 'English', level: 'C1' }
+  ]
 });
 
 section('document store');
@@ -118,7 +140,12 @@ check('experience survives', readBack.experience.length === 2);
 
 section('chunking');
 const chunks = chunkDocument(readBack);
-check('produces one chunk per usable prose string', chunks.length === 5, `got ${chunks.length}`);
+
+// 1 role + 1 summary + 2 skill groups + 2 job titles + 4 bullets + 1 degree
+// + 1 certificate + 1 grouped language line.
+const CHUNK_TOTAL = 13;
+
+check('produces a chunk per retrievable claim', chunks.length === CHUNK_TOTAL, `got ${chunks.length}`);
 check(
   'ids are content-derived, not positional',
   chunks.every((c) => c.id.includes(':')) &&
@@ -129,26 +156,133 @@ check(
   chunks.some((c) => c.text.startsWith('Lead Frontend Developer at Acme Commerce:'))
 );
 
+const byKind = new Map<string, number>();
+for (const chunk of chunks) byKind.set(chunk.kind, (byKind.get(chunk.kind) ?? 0) + 1);
+
+check(
+  'every kind in the vocabulary is reachable',
+  chunkKinds.every((kind) => (byKind.get(kind) ?? 0) > 0),
+  chunkKinds.filter((kind) => !byKind.has(kind)).join(', ') || 'all present'
+);
+check(
+  'skills are grouped, not one chunk per token',
+  byKind.get('skill') === 2 &&
+    chunks.some((c) => c.text === 'Programming languages: TypeScript, JavaScript'),
+  `${byKind.get('skill')} skill chunks`
+);
+check(
+  'languages are one chunk, with levels',
+  byKind.get('language') === 1 &&
+    chunks.some((c) => c.text === 'Languages: Polish (native), English (C1)')
+);
+check(
+  'a certificate names its issuer',
+  chunks.some(
+    (c) =>
+      c.kind === 'certificate' &&
+      c.text.includes('AWS Certified Solutions Architect') &&
+      c.text.includes('Amazon Web Services')
+  )
+);
+check(
+  'an open-ended role carries "present" rather than a blank',
+  chunks.some((c) => c.kind === 'experience-title' && c.text.includes('to present'))
+);
+check(
+  'only the experience kinds claim a company',
+  chunks.every((c) => !c.company || c.kind.startsWith('experience-'))
+);
+check(
+  'a job title sits directly before its own bullets',
+  (() => {
+    const ordered = [...chunks].sort((a, b) => a.position - b.position);
+    const titleAt = ordered.findIndex((c) => c.kind === 'experience-title');
+    return titleAt >= 0 && ordered[titleAt + 1]?.kind === 'experience-bullet';
+  })()
+);
+
 section('index lifecycle (LanceDB)');
 const first = await store.reindex(readBack);
-check('first index embeds every chunk', first.embedded === 5 && first.total === 5, JSON.stringify(first));
+check(
+  'first index embeds every chunk',
+  first.embedded === CHUNK_TOTAL && first.total === CHUNK_TOTAL,
+  JSON.stringify(first)
+);
 
 const second = await store.reindex(readBack);
 check('re-indexing unchanged content embeds nothing', second.embedded === 0, JSON.stringify(second));
+
+// A row written by an older chunker carries a kind this build has retired.
+// `reindex` has to notice and rebuild, because ids are content-derived and the
+// row would otherwise keep its stale metadata forever.
+await store.chunks.upsert([
+  {
+    id: 'exp:legacy',
+    kind: 'highlight' as never,
+    text: 'A bullet indexed before the vocabulary widened.',
+    company: 'Acme Commerce',
+    title: 'Lead Frontend Developer',
+    position: 0,
+    vector: await stubEmbedder.one('A bullet indexed before the vocabulary widened.')
+  }
+]);
+
+const rebuilt = await store.reindex(readBack);
+check(
+  'a stale kind forces a rebuild rather than sitting there',
+  rebuilt.embedded === CHUNK_TOTAL && rebuilt.removed === 1,
+  JSON.stringify(rebuilt)
+);
+check(
+  'nothing outside the current vocabulary survives it',
+  (await store.chunks.all(100)).every((row) =>
+    (chunkKinds as readonly string[]).includes(row.kind)
+  )
+);
 
 const trimmed = structuredClone(readBack);
 trimmed.experience[0]!.highlights.pop();
 const third = await store.reindex(trimmed);
 check('a deleted bullet is removed from the index', third.removed === 1, JSON.stringify(third));
-check('chunk count reflects the deletion', (await store.chunks.count()) === 4);
+check('chunk count reflects the deletion', (await store.chunks.count()) === CHUNK_TOTAL - 1);
 
 section('profile retrieval (hybrid)');
-const hits = await store.searchProfile('React and TypeScript checkout work', 3);
+const hits = await store.searchProfile('checkout flow abandonment', 3);
 check('returns hits', hits.length > 0, `${hits.length} hits`);
 check(
   'the checkout bullet ranks first',
   hits[0]?.row.text.includes('checkout') === true,
   hits[0]?.row.text.slice(0, 60)
+);
+
+// The point of the widening: these three used to be unreachable through search.
+const certificateHits = await store.searchProfile('AWS certified solutions architect', 5);
+check(
+  'a certificate is retrievable',
+  certificateHits.some((hit) => hit.row.kind === 'certificate'),
+  certificateHits.map((hit) => hit.row.kind).join(', ')
+);
+
+const degreeHits = await store.searchProfile('volumetric rendering thesis computer science', 5);
+check(
+  'a degree and its thesis are retrievable',
+  degreeHits.some((hit) => hit.row.kind === 'education'),
+  degreeHits.map((hit) => hit.row.kind).join(', ')
+);
+
+const languageHits = await store.searchProfile('native Polish speaker with English', 5);
+check(
+  'languages are retrievable',
+  languageHits.some((hit) => hit.row.kind === 'language'),
+  languageHits.map((hit) => hit.row.kind).join(', ')
+);
+
+const scoped = await store.searchProfile('React and TypeScript frontend work', 8, DRAFTING_KINDS);
+check(
+  'the drafting scope excludes what renderCandidate already states',
+  scoped.length > 0 &&
+    scoped.every((hit) => (DRAFTING_KINDS as string[]).includes(hit.row.kind)),
+  scoped.map((hit) => hit.row.kind).join(', ')
 );
 
 section('offers');

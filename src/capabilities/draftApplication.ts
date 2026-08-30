@@ -27,6 +27,7 @@ import type { Capability, Plan, RunContext, TransformStep } from '../core/types.
 import { RuntimeError } from '../core/types.js';
 import type { SearchHit } from '../store/lance.js';
 import type { ChunkRow } from '../store/store.js';
+import { DRAFTING_KINDS } from '../retrieval/chunk.js';
 import { resolveOffer } from '../offers/resolve.js';
 import {
   DRAFTING_RULES,
@@ -124,6 +125,12 @@ const HIGHLIGHT_LIMIT = 8;
 /**
  * The CV bullets most relevant to this offer.
  *
+ * Scoped to `DRAFTING_KINDS`, because `renderCandidate` below already puts the
+ * name, current role, skill list and recent job titles into this same prompt.
+ * Retrieving them again would spend slots from a budget of eight restating a
+ * block the model has already been handed, and the bullets pushed out are the
+ * only part of the index it has not seen.
+ *
  * Retrieval first, because that is what the chunk index is for. The fallback
  * matters more than it looks: `searchProfile` needs an embedding model, and the
  * README is explicit that neither installed Ollama model can embed — so on a
@@ -138,7 +145,11 @@ const relevantHighlights = async (
 ): Promise<SearchHit<ChunkRow>[]> => {
   if (query.trim()) {
     try {
-      const hits = await context.store.searchProfile(query, HIGHLIGHT_LIMIT);
+      const hits = await context.store.searchProfile(
+        query,
+        HIGHLIGHT_LIMIT,
+        DRAFTING_KINDS
+      );
       if (hits.length > 0) return hits;
     } catch (error) {
       // An embedder that is not running is a configuration state, not a fault
@@ -160,7 +171,7 @@ const relevantHighlights = async (
     .map((highlight, index) => ({
       row: {
         id: `unranked:${index}`,
-        kind: 'highlight' as const,
+        kind: 'experience-bullet' as const,
         text: highlight.text,
         company: highlight.company,
         title: highlight.title,
