@@ -13,6 +13,7 @@
 
 import { Collection, fuse, type SearchHit } from './lance.js';
 import { CvDocumentStore, type CvDocument } from './cvDocument.js';
+import { PreferencesStore } from './preferences.js';
 import {
   OfferRecordStore,
   dispositions,
@@ -129,6 +130,8 @@ export class Store {
   readonly documents: CvDocumentStore;
   /** Authored: the postings seen, and what the user decided about each. */
   readonly offerRecords: OfferRecordStore;
+  /** Authored: what the user wants, which is what offers are scored against. */
+  readonly preferences: PreferencesStore;
   /** Derived: embeddings of the CV's retrievable parts. */
   readonly chunks: Collection<ChunkRow>;
   /** Derived: the queryable projection of `offerRecords`. */
@@ -137,6 +140,7 @@ export class Store {
   constructor(private readonly embedder: Embedder) {
     this.documents = new CvDocumentStore();
     this.offerRecords = new OfferRecordStore();
+    this.preferences = new PreferencesStore();
     this.chunks = new Collection<ChunkRow>('chunks', 'id', ['text']);
     this.offers = new Collection<OfferRow>('offers', 'id', ['text']);
   }
@@ -247,13 +251,23 @@ export class Store {
     added: number;
     updated: number;
     embedded: number;
+    /**
+     * The merged records, so a caller can score what was actually stored.
+     *
+     * A discovery round needs these: a sighting is partial by definition, and
+     * scoring the sighting rather than the merge would rate an offer on this
+     * round's fragment of it while ignoring what an earlier round established.
+     */
+    records: OfferRecord[];
   }> {
-    if (sightings.length === 0) return { added: 0, updated: 0, embedded: 0 };
+    if (sightings.length === 0) {
+      return { added: 0, updated: 0, embedded: 0, records: [] };
+    }
 
     const { added, updated, records } = await this.offerRecords.sight(sightings);
     const embedded = await this.indexOffers(records);
 
-    return { added, updated, embedded };
+    return { added, updated, embedded, records };
   }
 
   /**

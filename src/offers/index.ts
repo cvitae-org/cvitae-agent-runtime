@@ -13,6 +13,12 @@
  * user's requirements. They sit here because they are about offers, and apart
  * from `capabilities/` because nothing in them may be delegated to a model —
  * see the note at the top of `criteria.ts`.
+ *
+ * `identity.ts`, `queries.ts`, `verify.ts` and `round.ts` close the loop: what
+ * to search for, what counts as the same offer twice, which extracted facts are
+ * allowed to move a score, and the round that runs all of it in order. Only
+ * `round.ts` touches a model, and only through a function it is handed — which
+ * is why nothing in this directory imports the runtime.
  */
 
 export { fetchOffer, extractVisibleText, isHttpUrl } from './fetch.js';
@@ -33,3 +39,9 @@ export {
   SCORER_VERSION
 } from './criteria.js';
 export type { Verdict, CriterionVerdict, ScoreDetail, Evaluation } from './criteria.js';
+export { normaliseUrl, offerId } from './identity.js';
+export { buildQueries, queriesForRound } from './queries.js';
+export { verifyFacts } from './verify.js';
+export type { OfferClaims, Verification } from './verify.js';
+export { runRound, runRounds } from './round.js';
+export type { OfferAnalyser, RoundOptions, RoundReport } from './round.js';

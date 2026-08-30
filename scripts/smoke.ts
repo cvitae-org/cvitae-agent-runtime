@@ -33,6 +33,10 @@ const { PreferencesStore, preferencesSchema, fingerprintPreferences } = await im
 const { offerRecordSchema } = await import('../src/store/offerRecord.js');
 const { parseSalary } = await import('../src/offers/salary.js');
 const { evaluate } = await import('../src/offers/criteria.js');
+const { normaliseUrl, offerId } = await import('../src/offers/identity.js');
+const { buildQueries, queriesForRound } = await import('../src/offers/queries.js');
+const { verifyFacts } = await import('../src/offers/verify.js');
+const { runRound } = await import('../src/offers/round.js');
 const { executePlan } = await import('../src/core/orchestrator.js');
 const { ToolRegistry } = await import('../src/tools/registry.js');
 const { defaultTools } = await import('../src/tools/index.js');
@@ -43,6 +47,8 @@ const { createRuntime } = await import('../src/index.js');
 import type { Embedder } from '../src/retrieval/embed.js';
 import type { RunContext, Plan } from '../src/core/types.js';
 import type { ExtractCvResult } from '../src/index.js';
+import type { SearchOutcome } from '../src/offers/webSearch.js';
+import type { ResolvedOffer } from '../src/offers/resolve.js';
 
 let failures = 0;
 
@@ -640,6 +646,312 @@ check(
   'and the detail says which criteria could not be decided',
   vague.detail.criteria.filter((c) => c.verdict === 'unknown').length === 5,
   vague.detail.criteria.map((c) => `${c.criterion}=${c.verdict}`).join(' ')
+);
+
+section('offer identity (no model)');
+check(
+  'tracking parameters do not make a second offer',
+  offerId('https://justjoin.it/offers/abc?utm_source=x&gclid=1') ===
+    offerId('https://JustJoin.it/offers/abc/')
+);
+check(
+  'but the board keeps its own identifier',
+  offerId('https://nofluffjobs.com/job?id=1234') !== offerId('https://nofluffjobs.com/job?id=5678')
+);
+check(
+  'parameter order is not identity',
+  normaliseUrl('https://x.com/a?b=1&a=2') === normaliseUrl('https://x.com/a?a=2&b=1'),
+  normaliseUrl('https://x.com/a?b=1&a=2')
+);
+check('a non-http URL has no offer identity', offerId('javascript:alert(1)') === '');
+
+section('queries');
+const queries = buildQueries(readBack, savedPrefs);
+check('the CV and the preferences produce queries', queries.length > 0, String(queries.length));
+check(
+  'the role appears in them',
+  queries.some((q) => q.toLowerCase().includes('frontend developer')),
+  queries[0]
+);
+check(
+  'and so does a required skill the CV never mentions',
+  queries.some((q) => q.includes('Go'))
+);
+check(
+  'building twice gives the same list, which is what lets rounds slice it',
+  JSON.stringify(buildQueries(readBack, savedPrefs)) === JSON.stringify(queries)
+);
+
+// The third dedupe. Consecutive rounds must not re-run the same searches, and
+// a round past the end of the list must wrap rather than return nothing.
+const firstSlice = queriesForRound(queries, 1, 3);
+const secondSlice = queriesForRound(queries, 2, 3);
+check(
+  'consecutive rounds run different queries',
+  firstSlice.every((q) => !secondSlice.includes(q)),
+  `${firstSlice.length} then ${secondSlice.length}`
+);
+check(
+  'and a round past the end wraps instead of running nothing',
+  queriesForRound(queries, 99, 3).length === 3
+);
+
+section('verification: the trust boundary');
+const posting = [
+  'Senior Frontend Developer w Acme Sp. z o.o.',
+  'Praca zdalna. Umowa B2B.',
+  'Wynagrodzenie: 24 000 - 30 000 PLN netto miesiecznie.',
+  'Wymagania: React, TypeScript, Next.js.'
+].join('\n');
+
+const honest = verifyFacts(
+  {
+    title: 'Senior Frontend Developer',
+    company: 'Acme Sp. z o.o.',
+    work_mode: 'remote',
+    contract_type: 'B2B',
+    salary: '24 000 - 30 000 PLN',
+    skills: ['React', 'TypeScript', 'Next.js']
+  },
+  posting
+);
+check(
+  'facts that are in the posting survive',
+  honest.unverified.length === 0 && honest.facts.salary === '24 000 - 30 000 PLN',
+  honest.unverified.join(', ')
+);
+
+// The attack this exists to stop: a posting that talks the model into a figure
+// it never printed. The claim is dropped, and dropping it means unknown.
+const invented = verifyFacts(
+  {
+    title: 'Senior Frontend Developer',
+    work_mode: 'remote',
+    salary: '95 000 PLN',
+    skills: ['React', 'Cobol']
+  },
+  posting
+);
+check(
+  'a salary the posting never stated is blanked, not stored',
+  invented.facts.salary === undefined && invented.unverified.includes('salary')
+);
+check(
+  'and one invented skill does not discard the real ones',
+  JSON.stringify(invented.facts.skills) === JSON.stringify(['React']),
+  JSON.stringify(invented.facts.skills)
+);
+check(
+  'a gating fact that is in the text is untouched by a neighbour that is not',
+  invented.facts.work_mode === 'remote'
+);
+
+// Blanking a gating fact must read as "not known", never as "does not match" —
+// otherwise a failed verification would become a way to reject postings.
+const afterBlanking = evaluate(
+  offerRecordSchema.parse({
+    id: 'blanked', work_mode: 'remote', contract_type: 'B2B',
+    salary: '', salary_min: null, salary_max: null, salary_currency: '',
+    skills: ['React'], first_seen_at: NOW, last_seen_at: NOW
+  }),
+  savedPrefs
+);
+check(
+  'an unverified salary evaluates to unknown, not to fail',
+  afterBlanking.detail.criteria.find((c) => c.criterion === 'salary')?.verdict === 'unknown'
+);
+
+section('a discovery round (stubbed search, fetch and model)');
+
+// A board that lists the same offer twice under different tracking parameters,
+// one offer that cannot be read, and one that can.
+const searched: string[] = [];
+const stubSearch = async (query: string): Promise<SearchOutcome> => {
+  searched.push(query);
+  return {
+    status: 'ok',
+    engine: 'brave',
+    hits: [
+      {
+        url: 'https://justjoin.it/offers/acme-senior-frontend?utm_campaign=smoke',
+        title: 'Senior Frontend Developer - React, TypeScript',
+        snippet: 'Remote. Acme Sp. z o.o.'
+      },
+      {
+        url: 'https://justjoin.it/offers/acme-senior-frontend/',
+        title: 'Senior Frontend Developer',
+        snippet: 'The same offer, found again.'
+      },
+      { url: 'https://blocked.example/offer/1', title: 'Frontend Developer', snippet: 'Hybrid.' }
+    ]
+  };
+};
+
+const fetched: string[] = [];
+const stubResolve = async (url: string): Promise<ResolvedOffer> => {
+  fetched.push(url);
+
+  if (url.includes('blocked.example')) {
+    return { status: 'blocked', detail: 'The board refused the request.' };
+  }
+
+  return { status: 'ok', text: posting, finalUrl: url, via: 'builtin' };
+};
+
+// Claims a real extraction could plausibly produce, including one the posting
+// does not support. The round must not let that one reach the score.
+const stubAnalyse = async () => ({
+  company: 'Acme Sp. z o.o.',
+  position: 'Senior Frontend Developer',
+  seniority: 'Senior',
+  location: 'Warszawa',
+  work_mode: 'remote',
+  contract_type: 'B2B',
+  salary: '24 000 - 30 000 PLN netto miesiecznie',
+  required_skills: ['React', 'TypeScript', 'Next.js', 'Kubernetes']
+});
+
+const recordsBefore = (await store.offerRecords.all()).length;
+const report = await runRound({
+  store,
+  cv: readBack,
+  preferences: savedPrefs,
+  analyse: stubAnalyse,
+  search: stubSearch,
+  resolve: stubResolve,
+  queries: ['frontend developer react remote'],
+  fetchLimit: 5
+});
+
+check('the round searched what it was given', searched.length === 1, searched.join(' | '));
+check(
+  'three hits became two offers',
+  report.hits === 3 && report.discovered === 2,
+  `${report.hits} hits, ${report.discovered} new`
+);
+check('and the duplicate was never fetched', fetched.length === 2, fetched.join(' | '));
+check('the board that refused is recorded, not lost', report.unreadable === 1);
+check('one offer was read and scored', report.rated === 1 && report.scored.length === 1);
+check(
+  'the store grew by exactly the offers found',
+  (await store.offerRecords.all()).length === recordsBefore + 2,
+  `${recordsBefore} then ${(await store.offerRecords.all()).length}`
+);
+
+const rated = report.scored[0]!;
+check(
+  'the salary was parsed on the way in',
+  (await store.offerRecords.get(rated.id))?.salary_min === 24000,
+  String((await store.offerRecords.get(rated.id))?.salary_min)
+);
+check(
+  'and the offer is eligible against a floor it clears',
+  rated.eligibility === 'eligible',
+  `${rated.eligibility}, fit ${rated.fit}`
+);
+
+// The one claim the posting did not support. It is reported, so the round is
+// auditable, and it is absent from the record, so it cannot become evidence.
+check(
+  'the invented skill is named in the report',
+  rated.unverified.includes('skills'),
+  rated.unverified.join(', ')
+);
+check(
+  'and never reached the record',
+  !(await store.offerRecords.get(rated.id))?.skills.includes('Kubernetes'),
+  (await store.offerRecords.get(rated.id))?.skills.join(', ')
+);
+
+const unreadable = (await store.offerRecords.all()).find((r) => r.processing === 'unreadable');
+check('the unreadable board is a candidate for nothing', unreadable !== undefined);
+
+// The third dedupe. The same job on a second board is a different URL and a
+// different record, and only reading it can reveal that it is the same job.
+const syndicated = await runRound({
+  store,
+  cv: readBack,
+  preferences: savedPrefs,
+  analyse: stubAnalyse,
+  search: async () => ({
+    status: 'ok',
+    engine: 'brave',
+    hits: [
+      {
+        url: 'https://nofluffjobs.com/job/acme-senior-frontend',
+        title: 'Senior Frontend Developer',
+        snippet: 'The same job, a different board.'
+      }
+    ]
+  }),
+  resolve: stubResolve,
+  queries: ['frontend developer react remote'],
+  fetchLimit: 5
+});
+check(
+  'the same job on another board is named as a duplicate',
+  syndicated.duplicates.length === 1 && syndicated.duplicates[0]!.of === rated.id,
+  JSON.stringify(syndicated.duplicates)
+);
+check(
+  'but it is stored rather than swallowed — merging is the user\u2019s call',
+  (await store.offerRecords.get(syndicated.duplicates[0]!.id))?.processing === 'rated'
+);
+
+// The whole point of persisting after every round: the second one recognises
+// everything the first found, and says so instead of paying to find out again.
+fetched.length = 0;
+const again = await runRound({
+  store,
+  cv: readBack,
+  preferences: savedPrefs,
+  analyse: stubAnalyse,
+  search: stubSearch,
+  resolve: stubResolve,
+  queries: ['frontend developer react remote'],
+  fetchLimit: 5
+});
+check('a second round finds nothing new', again.saturated && again.discovered === 0);
+check('and re-reads nothing', fetched.length === 0, fetched.join(' | '));
+
+// A refused search is not an empty one, and must not read as saturation.
+const failing = await runRound({
+  store,
+  cv: readBack,
+  preferences: savedPrefs,
+  analyse: stubAnalyse,
+  search: async () => ({ status: 'failed', engine: 'brave', detail: 'HTTP 429' }),
+  resolve: stubResolve,
+  queries: ['anything'],
+  fetchLimit: 5
+});
+check(
+  'a refused search is reported rather than swallowed',
+  failing.searchFailures.length === 1 && failing.searchFailures[0]!.includes('429'),
+  failing.searchFailures.join(' | ')
+);
+
+// The user's column. A round that re-sees a dismissed offer records having seen
+// it; it does not reconsider the decision.
+await store.offerRecords.update(rated.id, { disposition: 'dismissed' });
+const seenBefore = (await store.offerRecords.get(rated.id))?.last_seen_at;
+fetched.length = 0;
+await runRound({
+  store,
+  cv: readBack,
+  preferences: savedPrefs,
+  analyse: stubAnalyse,
+  search: stubSearch,
+  resolve: stubResolve,
+  queries: ['frontend developer react remote'],
+  fetchLimit: 5
+});
+const afterDismissal = await store.offerRecords.get(rated.id);
+check('a dismissed offer stays dismissed', afterDismissal?.disposition === 'dismissed');
+check('and is not read again', fetched.length === 0);
+check(
+  'though being seen again is still recorded',
+  Boolean(afterDismissal?.last_seen_at) && afterDismissal!.last_seen_at >= (seenBefore ?? '')
 );
 
 section('fusion and canonicalisation');

@@ -42,6 +42,7 @@ import {
   resolveEmbeddingModel,
   type ModelOverride
 } from './providers/resolve.js';
+import { runRounds, type RoundReport } from './offers/round.js';
 import type { RunContext, RunResult } from './core/types.js';
 import { RuntimeError } from './core/types.js';
 import {
@@ -63,6 +64,19 @@ export type RuntimeOptions = {
 export type RunOptions = {
   model?: ModelOverride;
   signal?: AbortSignal;
+};
+
+export type DiscoverOptions = RunOptions & {
+  /** How many rounds to attempt. Stops early once a round finds nothing new. */
+  rounds?: number;
+  /** Which slice of the derived query list the first round runs. 1-based. */
+  round?: number;
+  /** Replaces the queries derived from the CV and preferences. */
+  queries?: string[];
+  queriesPerRound?: number;
+  searchLimit?: number;
+  /** Postings read per round, which is what a round actually costs. */
+  fetchLimit?: number;
 };
 
 export type BatchOptions = RunOptions & {
@@ -287,6 +301,59 @@ export class Runtime {
       traceId
     );
   }
+
+  /**
+   * Searches for offers, reads what looks worth reading, and scores it.
+   *
+   * The one entry point here that is a workflow rather than a capability, and
+   * deliberately so: the searching, the three dedupes and the scoring are all
+   * deterministic, and only the reading of a posting is a model's job. Routing
+   * the whole thing through `run` would put a model in charge of which offers
+   * get found and what they are worth, which is exactly the arrangement the
+   * scorer exists to avoid — see `offers/round.ts` and `offers/criteria.ts`.
+   *
+   * So the round owns the loop and rents the model for one step of it. The
+   * `analyse` it is handed is the ordinary `analyze_offer` capability, called
+   * with text the round has already fetched — which means the capability never
+   * follows a URL of its own here, and the round keeps the raw text it needs to
+   * verify the extraction against.
+   *
+   * Returns one report per round, in order, ending early on saturation.
+   */
+  async discoverOffers(
+    options: DiscoverOptions = {}
+  ): Promise<RoundReport[]> {
+    const { rounds, round, queries, queriesPerRound, searchLimit, fetchLimit, ...runOptions } =
+      options;
+
+    const store = await this.store();
+    const [cv, preferences] = await Promise.all([
+      store.documents.read(),
+      store.preferences.read()
+    ]);
+
+    return runRounds({
+      store,
+      cv,
+      preferences,
+      rounds,
+      round,
+      queries,
+      queriesPerRound,
+      searchLimit,
+      fetchLimit,
+      signal: runOptions.signal,
+      analyse: async ({ offerText, url, boardFacts, signal }) => {
+        const result = await this.run(
+          'analyze_offer',
+          { offerText, url, boardFacts },
+          { model: runOptions.model, signal }
+        );
+
+        return result.data as Record<string, unknown>;
+      }
+    });
+  }
 }
 
 export const createRuntime = (options: RuntimeOptions = {}): Runtime =>
@@ -339,7 +406,14 @@ export {
   measureCompleteness,
   readContractTypes,
   COUNTED_FACTS,
-  SCORER_VERSION
+  SCORER_VERSION,
+  normaliseUrl,
+  offerId,
+  buildQueries,
+  queriesForRound,
+  verifyFacts,
+  runRound,
+  runRounds
 } from './offers/index.js';
 export type {
   BoardOffer,
@@ -349,7 +423,12 @@ export type {
   Verdict,
   CriterionVerdict,
   ScoreDetail,
-  Evaluation
+  Evaluation,
+  OfferClaims,
+  Verification,
+  OfferAnalyser,
+  RoundOptions,
+  RoundReport
 } from './offers/index.js';
 export type { SourceInput, SourceRecord, ReadOutcome } from './sources/index.js';
 export type { ExtractCvInput, ExtractCvResult } from './capabilities/extractCv.js';

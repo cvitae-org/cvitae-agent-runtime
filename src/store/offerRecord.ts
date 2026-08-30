@@ -41,6 +41,7 @@
 import { z } from 'zod';
 import { JsonlStore } from './jsonl.js';
 import { offersPath } from './paths.js';
+import { parseSalary } from '../offers/salary.js';
 
 /** How far the round got. Written by `sight()`. */
 export const processingStates = [
@@ -195,6 +196,43 @@ export type OfferSighting = Partial<
 /** Fields a sighting must never overwrite once a record exists. */
 const preserved = ['version', 'id', 'disposition', 'first_seen_at'] as const;
 
+/** The parsed pay, which a caller may state instead of having read from the text. */
+const numerics = ['salary_min', 'salary_max', 'salary_currency', 'salary_period'] as const;
+
+/**
+ * Fills the salary numerics from the salary text.
+ *
+ * Runs when the text is new or has changed, and never when the sighting stated
+ * numerics of its own — a board that publishes structured pay knows better than
+ * a parser reading its own rendering of it. Recomputing only on a change is
+ * what keeps that override alive: it survives every later partial sighting, and
+ * expires exactly when the thing it described is replaced.
+ *
+ * Without this the columns had no writer at all. `salary_min` existed, every
+ * predicate over it was inert, and a salary floor silently matched nothing.
+ */
+const derivePay = (
+  merged: Record<string, unknown>,
+  stated: Record<string, unknown>,
+  previous: OfferRecord | undefined
+): Record<string, unknown> => {
+  if (numerics.some((key) => key in stated)) return merged;
+
+  const salary = typeof merged.salary === 'string' ? merged.salary : '';
+
+  if (!salary.trim() || salary === previous?.salary) return merged;
+
+  const parsed = parseSalary(salary);
+
+  return {
+    ...merged,
+    salary_min: parsed.min,
+    salary_max: parsed.max,
+    salary_currency: parsed.currency,
+    salary_period: parsed.period
+  };
+};
+
 export class OfferRecordStore {
   private readonly file: JsonlStore<OfferRecord>;
 
@@ -244,14 +282,22 @@ export class OfferRecordStore {
         Object.entries(sighting).filter(([, value]) => value !== undefined)
       );
 
-      const merged = offerRecordSchema.parse({
-        ...(previous ?? {}),
-        ...stated,
-        ...(previous ? Object.fromEntries(preserved.map((key) => [key, previous[key]])) : {}),
-        id: sighting.id,
-        first_seen_at: previous?.first_seen_at ?? now,
-        last_seen_at: now
-      });
+      const merged = offerRecordSchema.parse(
+        derivePay(
+          {
+            ...(previous ?? {}),
+            ...stated,
+            ...(previous
+              ? Object.fromEntries(preserved.map((key) => [key, previous[key]]))
+              : {}),
+            id: sighting.id,
+            first_seen_at: previous?.first_seen_at ?? now,
+            last_seen_at: now
+          },
+          stated,
+          previous
+        )
+      );
 
       byId.set(merged.id, merged);
       touched.push(merged);

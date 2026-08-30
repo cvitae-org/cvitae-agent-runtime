@@ -430,7 +430,7 @@ src/
   tools/             defineTool() + the registry that binds context, not data
   prompt/builder.ts  explicit composition — see the note below
   retrieval/         chunking and embedding
-  offers/            fetching · salary parsing · deterministic scoring
+  offers/            searching · fetching · verification · deterministic scoring
   store/             cv.json · offers.jsonl · preferences.json (authored) · LanceDB (derived)
   mail/              cvitae-mail client — drafting, deliberately not a tool
   providers/         model resolution, credentials, loopback enforcement
@@ -599,6 +599,79 @@ on tax choices this runtime does not know, so there is no honest multiplier and
 the answer is `unknown`. Conversions it *does* make — an hourly or daily rate to
 a monthly floor — run on numbers the user stated in `preferences.json`, and the
 verdict says which assumption was applied.
+
+## Discovery rounds
+
+A **round** is the smallest unit of offer discovery that leaves the store worth
+keeping. It searches, drops what it has seen before, reads what looks worth
+reading, checks every extracted fact against the posting it came from, scores
+the result, and writes — all of it, or it reports what it could not do. Nothing
+is buffered for a later round to finish.
+
+```
+queries → search → dedupe → rank → fetch → extract → verify → score → persist
+                    ↑                          ↑         ↑        ↑
+                  cheap                      model    the only   ordinary
+                  first                      here     boundary   code
+```
+
+That is why the round exists as a unit rather than as a loop body. How many to
+run is the caller's business — an interactive search runs several, a nightly job
+runs one, both call the same thing. A crash costs the unfinished round. A round
+that runs again tomorrow recognises everything it saw today.
+
+```ts
+const reports = await runtime.discoverOffers({ rounds: 3, fetchLimit: 5 });
+```
+
+**Three dedupes, cheapest first.** URL normalisation runs before anything is
+fetched, because two queries returning the same posting is the normal case:
+tracking parameters are stripped, parameters sorted, the host lowercased. It
+stops there deliberately — boards put offer identity *in* the query string
+(`?id=1234567`), so an allowlist of "meaningful" parameters would collapse an
+entire board into one offer. Then the record on file decides whether an offer is
+fetched at all. Identity last — the same job syndicated to three boards — since
+it needs a company and a title, which a URL does not carry.
+
+That third one is *reported* and not acted on. Collapsing two records would need
+a column saying which absorbed which, and inventing one to make a round tidier
+is the wrong order: the report names the collision, `disposition` already exists
+for saying what to do about it, and which of two boards to apply through is not
+the runtime's call.
+
+**The query list is deterministic on purpose.** Round *n* takes the *n*th slice
+of the same derived list, which is what makes consecutive rounds search
+different things without keeping a cursor anywhere. Queries come from the CV's
+role and recent titles crossed with the preferences' required skills; a contract
+qualifier is added only when exactly one type is accepted, since two would AND
+themselves into nothing.
+
+**Search hits are pointers, never evidence.** A hit's title and snippet order
+the fetch queue and are never written to a record. They are page-authored text,
+and a candidate row carrying an unread posting's own description of itself would
+be a claim nothing checked. Ranking is allowed to read them precisely because
+ranking cannot move a score.
+
+**Verification is the boundary.** `offers/verify.ts` looks for every extracted
+fact in the raw text before it is stored, and gating facts — salary, work mode,
+contract type, skills — are blanked when they are not found. Blanked means
+`unknown`, never `fail`; the opposite would make a failed check into a way to
+hide postings. Descriptive facts are reported but not blanked, because a Polish
+posting analysed into English says `Warszawa` where the model wrote `Warsaw`,
+and strict blanking would mark every such offer as under-described. Skills are
+checked one at a time: one invented technology should not discard the seven real
+ones.
+
+**The round never writes `disposition`.** That column is the user's. A round
+that re-sees a dismissed offer records having seen it and does not reconsider
+the decision — and does not spend a fetch on it either.
+
+Rounds stop early on saturation. A round that finds no offer it had not already
+seen has paid for its searches and skipped the fetches, which are the expensive
+half, so asking for ten rounds costs nothing once the third has exhausted what
+this CV implies. A round where *every* search was refused stops the loop too,
+and that is the opposite of saturation: nothing was searched, so nothing can be
+concluded, and nine more copies of the same failure would not help.
 
 ## Prompts are edited carefully
 
@@ -891,9 +964,18 @@ different name are a different input. Measured — identical PDF, `cv.pdf` gives
 `[English]` and `cv-textlayer.pdf` gives `[English, Vue]`, each reproducibly.
 Worth knowing before reading two runs as a comparison of anything else.
 
-Not built: the offers extractor. Its seam is `store.saveOffers`, and the shape to
-copy is `extract_cv` — read sources into text, one narrow step per artefact, merge
-rather than write.
+Offer discovery runs end to end: `runtime.discoverOffers()` searches, dedupes,
+reads, verifies and scores, and the smoke check exercises a full round against a
+stubbed search, fetch and model — including the injection case, where a salary
+the posting never printed is dropped rather than scored. What is deliberately
+not built is merging syndicated duplicates, which needs a schema decision the
+[Discovery rounds](#discovery-rounds) section explains, and re-checking live
+offers for expiry, which is a different job from finding new ones.
+
+Also not built: the offers *extractor* — importing postings from files the way
+`extract_cv` imports a CV. Its seam is the same `store.saveOffers`, and the shape
+to copy is `extract_cv`: read sources into text, one narrow step per artefact,
+merge rather than write.
 
 The HTTP surface now carries everything cvitae sends: a per-request provider and
 model, and a time budget. Until this, `/run/:name` dropped both on the floor —
