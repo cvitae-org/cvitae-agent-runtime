@@ -867,6 +867,8 @@ serves a smaller thing on purpose; see [Hosting it](#hosting-it).
 | GET    | `/health`    | capabilities and tools currently registered    |
 | GET    | `/state`     | what is indexed — check this when search is empty |
 | GET    | `/offers`    | the ranked shortlist and what is still unread   |
+| GET    | `/preferences` | the requirements offers are scored against   |
+| POST   | `/preferences` | replace them, and re-score what is already rated |
 | POST   | `/run/:name` | run a capability; body is the envelope below   |
 | POST   | `/run-batch/:name` | run it over many inputs; streams SSE      |
 | POST   | `/document`  | replace the CV document and reindex            |
@@ -890,6 +892,31 @@ caps the list and never the tally: ten shown out of two hundred still reports tw
 hundred. The offer view omits `text` and `analysis` — a list of forty postings is
 megabytes, and `analysis` is the model's raw output, kept for audit and never the
 basis of anything shown as fact.
+
+`POST /preferences` writes the requirements and re-scores in the same call, and
+that coupling is the point rather than a convenience. Preferences and scores are
+one fact stored twice: an offer's `eligibility` is an answer to the requirements
+that were in force when it was rated, so a write that left the scores alone would
+leave the store quietly describing a question the user no longer asks. Re-scoring
+is deterministic and model-free — it re-runs the comparisons over facts already
+extracted — so it costs nothing to do immediately, and the answer says which
+offers moved and why:
+
+```jsonc
+{
+  "preferences": { "…": "as stored, with `updated_at` stamped" },
+  "rescore": {
+    "examined": 18, "stale": 18, "rescored": 7,
+    "changed": [{ "title": "React Developer", "from": "eligible", "to": "provisional",
+                  "because": ["salary: none → unknown"] }]
+  }
+}
+```
+
+A shape the schema refuses is refused whole, with the reason — a floor of 20000
+and no currency comes back as `salary: a salary floor must state both a currency
+and a period`, not as a repaired object. Repairing it here would write a
+requirement the user never stated and then score every offer against it.
 
 There is no `POST /mail/send`, and its absence is the policy rather than an
 omission — see the note in `server/index.ts`. cvitae-mail can send, behind its

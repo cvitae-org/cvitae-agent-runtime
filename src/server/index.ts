@@ -29,6 +29,7 @@ import { createRuntime } from '../index.js';
 import { resolveModel } from '../providers/resolve.js';
 import { runtimeHome } from '../store/paths.js';
 import { shortlist } from '../offers/shortlist.js';
+import { preferencesSchema } from '../store/preferences.js';
 import { createDraft, mailHealth } from '../mail/index.js';
 import {
   errorResponse,
@@ -403,6 +404,79 @@ server.post<{ Params: { name: string }; Body: unknown }>(
     } finally {
       reply.raw.off('close', onClose);
       if (!reply.raw.writableEnded) reply.raw.end();
+    }
+  }
+);
+
+/**
+ * The other half of every score.
+ *
+ * A rating compares an offer against what the user wants, and until now the
+ * second half of that comparison could only be edited by opening
+ * `preferences.json` in a text editor. That is a fine interface for the person
+ * who wrote the schema and a poor one for anyone else — and a preference the
+ * user cannot see is one they cannot tell is wrong, which is the failure mode
+ * a scorer that explains itself exists to avoid.
+ *
+ * ## Why the write rescores
+ *
+ * Because the alternative is the bug `offers/rescore.ts` was written to fix.
+ * Every offer on file carries the fingerprint of the preferences it was scored
+ * against; edit them and every one of those scores answers a question the user
+ * no longer asks. Leaving the rescore to a second call means it can be
+ * forgotten, or fail on its own, and the store then holds two offers on one
+ * screen scored against different wants — with nothing on screen saying so.
+ *
+ * It is affordable precisely because it costs nothing a round costs: no model,
+ * no board, no fetch. Two hundred offers re-score in milliseconds, so there is
+ * no budget argument for making the caller ask twice.
+ *
+ * The report comes back with the write because the interesting part of editing
+ * preferences is not that the file was saved — it is which offers moved, and
+ * why. `changed` names them.
+ */
+server.get('/preferences', async (_request, reply) => {
+  if (isHosted()) return send(reply, storageUnavailable('Reading preferences'));
+
+  try {
+    const store = await runtime.store();
+    return { preferences: await store.preferences.read() };
+  } catch (error) {
+    return send(reply, errorResponse(error));
+  }
+});
+
+server.post<{ Body: { preferences?: unknown } }>(
+  '/preferences',
+  async (request, reply) => {
+    if (isHosted()) return send(reply, storageUnavailable('Storing preferences'));
+
+    const parsed = preferencesSchema.safeParse(request.body?.preferences ?? {});
+
+    // Refused rather than coerced. A salary floor with no currency parses as a
+    // bare number and then evaluates to `unknown` on every offer forever — a
+    // stated requirement that silently never fires, which the schema's own
+    // refine exists to prevent. Naming the field is what makes it fixable.
+    if (!parsed.success) {
+      return send(reply, {
+        status: 400,
+        body: {
+          error: parsed.error.issues
+            .map((issue) => `${issue.path.join('.') || 'preferences'}: ${issue.message}`)
+            .join('; '),
+          reason: 'bad_request'
+        }
+      });
+    }
+
+    try {
+      const store = await runtime.store();
+      const preferences = await store.preferences.write(parsed.data);
+      const rescore = await runtime.rescoreOffers();
+
+      return { preferences, rescore };
+    } catch (error) {
+      return send(reply, errorResponse(error));
     }
   }
 );
