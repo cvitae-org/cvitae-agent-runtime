@@ -931,6 +931,25 @@ check(
   failing.searchFailures.join(' | ')
 );
 
+// An engine that answers with nothing is not an exhausted one. The keyless
+// search path returns an empty page when it is soft-blocked, and reading that
+// as saturation would stop a run on round one and call it complete.
+const empty = await runRound({
+  store,
+  cv: readBack,
+  preferences: savedPrefs,
+  analyse: stubAnalyse,
+  search: async () => ({ status: 'ok', engine: 'duckduckgo', hits: [] }),
+  resolve: stubResolve,
+  queries: ['nothing matches this'],
+  fetchLimit: 5
+});
+check(
+  'a search that returned nothing is not saturation',
+  !empty.saturated && empty.hits === 0,
+  `${empty.hits} hits, saturated ${empty.saturated}`
+);
+
 // The user's column. A round that re-sees a dismissed offer records having seen
 // it; it does not reconsider the decision.
 await store.offerRecords.update(rated.id, { disposition: 'dismissed' });

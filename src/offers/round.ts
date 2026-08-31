@@ -109,9 +109,15 @@ export type RoundReport = {
   added: number;
   updated: number;
   /**
-   * No offer this round had not already seen. The signal to stop, and cheap to
-   * act on: a saturated round has already paid for its searches and skipped the
-   * fetches, which are the expensive half.
+   * The engine returned offers and every one of them was already on file. The
+   * signal to stop, and cheap to act on: a saturated round has already paid for
+   * its searches and skipped the fetches, which are the expensive half.
+   *
+   * Requires `hits > 0`. A round that got no results at all has not established
+   * that there is nothing left to find — it has established that this engine
+   * answered with nothing, which the keyless search path does routinely when it
+   * is soft-blocked. Reading that as saturation would stop the loop on round
+   * one and report the run as complete.
    */
   saturated: boolean;
   /** Queries the engine refused or could not answer. Not the same as finding nothing. */
@@ -441,7 +447,7 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
     unreadable,
     added: stored.added,
     updated: stored.updated,
-    saturated: discovered === 0,
+    saturated: hits > 0 && discovered === 0,
     searchFailures,
     duplicates,
     scored: scoredRecords.map((record) => ({

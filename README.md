@@ -669,9 +669,14 @@ the decision — and does not spend a fetch on it either.
 Rounds stop early on saturation. A round that finds no offer it had not already
 seen has paid for its searches and skipped the fetches, which are the expensive
 half, so asking for ten rounds costs nothing once the third has exhausted what
-this CV implies. A round where *every* search was refused stops the loop too,
-and that is the opposite of saturation: nothing was searched, so nothing can be
-concluded, and nine more copies of the same failure would not help.
+this CV implies. Saturation requires that the engine actually returned
+something, though: a round that got *no* results has not established that there
+is nothing left to find, only that this engine answered with nothing — which the
+keyless search path does routinely when it is soft-blocked, and reading it as
+saturation would stop the run on round one and report it complete. A round where
+every search was refused outright stops the loop for a different reason: nothing
+was searched, so nothing can be concluded, and nine more copies of the same
+failure would not help.
 
 ## Prompts are edited carefully
 
