@@ -13,6 +13,18 @@
  * queries are the user's own role titles and the technologies they asked for;
  * knowing which those are is a lookup, not a judgement.
  *
+ * ## Scoped to a board first
+ *
+ * The most productive query is not a cleverer phrase, it is a smaller haystack.
+ * `site:justjoin.it react remote` returns postings; the same words unqualified
+ * return conference talks, blog posts and somebody's GitHub. So the list opens
+ * with one query per board in `boards.ts`, and the open-web tiers follow to
+ * catch what is posted on a company's own careers page.
+ *
+ * A useful side effect: a board-scoped query needs only a technology, not a
+ * role title. A CV that has not been imported yet still produces real queries,
+ * where the open-web tiers would produce almost nothing.
+ *
  * ## What goes into a query
  *
  * A role in quotes, one technology, and the market qualifiers the preferences
@@ -34,6 +46,7 @@
 
 import type { CvDocument } from '../store/cvDocument.js';
 import type { Preferences } from '../store/preferences.js';
+import { searchableBoards } from './boards.js';
 
 /**
  * Market qualifiers, per preference value.
@@ -123,12 +136,32 @@ const qualifiers = (preferences: Preferences): string => {
  * inputs, which is what lets `round` treat the round number as the only state
  * it needs to avoid repeating itself.
  */
-export const buildQueries = (cv: CvDocument, preferences: Preferences): string[] => {
+export const buildQueries = (
+  cv: CvDocument,
+  preferences: Preferences,
+  options: { market?: string } = {}
+): string[] => {
   const roleList = roles(cv);
   const techList = technologies(cv, preferences);
   const suffix = qualifiers(preferences);
 
   const queries: string[] = [];
+
+  // One per board, leading, because scoping beats phrasing. No `oferty pracy`
+  // here: every page on a job board is one, and the words would only exclude
+  // the postings written in English.
+  const primaryRole = roleList[0];
+  const primaryTech = techList[0];
+
+  if (primaryRole || primaryTech) {
+    const terms = clean(
+      [primaryRole ? `"${primaryRole}"` : '', primaryTech ?? '', suffix].join(' ')
+    );
+
+    for (const board of searchableBoards(options.market)) {
+      queries.push(`site:${board.domain} ${terms}`);
+    }
+  }
 
   // Role × technology first: the most specific thing that can be asked, and the
   // pairing that finds a posting for this role that uses this stack.

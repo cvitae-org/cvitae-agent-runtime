@@ -39,6 +39,15 @@ export {
   SCORER_VERSION
 } from './criteria.js';
 export type { Verdict, CriterionVerdict, ScoreDetail, Evaluation } from './criteria.js';
+export {
+  boards,
+  boardFor,
+  hostOf,
+  isFetchable,
+  searchableBoards,
+  scrapableBoards
+} from './boards.js';
+export type { Board, BoardFetchability } from './boards.js';
 export { normaliseUrl, offerId } from './identity.js';
 export { buildQueries, queriesForRound } from './queries.js';
 export { verifyFacts } from './verify.js';

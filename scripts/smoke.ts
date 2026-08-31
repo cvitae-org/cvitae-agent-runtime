@@ -35,6 +35,9 @@ const { parseSalary } = await import('../src/offers/salary.js');
 const { evaluate } = await import('../src/offers/criteria.js');
 const { normaliseUrl, offerId } = await import('../src/offers/identity.js');
 const { buildQueries, queriesForRound } = await import('../src/offers/queries.js');
+const { boards, boardFor, isFetchable, searchableBoards, scrapableBoards } = await import(
+  '../src/offers/boards.js'
+);
 const { verifyFacts } = await import('../src/offers/verify.js');
 const { runRound } = await import('../src/offers/round.js');
 const { executePlan } = await import('../src/core/orchestrator.js');
@@ -665,6 +668,36 @@ check(
 );
 check('a non-http URL has no offer identity', offerId('javascript:alert(1)') === '');
 
+section('the board list');
+check('every board has a unique domain', new Set(boards.map((b) => b.domain)).size === boards.length);
+check(
+  'a subdomain resolves to its parent board',
+  boardFor('https://nl.indeed.com/viewjob?jk=1')?.domain === 'indeed.com'
+);
+check('an employer\u2019s own careers page is not a board', boardFor('https://acme.dev/careers') === undefined);
+check(
+  'boards that refuse crawlers are listed so nothing reads them',
+  !isFetchable('https://www.linkedin.com/jobs/view/1') && isFetchable('https://justjoin.it/offers/x')
+);
+check(
+  'an unknown domain is fetchable \u2014 the list is a memory, not an allowlist',
+  isFetchable('https://acme.dev/careers')
+);
+check(
+  'searchable boards are a subset of all of them, and scrapable a subset of those',
+  searchableBoards().length < boards.length &&
+    scrapableBoards().every((b) => searchableBoards().includes(b)),
+  `${boards.length} known, ${searchableBoards().length} searched, ${scrapableBoards().length} scrapable`
+);
+check(
+  'every scrapable board names the identifier the scraper expects',
+  scrapableBoards().every((b) => typeof b.scraperId === 'string' && b.scraperId.length > 0)
+);
+check(
+  'a market with no boards returns none rather than all of them',
+  searchableBoards('jp').length === 0
+);
+
 section('queries');
 const queries = buildQueries(readBack, savedPrefs);
 check('the CV and the preferences produce queries', queries.length > 0, String(queries.length));
@@ -680,6 +713,32 @@ check(
 check(
   'building twice gives the same list, which is what lets rounds slice it',
   JSON.stringify(buildQueries(readBack, savedPrefs)) === JSON.stringify(queries)
+);
+check(
+  'the board-scoped queries lead, one per searchable board',
+  queries.slice(0, searchableBoards().length).every((q) => q.startsWith('site:')) &&
+    !queries[searchableBoards().length]?.startsWith('site:'),
+  queries[0]
+);
+check(
+  'and they carry no "oferty pracy" \u2014 every page on a board is one',
+  !queries[0]!.includes('oferty pracy'),
+  queries[0]
+);
+
+// The state this runtime is actually in before a CV is imported. The open-web
+// tiers need a role title; the board tier needs only a technology, so scoping
+// is what makes discovery work at all on day one.
+const noCv = buildQueries(cvDocumentSchema.parse({}), savedPrefs);
+check(
+  'an empty CV still produces one board-scoped query per board',
+  noCv.slice(0, searchableBoards().length).every((q) => q.startsWith('site:')),
+  `${noCv.length} queries, first: ${noCv[0] ?? '(none)'}`
+);
+check(
+  'and they name a technology, since there is no role title to name',
+  noCv[0]!.includes('React') && !noCv[0]!.includes('""'),
+  noCv[0]
 );
 
 // The third dedupe. Consecutive rounds must not re-run the same searches, and
@@ -929,6 +988,42 @@ check(
   'a refused search is reported rather than swallowed',
   failing.searchFailures.length === 1 && failing.searchFailures[0]!.includes('429'),
   failing.searchFailures.join(' | ')
+);
+
+// A board whose terms refuse crawlers. Recorded so it is not rediscovered every
+// round, and never fetched — the refusal is a term of use, not a rate limit, so
+// there is nothing to be gained by waiting and trying again.
+fetched.length = 0;
+const refusing = await runRound({
+  store,
+  cv: readBack,
+  preferences: savedPrefs,
+  analyse: stubAnalyse,
+  search: async () => ({
+    status: 'ok',
+    engine: 'brave',
+    hits: [
+      {
+        url: 'https://www.linkedin.com/jobs/view/9999',
+        title: 'Senior Frontend Developer',
+        snippet: 'Remote.'
+      }
+    ]
+  }),
+  resolve: stubResolve,
+  queries: ['frontend developer react remote'],
+  fetchLimit: 5
+});
+check(
+  'a board that refuses crawlers is counted, not read',
+  refusing.refused === 1 && fetched.length === 0,
+  `refused ${refusing.refused}, fetches ${fetched.length}`
+);
+check(
+  'and it is stored as unreadable so the next round does not rediscover it',
+  (await store.offerRecords.all()).some(
+    (r) => r.url.includes('linkedin.com') && r.processing === 'unreadable'
+  )
 );
 
 // An engine that answers with nothing is not an exhausted one. The keyless

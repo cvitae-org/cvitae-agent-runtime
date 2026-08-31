@@ -430,7 +430,7 @@ src/
   tools/             defineTool() + the registry that binds context, not data
   prompt/builder.ts  explicit composition — see the note below
   retrieval/         chunking and embedding
-  offers/            searching · fetching · verification · deterministic scoring
+  offers/            boards · searching · fetching · verification · scoring
   store/             cv.json · offers.jsonl · preferences.json (authored) · LanceDB (derived)
   mail/              cvitae-mail client — drafting, deliberately not a tool
   providers/         model resolution, credentials, loopback enforcement
@@ -639,12 +639,36 @@ is the wrong order: the report names the collision, `disposition` already exists
 for saying what to do about it, and which of two boards to apply through is not
 the runtime's call.
 
+**Searches are scoped to a known board first.** `offers/boards.ts` is a
+hand-written list of the job boards this runtime knows by name, and the most
+productive query turns out not to be a cleverer phrase but a smaller haystack:
+`site:justjoin.it react remote` returns postings, while the same words
+unqualified return conference talks and somebody's GitHub. The list leads the
+query order; the open-web tiers follow, to catch what is posted on a company's
+own careers page and nowhere else.
+
+The list earns its place three more times. It ranks what an unscoped search
+returned. It attributes an offer to its board from the URL alone. And it records
+which boards refuse automated access in their terms — LinkedIn and Indeed — so a
+round marks them `unreadable` on sight instead of rediscovering them every time
+and spending a fetch to learn it again. A refusal in the terms is not a rate
+limit; waiting does not change it.
+
+It is a memory, not an allowlist. An unknown domain is still fetched — a posting
+on an employer's own site is exactly what the open-web tiers exist to find — and
+`resolve.ts` still checks robots.txt on every fetch regardless of what the list
+says. One board can be worth *recognising* without being worth *searching*:
+general-jobs sites carry developer postings and bury them, so scoping a query to
+one spends a query to find what the tech boards already returned.
+
 **The query list is deterministic on purpose.** Round *n* takes the *n*th slice
 of the same derived list, which is what makes consecutive rounds search
 different things without keeping a cursor anywhere. Queries come from the CV's
 role and recent titles crossed with the preferences' required skills; a contract
 qualifier is added only when exactly one type is accepted, since two would AND
-themselves into nothing.
+themselves into nothing. A board-scoped query needs only a technology, not a
+role title, which is why discovery produces something useful before a CV has
+been imported at all.
 
 **Search hits are pointers, never evidence.** A hit's title and snippet order
 the fetch queue and are never written to a record. They are page-authored text,

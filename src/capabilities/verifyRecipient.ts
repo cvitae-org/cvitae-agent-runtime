@@ -51,6 +51,7 @@ import { findApplicationEmails } from './applicationText.js';
 import { readWebPage } from '../offers/page.js';
 import { resolveOffer } from '../offers/resolve.js';
 import { scrapeCompany, scrapeOffer, searchBoard } from '../offers/scraper.js';
+import { scrapableBoards } from '../offers/boards.js';
 import {
   activeEngine,
   isWebSearchEnabled,
@@ -73,8 +74,15 @@ import {
   type GatheredSource
 } from './recipientRanking.js';
 
-/** Boards cvitae-scrapper will crawl. LinkedIn and Indeed refuse, by their terms. */
-const BOARDS = ['justjoin', 'nofluffjobs', 'pracuj'] as const;
+/**
+ * Boards cvitae-scrapper will crawl, from the one list that names them.
+ *
+ * Derived rather than repeated: this was a hand-written tuple that happened to
+ * agree with `offers/boards.ts` and had no way of staying that way. LinkedIn
+ * and Indeed are absent because they refuse crawlers in their terms, which the
+ * registry records as `fetchable: 'refused'`.
+ */
+const BOARDS = scrapableBoards().map((board) => board.scraperId as string);
 
 /**
  * A cap on rows scanned per board, not a cap the board honours.

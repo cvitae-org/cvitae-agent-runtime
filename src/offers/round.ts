@@ -58,6 +58,7 @@ import { searchWeb, type SearchHit } from './webSearch.js';
 import { resolveOffer } from './resolve.js';
 import type { StatedFacts } from './boardFacts.js';
 import { normaliseUrl, offerId } from './identity.js';
+import { boardFor, hostOf, isFetchable } from './boards.js';
 import { buildQueries, queriesForRound } from './queries.js';
 import { verifyFacts, type OfferClaims } from './verify.js';
 import { evaluate, SCORER_VERSION } from './criteria.js';
@@ -106,6 +107,8 @@ export type RoundReport = {
   fetched: number;
   rated: number;
   unreadable: number;
+  /** Candidates on a board whose terms refuse automated access. Never fetched. */
+  refused: number;
   added: number;
   updated: number;
   /**
@@ -163,14 +166,6 @@ const claimsFrom = (analysis: Record<string, unknown>): OfferClaims => ({
     : undefined
 });
 
-const hostOf = (url: string): string => {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
-};
-
 /**
  * How interesting a search hit looks before anything is fetched.
  *
@@ -199,11 +194,11 @@ const rank = (hit: SearchHit, cv: CvDocument, preferences: Preferences): number 
     if (haystack.includes(mode)) score += 2;
   }
 
-  // A posting on a board is more likely to be a posting than a listing page,
-  // an aggregator, or somebody's blog about the role.
-  if (/justjoin|nofluffjobs|pracuj|rocketjobs|bulldogjob|theprotocol|indeed|linkedin/.test(hostOf(hit.url))) {
-    score += 2;
-  }
+  // A posting on a known board is more likely to be a posting than a listing
+  // page, an aggregator, or somebody's blog about the role. The list is
+  // `boards.ts`; one worth searching outranks one merely recognised.
+  const board = boardFor(hit.url);
+  if (board) score += board.search ? 3 : 1;
 
   return score;
 };
@@ -298,7 +293,14 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
 
   const discovered = candidates.filter((candidate) => !candidate.record).length;
 
+  // Boards whose terms refuse automated access are recorded and never read.
+  // Without this the round rediscovers them every time and spends a fetch
+  // learning what `boards.ts` already knows — and the refusal is a term of use,
+  // not a rate limit, so retrying is not a matter of waiting longer.
+  const refused = candidates.filter((candidate) => !isFetchable(candidate.hit.url));
+
   const fetchable = candidates
+    .filter((candidate) => isFetchable(candidate.hit.url))
     .filter((candidate) => worthFetching(candidate.record))
     .sort((left, right) => rank(right.hit, cv, preferences) - rank(left.hit, cv, preferences));
 
@@ -314,7 +316,10 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
     .map((candidate) => ({
       id: candidate.id,
       url: candidate.hit.url,
-      board: hostOf(candidate.hit.url)
+      board: hostOf(candidate.hit.url),
+      // Marked at the point it is known, so the state means "this will not be
+      // read" rather than "this has not been read yet".
+      ...(isFetchable(candidate.hit.url) ? {} : { processing: 'unreadable' as const })
     }));
 
   /* ------------------------------------------------- read, verify, store -- */
@@ -444,7 +449,8 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
     discovered,
     fetched: reading.length,
     rated,
-    unreadable,
+    unreadable: unreadable + refused.length,
+    refused: refused.length,
     added: stored.added,
     updated: stored.updated,
     saturated: hits > 0 && discovered === 0,
