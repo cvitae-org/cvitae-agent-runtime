@@ -866,12 +866,30 @@ serves a smaller thing on purpose; see [Hosting it](#hosting-it).
 | ------ | ------------ | --------------------------------------------- |
 | GET    | `/health`    | capabilities and tools currently registered    |
 | GET    | `/state`     | what is indexed — check this when search is empty |
+| GET    | `/offers`    | the ranked shortlist and what is still unread   |
 | POST   | `/run/:name` | run a capability; body is the envelope below   |
 | POST   | `/run-batch/:name` | run it over many inputs; streams SSE      |
 | POST   | `/document`  | replace the CV document and reindex            |
 | POST   | `/reindex`   | rebuild the chunk index from `cv.json`         |
 | GET    | `/mail/status` | is a mailbox connected, and to which address |
 | POST   | `/mail/draft`  | put a message in the user's Drafts folder    |
+
+`GET /offers` is the report half of `scripts/hunt.ts` behind a URL: it reads
+`offers.jsonl`, ranks it and counts what is around it. No model, no board, no
+fetch — cheap enough to poll, and safe to call while a round is running. Both
+callers rank through `offers/shortlist.ts`, so the terminal and a UI cannot come
+to disagree about what is worth a look.
+
+```
+GET /offers?scope=shortlist&limit=20
+```
+
+`scope` is `shortlist` (the default — eligible and provisional, best first),
+`rated` (adds the ones ruled out and why), or `all` (everything on file). `limit`
+caps the list and never the tally: ten shown out of two hundred still reports two
+hundred. The offer view omits `text` and `analysis` — a list of forty postings is
+megabytes, and `analysis` is the model's raw output, kept for audit and never the
+basis of anything shown as fact.
 
 There is no `POST /mail/send`, and its absence is the policy rather than an
 omission — see the note in `server/index.ts`. cvitae-mail can send, behind its

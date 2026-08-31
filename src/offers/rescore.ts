@@ -42,6 +42,7 @@ import type { Preferences } from '../store/preferences.js';
 import { fingerprintPreferences } from '../store/preferences.js';
 import { fingerprintValue } from '../core/fingerprint.js';
 import { evaluate, SCORER_VERSION } from './criteria.js';
+import { readScoreDetail } from './shortlist.js';
 
 export type RescoreOptions = {
   store: Store;
@@ -103,22 +104,13 @@ export const rescoreOffers = async (options: RescoreOptions): Promise<RescoreRep
   // `score_detail` is stored as a loose record, so the shape has to be checked
   // rather than assumed: it is written by whichever scorer version wrote the
   // record, which by definition is not this one.
-  const verdictsIn = (detail: Record<string, unknown>): Map<string, string> => {
-    const criteria = detail.criteria;
-    if (!Array.isArray(criteria)) return new Map();
-
-    return new Map(
-      criteria
-        .filter(
-          (entry): entry is { criterion: string; verdict: string } =>
-            typeof entry === 'object' &&
-            entry !== null &&
-            typeof (entry as { criterion?: unknown }).criterion === 'string' &&
-            typeof (entry as { verdict?: unknown }).verdict === 'string'
-        )
-        .map((entry) => [entry.criterion, entry.verdict])
+  // `score_detail` is stored loosely on purpose — see `shortlist.ts`, which
+  // owns the one narrowing of it. Reading it a second way here is how the two
+  // readers would come to disagree about what an old record says.
+  const verdictsIn = (detail: Record<string, unknown>): Map<string, string> =>
+    new Map(
+      readScoreDetail(detail).criteria.map((entry) => [entry.criterion, entry.verdict])
     );
-  };
 
   for (const record of stale) {
     signal?.throwIfAborted();

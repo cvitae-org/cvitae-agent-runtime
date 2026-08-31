@@ -28,6 +28,7 @@ import { z } from 'zod';
 import { createRuntime } from '../index.js';
 import { resolveModel } from '../providers/resolve.js';
 import { runtimeHome } from '../store/paths.js';
+import { shortlist } from '../offers/shortlist.js';
 import { createDraft, mailHealth } from '../mail/index.js';
 import {
   errorResponse,
@@ -186,6 +187,53 @@ server.get('/state', async (_request, reply) => {
     chunks: await store.chunks.count(),
     offers: await store.offers.count()
   };
+});
+
+/**
+ * What the hunt has found, ranked — the report half of `scripts/hunt.ts`.
+ *
+ * Read-only and model-free: it opens `offers.jsonl`, ranks what is there and
+ * counts what is around it. Nothing here searches, fetches or scores, so it is
+ * cheap enough to poll and safe to call while a round is running.
+ *
+ * The ranking itself lives in `offers/shortlist.ts` and is shared with the CLI,
+ * because two callers deciding separately what "worth a look" means is two
+ * answers that drift apart silently.
+ *
+ * `scope` exists so the caller can ask a wider question without a second route:
+ * `shortlist` (the default) is "what now", `rated` adds the ones ruled out and
+ * the reasons they were, and `all` is everything on file including dismissed
+ * offers. `limit` caps the list, never the tally — a shortlist of ten out of
+ * two hundred should still say two hundred.
+ */
+const offersQuerySchema = z.object({
+  scope: z.enum(['shortlist', 'rated', 'all']).default('shortlist'),
+  limit: z.coerce.number().int().positive().max(2_000).optional()
+});
+
+server.get<{ Querystring: unknown }>('/offers', async (request, reply) => {
+  if (isHosted()) return send(reply, storageUnavailable('Reading offers'));
+
+  const query = offersQuerySchema.safeParse(request.query ?? {});
+
+  if (!query.success) {
+    return send(reply, {
+      status: 400,
+      body: {
+        error: query.error.issues
+          .map((issue) => `${issue.path.join('.') || 'query'}: ${issue.message}`)
+          .join('; '),
+        reason: 'bad_request'
+      }
+    });
+  }
+
+  try {
+    const store = await runtime.store();
+    return shortlist(await store.offerRecords.all(), query.data);
+  } catch (error) {
+    return send(reply, errorResponse(error));
+  }
 });
 
 /**

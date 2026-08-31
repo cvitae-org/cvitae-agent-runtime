@@ -64,3 +64,5 @@ export type {
 } from './round.js';
 export { rescoreOffers } from './rescore.js';
 export type { RescoreOptions, RescoreReport } from './rescore.js';
+export { shortlist, offerView, readScoreDetail } from './shortlist.js';
+export type { Shortlist, OfferView, Scope, Tally } from './shortlist.js';

@@ -17,7 +17,7 @@
 import '../src/env.js';
 
 const { createRuntime } = await import('../src/index.js');
-const { boardFor } = await import('../src/offers/boards.js');
+const { shortlist } = await import('../src/offers/shortlist.js');
 
 const flag = (name: string, fallback: number): number => {
   const at = process.argv.indexOf(`--${name}`);
@@ -54,62 +54,45 @@ if (!reportOnly) {
 
 /* ------------------------------------------------------------- report -- */
 
-const all = await store.offerRecords.all();
-const unread = all.filter((r) => r.processing === 'candidate' && r.disposition === 'active');
-const rated = all.filter((r) => r.processing === 'rated' && r.disposition === 'active');
+// The ranking and the tallies come from `src/offers/shortlist.ts`, which the
+// HTTP route reads too. Everything below this line is presentation.
+const { offers, tally, unread_by_board } = shortlist(await store.offerRecords.all());
 
-const order = { eligible: 0, provisional: 1, ineligible: 2, unrated: 3 } as const;
-const shortlist = rated
-  .filter((r) => r.eligibility === 'eligible' || r.eligibility === 'provisional')
-  .sort(
-    (a, b) =>
-      order[a.eligibility] - order[b.eligibility] ||
-      (b.fit ?? 0) - (a.fit ?? 0) ||
-      b.completeness - a.completeness
-  );
-
-for (const record of shortlist) {
+for (const offer of offers) {
   const salary =
-    record.salary_min && record.salary_period
-      ? `${record.salary_min}–${record.salary_max ?? record.salary_min} ${record.salary_currency}/${record.salary_period}`
+    offer.salary_min && offer.salary_period
+      ? `${offer.salary_min}\u2013${offer.salary_max ?? offer.salary_min} ${offer.salary_currency}/${offer.salary_period}`
       : 'not stated';
 
   console.log(
-    `${record.eligibility === 'eligible' ? '●' : '○'} ${(record.company || '?').slice(0, 24).padEnd(24)} ` +
-      `${record.title.slice(0, 44).padEnd(44)} fit ${String(record.fit ?? '-').padEnd(4)} ${salary}`
+    `${offer.eligibility === 'eligible' ? '\u25cf' : '\u25cb'} ${(offer.company || '?').slice(0, 24).padEnd(24)} ` +
+      `${offer.title.slice(0, 44).padEnd(44)} fit ${String(offer.fit ?? '-').padEnd(4)} ${salary}`
   );
-  console.log(`  ${record.url}`);
+  console.log(`  ${offer.url}`);
 
   // What kept it off the eligible list, and what a model claimed but could not
   // support. Both are the reason to read the posting yourself before applying.
-  const detail = record.score_detail as {
-    criteria?: { criterion: string; verdict: string; because: string }[];
-    unverified?: string[];
-  };
-  for (const criterion of detail.criteria ?? []) {
+  for (const criterion of offer.criteria) {
     if (criterion.verdict === 'unknown') console.log(`    ? ${criterion.because}`);
   }
-  if (detail.unverified?.length) {
-    console.log(`    ! unverified claims dropped: ${detail.unverified.join(', ')}`);
+  if (offer.unverified.length) {
+    console.log(`    ! unverified claims dropped: ${offer.unverified.join(', ')}`);
   }
-}
-
-const byBoard = new Map<string, number>();
-for (const record of unread) {
-  const board = boardFor(record.url)?.name ?? 'elsewhere';
-  byBoard.set(board, (byBoard.get(board) ?? 0) + 1);
 }
 
 console.log(
-  `\n${shortlist.length} worth a look ` +
-    `(${shortlist.filter((r) => r.eligibility === 'eligible').length} eligible, ` +
-    `${shortlist.filter((r) => r.eligibility === 'provisional').length} undecided), ` +
-    `${rated.length - shortlist.length} ruled out, ${unread.length} unread.`
+  `\n${tally.shortlisted} worth a look ` +
+    `(${tally.eligible} eligible, ${tally.provisional} undecided), ` +
+    `${tally.ruled_out} ruled out, ${tally.unread} unread.`
 );
 
-if (unread.length > 0) {
+if (tally.unanalysed > 0) {
+  console.log(`${tally.unanalysed} fetched but not scored \u2014 a retry owes a model call, not a board.`);
+}
+
+if (tally.unread > 0) {
   console.log(
-    `unread by board: ${[...byBoard].map(([b, n]) => `${b} ${n}`).join(', ')}\n` +
-      `  npx tsx scripts/hunt.ts --read ${unread.length}   — about ${Math.round((unread.length * 42) / 60)} min on gemma3:4b`
+    `unread by board: ${unread_by_board.map(({ board, count }) => `${board} ${count}`).join(', ')}\n` +
+      `  npx tsx scripts/hunt.ts --read ${tally.unread}   \u2014 about ${Math.round((tally.unread * 42) / 60)} min on gemma3:4b`
   );
 }
