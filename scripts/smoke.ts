@@ -44,6 +44,7 @@ const { boards, boardFor, isFetchable, searchableBoards, scrapableBoards } = awa
 const { verifyFacts } = await import('../src/offers/verify.js');
 const { runRound } = await import('../src/offers/round.js');
 const { rescoreOffers } = await import('../src/offers/rescore.js');
+const { shortlist, readScoreDetail } = await import('../src/offers/shortlist.js');
 const { executePlan } = await import('../src/core/orchestrator.js');
 const { ToolRegistry } = await import('../src/tools/registry.js');
 const { defaultTools } = await import('../src/tools/index.js');
@@ -1434,6 +1435,128 @@ check(
   'and the record of what could not be verified survives the rescore',
   (dismissedAfter?.score_detail as { unverified?: string[] })?.unverified?.includes('skills'),
   JSON.stringify((dismissedAfter?.score_detail as { unverified?: string[] })?.unverified)
+);
+
+section('the shortlist, as two callers read it');
+
+// One ranking, read by the CLI and by `GET /offers`. Built from explicit
+// records rather than whatever the round left behind, because the property
+// being pinned is the order itself and it must not depend on the fixture.
+const ranking = shortlist([
+  offerRecordSchema.parse({
+    id: 'low-fit', url: 'https://justjoin.it/job-offer/a', processing: 'rated',
+    eligibility: 'eligible', fit: 0.4, completeness: 1,
+    first_seen_at: NOW, last_seen_at: NOW
+  }),
+  offerRecordSchema.parse({
+    id: 'undecided', url: 'https://justjoin.it/job-offer/b', processing: 'rated',
+    eligibility: 'provisional', fit: 1, completeness: 1,
+    first_seen_at: NOW, last_seen_at: NOW
+  }),
+  offerRecordSchema.parse({
+    id: 'high-fit', url: 'https://justjoin.it/job-offer/c', processing: 'rated',
+    eligibility: 'eligible', fit: 0.9, completeness: 1,
+    first_seen_at: NOW, last_seen_at: NOW
+  }),
+  offerRecordSchema.parse({
+    id: 'ruled-out', url: 'https://justjoin.it/job-offer/d', processing: 'rated',
+    eligibility: 'ineligible', fit: 1, completeness: 1,
+    first_seen_at: NOW, last_seen_at: NOW
+  }),
+  offerRecordSchema.parse({
+    id: 'dismissed-but-perfect', url: 'https://justjoin.it/job-offer/e', processing: 'rated',
+    disposition: 'dismissed', eligibility: 'eligible', fit: 1, completeness: 1,
+    first_seen_at: NOW, last_seen_at: NOW
+  }),
+  offerRecordSchema.parse({
+    id: 'unread', url: 'https://nofluffjobs.com/pl/job/f', processing: 'candidate',
+    first_seen_at: NOW, last_seen_at: NOW
+  }),
+  offerRecordSchema.parse({
+    id: 'needs-a-model', url: 'https://justjoin.it/job-offer/g', processing: 'fetched',
+    text: 'a posting whose extraction failed', first_seen_at: NOW, last_seen_at: NOW
+  })
+]);
+
+check(
+  'eligible outranks undecided, and fit orders within each',
+  ranking.offers.map((o) => o.id).join(',') === 'high-fit,low-fit,undecided',
+  ranking.offers.map((o) => `${o.id} ${o.eligibility} ${o.fit}`).join(' | ')
+);
+
+// An undecided criterion is not a failed one — the whole reason for the third
+// verdict. Burying a provisional offer with the ineligible ones would undo it.
+check(
+  'a decision the user already made keeps the offer off the list',
+  !ranking.offers.some((o) => o.id === 'dismissed-but-perfect'),
+  ranking.offers.map((o) => o.id).join(',')
+);
+
+check(
+  'a fetched-but-unscored offer is counted apart from an unfetched one',
+  ranking.tally.unread === 1 && ranking.tally.unanalysed === 1,
+  `${ranking.tally.unread} unread, ${ranking.tally.unanalysed} unanalysed`
+);
+
+// The number worth knowing is the one not in the list: three worth a look reads
+// very differently with two hundred unread behind it than with none.
+check(
+  'the tally counts what surrounds the list, not what is in it',
+  ranking.tally.total === 7 && ranking.tally.shortlisted === 3 &&
+    ranking.tally.ruled_out === 1 && ranking.tally.decided === 1,
+  JSON.stringify(ranking.tally)
+);
+
+// A board needs aiming at only for offers it still has to be asked about.
+check(
+  'the backlog is attributed to boards, and only the part a board can answer',
+  ranking.unread_by_board.length === 1 &&
+    ranking.unread_by_board[0]?.board === 'No Fluff Jobs' &&
+    ranking.unread_by_board[0]?.count === 1,
+  JSON.stringify(ranking.unread_by_board)
+);
+
+// Against the store the round actually filled, rather than the fixture above.
+const onFile = await store.offerRecords.all();
+const worthALook = shortlist(onFile);
+const everythingRated = shortlist(onFile, { scope: 'rated' });
+const capped = shortlist(onFile, { limit: 1 });
+
+check(
+  'a wider scope adds the offers that were ruled out',
+  everythingRated.offers.length >= worthALook.offers.length,
+  `${worthALook.offers.length} worth a look, ${everythingRated.offers.length} rated`
+);
+
+// Ten shown out of two hundred must still say two hundred, or the number that
+// makes the list readable is the one the limit throws away.
+check(
+  'a limit caps the list and never the tally',
+  capped.offers.length <= 1 && capped.tally.total === worthALook.tally.total,
+  `${capped.offers.length} shown of ${capped.tally.total}`
+);
+
+// `score_detail` is stored loosely so an older scorer's record still parses.
+// The cost is that it has to be narrowed, and a reader that trusts it would
+// hand a UI a criterion with no verdict.
+const salvaged = readScoreDetail({
+  scorer: '1',
+  criteria: [
+    { criterion: 'work_mode', strength: 'must', verdict: 'pass', because: 'remote' },
+    { criterion: 'salary', verdict: 'not-a-verdict', because: 'from a scorer that is gone' },
+    'a bare string from something that was never a criterion',
+    { verdict: 'pass' }
+  ],
+  stated: ['title', 42],
+  missing: null
+});
+check(
+  'reading an old score_detail keeps what is recognisable and drops the rest',
+  salvaged.criteria.length === 1 &&
+    salvaged.criteria[0]?.criterion === 'work_mode' &&
+    salvaged.stated.length === 1 &&
+    salvaged.missing.length === 0,
+  JSON.stringify(salvaged)
 );
 
 section('fusion and canonicalisation');
