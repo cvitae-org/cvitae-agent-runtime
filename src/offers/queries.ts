@@ -203,3 +203,81 @@ export const queriesForRound = (all: string[], round: number, size: number): str
     return all[(start + index) % all.length] as string;
   });
 };
+
+/**
+ * Generic enough to appear in nearly every offer slug, and therefore useless
+ * as a filter. `developer` matches 6,000 of justjoin's 9,783 live offers.
+ */
+const GENERIC_ROLE_WORDS = new Set([
+  'developer',
+  'engineer',
+  'specialist',
+  'programista',
+  'senior',
+  'mid',
+  'junior',
+  'lead'
+]);
+
+/**
+ * The first alphanumeric run of a skill name, when it is long enough to mean
+ * something on its own.
+ *
+ * Slug matching is a substring test, and punctuation is where it breaks:
+ * `Next.js` appears in slugs as `next-js`, `nextjs` and `next`, so the only
+ * spelling that matches all three is `next`. Two-character names are dropped
+ * rather than guessed at — `go` matches `google`, `mongodb` and `golang`
+ * indiscriminately, and a keyword that matches everything is not a filter.
+ */
+const slugToken = (skill: string): string => {
+  const first = skill.toLowerCase().match(/[a-z0-9]+/)?.[0] ?? '';
+  return first.length >= 3 ? first : '';
+};
+
+/**
+ * Search terms for a board's own listing, which is a different thing from a
+ * web query.
+ *
+ * `buildQueries` writes for a search engine: quoted phrases, bilingual market
+ * qualifiers, `site:` scoping. None of that survives a board listing, where
+ * matching is a substring test against the offer's URL slug and every term must
+ * appear in it. `site:justjoin.it "Frontend Developer" React remote praca
+ * zdalna` matches exactly nothing.
+ *
+ * So these are short. One or two words, drawn from the same places — the
+ * skills asked for first, then the CV's own stack and role — because what
+ * changes is the syntax, not what is being looked for.
+ *
+ * Deliberately *not* included: work mode, contract type, salary. A slug carries
+ * none of them reliably — about one justjoin slug in a hundred says `remote` —
+ * and adding a term the slug does not carry does not narrow the search, it
+ * empties it. Those are the scorer's job, on facts read from the page. See the
+ * note at the top of `boardSearch.ts`.
+ */
+export const buildKeywords = (cv: CvDocument, preferences: Preferences): string[] => {
+  const techTokens = unique(
+    technologies(cv, preferences).map(slugToken).filter(Boolean)
+  );
+
+  const roleTokens = unique(
+    roles(cv)
+      .flatMap((role) => role.toLowerCase().match(/[a-z]+/g) ?? [])
+      .filter((word) => word.length >= 4 && !GENERIC_ROLE_WORDS.has(word))
+  );
+
+  const keywords: string[] = [];
+
+  // The technology alone, first and broadest. On a board this is already a
+  // strong filter — `react` takes justjoin from 9,783 offers to 196.
+  keywords.push(...techTokens);
+
+  // Then paired with a role word, for the case one technology is too broad.
+  for (const tech of techTokens) {
+    for (const role of roleTokens) keywords.push(`${tech} ${role}`);
+  }
+
+  // Then the role alone, which finds postings whose stack the slug omits.
+  keywords.push(...roleTokens);
+
+  return unique(keywords);
+};

@@ -49,8 +49,16 @@ export {
 } from './boards.js';
 export type { Board, BoardFetchability } from './boards.js';
 export { normaliseUrl, offerId } from './identity.js';
-export { buildQueries, queriesForRound } from './queries.js';
+export { buildQueries, buildKeywords, queriesForRound } from './queries.js';
+export { searchBoards, createBoardSearch } from './boardSearch.js';
+export type { BoardSearchOptions } from './boardSearch.js';
 export { verifyFacts } from './verify.js';
 export type { OfferClaims, Verification } from './verify.js';
 export { runRound, runRounds } from './round.js';
-export type { OfferAnalyser, RoundOptions, RoundReport } from './round.js';
+export type {
+  OfferAnalyser,
+  RoundOptions,
+  RoundReport,
+  DiscoveryOutcome,
+  DiscoverySource
+} from './round.js';

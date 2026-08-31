@@ -591,6 +591,20 @@ score a fraction. Split apart, the vague offer reads as *high fit, low
 completeness* — visibly a guess — instead of borrowing a perfect score from its
 own silence.
 
+**Skills are matched as words, not as strings.** Asked for a list of skills, a
+model answers with the posting's bullets — a live round returned `Solid
+experience with ReactNative` and `Strong knowledge of JavaScript, HTML, and CSS`
+as entries. Whole-string equality fails a `must` on React against the second of
+those, buries a genuine React role, and writes *React is not among them* into
+the record when nothing had actually checked. So a required skill is looked for
+as a whole word inside each entry: `React 18`, `React (hooks)` and `experience
+with React` all name React, and `Node.js` still collapses onto `NodeJS` as it
+always did. `ReactNative` does not match, because there is no word boundary
+there — a fact about the spelling, not a ruling on how React Native relates to
+React. There is still no synonym table: `JS` does not match `JavaScript`,
+because that is a judgement, and a judgement in the scorer would stop the score
+being reproducible from its inputs.
+
 Two things the scorer refuses rather than approximates. It applies no exchange
 rate, because a rate moves and yesterday's scores would quietly disagree with
 today's for reasons that have nothing to do with the offer. And it will not
@@ -661,6 +675,56 @@ says. One board can be worth *recognising* without being worth *searching*:
 general-jobs sites carry developer postings and bury them, so scoping a query to
 one spends a query to find what the tech boards already returned.
 
+### Discovery without a search engine
+
+`discoverOffers` takes a `source`. It defaults to `boards`, which uses no search
+engine at all:
+
+```ts
+await runtime.discoverOffers({ source: 'boards' });  // the default
+await runtime.discoverOffers({ source: 'web' });     // needs an engine configured
+```
+
+`boards` asks the boards themselves, through **cvitae-scrapper** running on the
+same machine. There is no API key, no quota, no account, and nothing about what
+the user is looking for leaves the laptop. It is also the more complete of the
+two: an engine returns what it chose to index and ranked highly, whereas
+`justjoin`'s sitemap is *every* live offer on the board — 9,783 of them when
+this was measured — and the filtering happens locally. One keyword across three
+boards returned 216 offers in 33 seconds.
+
+`web` remains the only way to find a posting on a company's own careers page,
+which is on no board's sitemap by definition. Neither source is a fallback for
+the other; they see different things.
+
+**The keyword is matched against the URL slug**, which decides more of the
+design than it looks like it should. Every term has to appear somewhere in the
+slug, so `react` works and `senior react` works — both words turn up in slugs
+like `link-group-senior-fullstack-developer---net-react-warszawa-net` — while
+`5 years experience` matches nothing at all. Neither does `remote`: of 196 slugs
+matching `react`, three said so, because work mode is a field on the page rather
+than part of its name. That is why the two sources derive different terms from
+the same CV. `buildQueries` produces engine phrases; `buildKeywords` produces
+one or two slug words, longest-tail first.
+
+**Work mode, salary, contract type and seniority are deliberately not filtered
+at listing time**, even though the scraper reads all four out of the offer's
+JSON-LD a moment later. Filtering there would drop every posting that did not
+*state* one — and a posting silent about its contract form has not failed a
+contract requirement. That is the distinction the three-answer scorer exists to
+draw. So the keyword narrows, the round reads what survives, and the scorer
+decides, with the offers that said nothing still visible and marked
+`provisional`.
+
+**A failed extraction is finished, not abandoned.** When the fetch succeeds and
+the extraction does not — a rate-limited provider, a model returning nothing
+parseable — the posting is stored with its text and marked `fetched`. The next
+round finds it, skips straight to the model, and never asks the board for the
+same page twice. An earlier version treated `fetched` as a terminal state and
+stranded those offers permanently: read, unscored, and never looked at again.
+Running a real round against a rate-limited provider put two offers into exactly
+that state, which is how it was found.
+
 **The query list is deterministic on purpose.** Round *n* takes the *n*th slice
 of the same derived list, which is what makes consecutive rounds search
 different things without keeping a cursor anywhere. Queries come from the CV's
@@ -724,8 +788,8 @@ something to measure against.
 | `CVITAE_HOME`                                   | `~/.cvitae`                   |                                          |
 | `AI_LOG_MODE`                                   | `metadata`                    | `metadata` or `off`; never stores content |
 | `AI_LOG_DIR`                                    | `<CVITAE_HOME>/ai-logs`       | daily `ai-YYYY-MM-DD.jsonl` files         |
-| `SCRAPER_URL`                                   | `http://127.0.0.1:8787`       | cvitae-scrapper; empty disables it        |
-| `BRAVE_API_KEY`                                 | unset                         | the web tier of `verify_recipient`; keyless fallback without it |
+| `SCRAPER_URL`                                   | `http://127.0.0.1:8787`       | cvitae-scrapper, fetching and board discovery; empty disables both |
+| `BRAVE_API_KEY`                                 | unset                         | the web tier of `verify_recipient`; keyless fallback without it. Board discovery needs none |
 | `WEB_SEARCH`                                    | `auto`                        | `auto`, `brave`, `duckduckgo`, `off`      |
 | `WEB_SEARCH_COUNTRY`                            | `pl`                          | which market to search                    |
 | `WEB_SEARCH_TIMEOUT_MS`                         | `10000`                       | one query; the page reads have their own 12s ceiling |
@@ -993,10 +1057,24 @@ different name are a different input. Measured — identical PDF, `cv.pdf` gives
 `[English]` and `cv-textlayer.pdf` gives `[English, Vue]`, each reproducibly.
 Worth knowing before reading two runs as a comparison of anything else.
 
-Offer discovery runs end to end: `runtime.discoverOffers()` searches, dedupes,
-reads, verifies and scores, and the smoke check exercises a full round against a
-stubbed search, fetch and model — including the injection case, where a salary
-the posting never printed is dropped rather than scored. What is deliberately
+Offer discovery runs end to end, and now with no third party in the loop at
+all: a live round against the real boards returned 216 offers for one keyword in
+33 seconds, and read, verified and scored them on a local `gemma3:4b`. No API
+key, no search engine, nothing about the search leaving the machine. The smoke
+check exercises a full round against a stubbed search, fetch and model —
+including the injection case, where a salary the posting never printed is
+dropped rather than scored.
+
+Two defects came out of running it for real rather than from reading it. An
+offer whose extraction failed after a successful fetch was stranded in `fetched`
+forever, because the round's own comment said the next round would retry it and
+the predicate it referred to admitted only `candidate`. And a `must` on React
+was failing postings that plainly required React, because the model returns
+bullets like `Solid experience with React` where the matcher wanted the bare
+word. Both are fixed and both now have a check. Neither was visible from a
+stubbed round, because the stub returned clean skill names and never failed
+mid-way — which is the argument for running the thing against the real world
+before believing it works. What is deliberately
 not built is merging syndicated duplicates, which needs a schema decision the
 [Discovery rounds](#discovery-rounds) section explains, and re-checking live
 offers for expiry, which is a different job from finding new ones.

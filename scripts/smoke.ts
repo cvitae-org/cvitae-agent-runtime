@@ -34,7 +34,10 @@ const { offerRecordSchema } = await import('../src/store/offerRecord.js');
 const { parseSalary } = await import('../src/offers/salary.js');
 const { evaluate } = await import('../src/offers/criteria.js');
 const { normaliseUrl, offerId } = await import('../src/offers/identity.js');
-const { buildQueries, queriesForRound } = await import('../src/offers/queries.js');
+const { buildQueries, queriesForRound, buildKeywords } = await import(
+  '../src/offers/queries.js'
+);
+const { createBoardSearch } = await import('../src/offers/boardSearch.js');
 const { boards, boardFor, isFetchable, searchableBoards, scrapableBoards } = await import(
   '../src/offers/boards.js'
 );
@@ -651,6 +654,60 @@ check(
   vague.detail.criteria.map((c) => `${c.criterion}=${c.verdict}`).join(' ')
 );
 
+// Skills as the extraction actually returns them. A model asked for a list of
+// skills answers with bullet points from the posting, and a `must` that only
+// matches whole-string equality then fails a genuine React role on the strength
+// of how the bullet was phrased — burying the offer, and saying in `because`
+// that React "is not among them" when nobody had checked.
+const prose = scored({
+  skills: [
+    'Strong experience with Java',
+    'Solid experience with React and modern React patterns',
+    'Experience building and consuming REST APIs'
+  ]
+});
+check(
+  'a required skill is found inside a sentence, not only as a bare name',
+  prose.detail.criteria.find((c) => c.criterion === 'skill:react')?.verdict === 'pass',
+  prose.detail.criteria.find((c) => c.criterion === 'skill:react')?.because
+);
+
+// The other half of the same rule: a boundary is required at both ends, so a
+// substring that happens to sit inside a longer word is not a match. This is a
+// fact about the spelling — not a ruling on how React Native relates to React.
+const joined = scored({ skills: ['Solid experience with ReactNative', 'Java'] });
+check(
+  'but a skill glued into a longer word is not silently claimed as a match',
+  joined.detail.criteria.find((c) => c.criterion === 'skill:react')?.verdict === 'fail',
+  joined.detail.criteria.find((c) => c.criterion === 'skill:react')?.because
+);
+
+// Punctuation variants still collapse, which is what equality bought and the
+// looser rule must not lose.
+for (const spelling of ['Node.js', 'NodeJS', 'node js', 'Strong knowledge of Node.js 20']) {
+  const nodePrefs = preferencesSchema.parse({
+    ...savedPrefs,
+    skills: { strength: 'must', require: ['Node.js'] }
+  });
+  const verdict = evaluate(
+    offerRecordSchema.parse({
+      id: 'node', work_mode: 'remote', skills: [spelling],
+      first_seen_at: NOW, last_seen_at: NOW
+    }),
+    nodePrefs
+  ).detail.criteria.find((c) => c.criterion === 'skill:nodejs')?.verdict;
+  check(`"${spelling}" names Node.js`, verdict === 'pass', String(verdict));
+}
+
+// Unchanged, and the reason the looser match is safe: an empty list is a fact
+// about the extraction, so it stays undecided rather than becoming a failure.
+const noSkills = scored({ skills: ['', '  '] });
+check(
+  'entries that are only whitespace are no skills at all, not a failed must',
+  noSkills.detail.criteria.find((c) => c.criterion === 'skill:react')?.verdict === 'unknown',
+  noSkills.detail.criteria.find((c) => c.criterion === 'skill:react')?.because
+);
+
 section('offer identity (no model)');
 check(
   'tracking parameters do not make a second offer',
@@ -1066,6 +1123,162 @@ check('and is not read again', fetched.length === 0);
 check(
   'though being seen again is still recorded',
   Boolean(afterDismissal?.last_seen_at) && afterDismissal!.last_seen_at >= (seenBefore ?? '')
+);
+
+// An extraction that failed after the fetch succeeded. The posting is on file,
+// so the round that follows owes a model call and nothing to the board. Found
+// by running a real round against a rate-limited provider, which left two
+// offers read, unscored, and — until this — never looked at again.
+const flaky = 'https://justjoin.it/offers/acme-rate-limited';
+const flakySearch = async (): Promise<SearchOutcome> => ({
+  status: 'ok',
+  engine: 'brave',
+  hits: [{ url: flaky, title: 'Senior Frontend Developer', snippet: 'Remote.' }]
+});
+
+fetched.length = 0;
+const throttled = await runRound({
+  store,
+  cv: readBack,
+  preferences: savedPrefs,
+  analyse: async () => {
+    throw new Error('429 rate-limited upstream');
+  },
+  search: flakySearch,
+  resolve: stubResolve,
+  queries: ['frontend developer react remote'],
+  fetchLimit: 5
+});
+const stranded = (await store.offerRecords.all()).find((r) => r.url === flaky);
+check(
+  'an offer read but not extracted is stored as fetched, with its text',
+  stranded?.processing === 'fetched' && stranded.text.length > 0,
+  `${stranded?.processing}, ${stranded?.text.length ?? 0} chars`
+);
+check('and the round rated nothing', throttled.rated === 0);
+
+fetched.length = 0;
+const retried = await runRound({
+  store,
+  cv: readBack,
+  preferences: savedPrefs,
+  analyse: stubAnalyse,
+  search: flakySearch,
+  resolve: stubResolve,
+  queries: ['frontend developer react remote'],
+  fetchLimit: 5
+});
+check(
+  'the next round finishes it',
+  retried.rated === 1 && (await store.offerRecords.get(stranded!.id))?.processing === 'rated',
+  `rated ${retried.rated}, now ${(await store.offerRecords.get(stranded!.id))?.processing}`
+);
+check(
+  'without asking the board for the posting twice',
+  fetched.length === 0 && retried.requested === 0,
+  `${fetched.length} fetches, ${retried.requested} requested`
+);
+
+section('discovery through the boards, with no search engine');
+
+// The scraper's own contract, stubbed: rows in, hits out. One board answers,
+// one is empty, one refuses — which is the ordinary case, not the exception.
+const asked: string[] = [];
+const boardSearch = createBoardSearch({
+  boards: scrapableBoards(),
+  search: async (board: string, keyword: string) => {
+    asked.push(`${board}:${keyword}`);
+
+    if (board === 'justjoin') {
+      return {
+        status: 'ok' as const,
+        data: [
+          {
+            board,
+            url: 'https://justjoin.it/offers/acme-senior-react-warszawa',
+            title: 'Acme Senior React Warszawa'
+          },
+          {
+            board,
+            url: 'https://justjoin.it/offers/beta-react-native',
+            title: 'Beta React Native',
+            company: 'Beta'
+          }
+        ]
+      };
+    }
+
+    if (board === 'nofluffjobs') return { status: 'ok' as const, data: [] };
+    return { status: 'blocked' as const, detail: 'Cloudflare' };
+  }
+});
+
+const boardHits = await boardSearch('react');
+check(
+  'every scrapable board is asked, once, for the keyword',
+  asked.length === scrapableBoards().length && asked.every((a) => a.endsWith(':react')),
+  asked.join(' | ')
+);
+check(
+  'rows from the boards that answered become hits',
+  boardHits.status === 'ok' && boardHits.hits.length === 2,
+  JSON.stringify(boardHits)
+);
+check(
+  'a listing row with no company carries an empty snippet rather than a guess',
+  boardHits.status === 'ok' && boardHits.hits[0]!.snippet === '',
+  JSON.stringify(boardHits.status === 'ok' ? boardHits.hits[0] : null)
+);
+
+// A board that matched nothing has answered. Only every board failing is a
+// failure — otherwise one blocked board would look like a broken runtime.
+check(
+  'one blocked board does not fail the search',
+  boardHits.status === 'ok'
+);
+
+const allBlocked = await createBoardSearch({
+  boards: scrapableBoards(),
+  search: async () => ({ status: 'blocked' as const, detail: 'Cloudflare' })
+})('react');
+check(
+  'but every board failing is reported as a failure',
+  allBlocked.status === 'failed',
+  JSON.stringify(allBlocked)
+);
+
+// The scraper being down is one fact about one process, not N facts about N
+// boards, and it must read as fall-back-able rather than as a hard failure.
+const scraperDown = await createBoardSearch({
+  boards: scrapableBoards(),
+  search: async () => ({ status: 'unavailable' as const, detail: 'ECONNREFUSED' })
+})('react');
+check(
+  'the scraper being down is unavailable, not failed',
+  scraperDown.status === 'unavailable',
+  JSON.stringify(scraperDown)
+);
+
+section('keywords for a slug filter');
+
+// Board search matches against the URL slug, so the terms have to be words that
+// turn up in slugs. Long engine-style phrases match nothing at all.
+const keywords = buildKeywords(readBack, savedPrefs);
+check('keywords are produced at all', keywords.length > 0, keywords.join(' | '));
+check(
+  'none of them are search-engine phrases',
+  keywords.every((k) => k.split(' ').length <= 2 && !k.includes('site:')),
+  keywords.filter((k) => k.split(' ').length > 2).join(' | ')
+);
+check(
+  'each term is long enough to narrow a slug',
+  keywords.every((k) => k.split(' ').every((word) => word.length >= 3)),
+  keywords.join(' | ')
+);
+check(
+  'the required skill leads, alone, because a lone term matches most',
+  keywords[0] === 'react',
+  keywords.slice(0, 3).join(' | ')
 );
 
 section('fusion and canonicalisation');

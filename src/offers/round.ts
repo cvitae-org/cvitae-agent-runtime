@@ -78,6 +78,26 @@ export type OfferAnalyser = (input: {
   signal?: AbortSignal;
 }) => Promise<Record<string, unknown>>;
 
+/**
+ * What a round accepts as an answer to "what offers exist for this term".
+ *
+ * Narrower than `SearchOutcome` on purpose: a round has no use for which engine
+ * answered, and naming one would tie the seam to the open web. `searchWeb`
+ * satisfies this as it stands, and so does `createBoardSearch`, which asks
+ * cvitae-scrapper instead and touches no third party at all.
+ */
+export type DiscoveryOutcome =
+  | { status: 'ok'; hits: SearchHit[] }
+  /** Nothing is configured or running to search with. Says nothing about the market. */
+  | { status: 'unavailable'; detail: string }
+  /** It was asked and could not answer. */
+  | { status: 'failed'; detail: string };
+
+export type DiscoverySource = (
+  query: string,
+  options?: { limit?: number; signal?: AbortSignal }
+) => Promise<DiscoveryOutcome>;
+
 export type RoundOptions = {
   store: Store;
   cv: CvDocument;
@@ -90,10 +110,24 @@ export type RoundOptions = {
   searchLimit?: number;
   /** How many postings this round will actually read. The round's real cost. */
   fetchLimit?: number;
-  /** Overrides the derived queries entirely, for a search the user typed. */
+  /**
+   * Run exactly these, this round, with no slicing. For a search the user
+   * typed, and for tests that want one query and one answer.
+   */
   queries?: string[];
+  /**
+   * The full derived list to *slice* per round, replacing the one this module
+   * would build from the CV.
+   *
+   * Distinct from `queries` because the slicing is the third dedupe: a caller
+   * that hands over a finished slice has silently turned every round into the
+   * same round. Board search needs this — its terms are slug keywords, which
+   * `buildQueries` does not produce — while still wanting round *n* to search
+   * something round *n-1* did not.
+   */
+  terms?: string[];
   signal?: AbortSignal;
-  search?: typeof searchWeb;
+  search?: DiscoverySource;
   resolve?: typeof resolveOffer;
 };
 
@@ -104,7 +138,10 @@ export type RoundReport = {
   hits: number;
   /** Distinct offer URLs this round had not seen before. */
   discovered: number;
+  /** Offers worked on this round: read from the board, or re-analysed from stored text. */
   fetched: number;
+  /** Of those, how many were actually requested from a board. */
+  requested: number;
   rated: number;
   unreadable: number;
   /** Candidates on a board whose terms refuse automated access. Never fetched. */
@@ -204,7 +241,7 @@ const rank = (hit: SearchHit, cv: CvDocument, preferences: Preferences): number 
 };
 
 /**
- * Whether this round should spend a fetch on an offer it already has a row for.
+ * What this round should do about an offer it may already have a row for.
  *
  * A rated offer is not read again: its text is on file, and re-reading a
  * posting to arrive at the same score is the most expensive way to do nothing.
@@ -212,11 +249,24 @@ const rank = (hit: SearchHit, cv: CvDocument, preferences: Preferences): number 
  * board that blocks us is not retried daily forever. And anything the user has
  * acted on is left alone, because re-reading a dismissed offer to re-rank it is
  * work done against their decision.
+ *
+ * `fetched` is the interesting one, and it is why this returns a verb rather
+ * than a boolean. It means the posting was read and the extraction then failed
+ * — a rate-limited provider, a model that returned nothing parseable. The text
+ * is already on file, so the work left is a model call and not another request
+ * to the board. An earlier version treated `fetched` as finished and left those
+ * offers stranded forever: read, unscored, and never looked at again. Found by
+ * running a real round against a rate-limited provider, which put two offers
+ * into exactly that state.
  */
-const worthFetching = (record: OfferRecord | undefined): boolean => {
-  if (!record) return true;
-  if (record.disposition !== 'active') return false;
-  return record.processing === 'candidate';
+type Intent = 'fetch' | 'analyse' | 'skip';
+
+const intentFor = (record: OfferRecord | undefined): Intent => {
+  if (!record) return 'fetch';
+  if (record.disposition !== 'active') return 'skip';
+  if (record.processing === 'candidate') return 'fetch';
+  if (record.processing === 'fetched' && record.text.trim()) return 'analyse';
+  return 'skip';
 };
 
 /**
@@ -245,7 +295,7 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
 
   const queries =
     options.queries ??
-    queriesForRound(buildQueries(cv, preferences), round, queriesPerRound);
+    queriesForRound(options.terms ?? buildQueries(cv, preferences), round, queriesPerRound);
 
   /* ------------------------------------------------------------ search -- */
 
@@ -299,12 +349,19 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
   // not a rate limit, so retrying is not a matter of waiting longer.
   const refused = candidates.filter((candidate) => !isFetchable(candidate.hit.url));
 
-  const fetchable = candidates
+  const actionable = candidates
     .filter((candidate) => isFetchable(candidate.hit.url))
-    .filter((candidate) => worthFetching(candidate.record))
-    .sort((left, right) => rank(right.hit, cv, preferences) - rank(left.hit, cv, preferences));
+    .map((candidate) => ({ ...candidate, intent: intentFor(candidate.record) }))
+    .filter((candidate) => candidate.intent !== 'skip')
+    .sort((left, right) => {
+      // Offers that only need analysing come first: the request to the board is
+      // already paid for, so finishing one costs strictly less than starting a
+      // new one and leaves less half-done work behind.
+      if (left.intent !== right.intent) return left.intent === 'analyse' ? -1 : 1;
+      return rank(right.hit, cv, preferences) - rank(left.hit, cv, preferences);
+    });
 
-  const reading = fetchable.slice(0, fetchLimit);
+  const reading = actionable.slice(0, fetchLimit);
   const readingIds = new Set(reading.map((candidate) => candidate.id));
 
   // Everything else is still recorded. A candidate row costs a line in a text
@@ -327,11 +384,18 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
   const unverifiedBy = new Map<string, string[]>();
   let unreadable = 0;
   let rated = 0;
+  let fetches = 0;
 
   for (const candidate of reading) {
     signal?.throwIfAborted();
 
-    const outcome = await resolve(candidate.hit.url, signal);
+    // Text already on file, from a round whose extraction failed after the
+    // fetch. Nothing is asked of the board a second time.
+    const stored = candidate.intent === 'analyse' ? candidate.record : undefined;
+
+    const outcome = stored
+      ? ({ status: 'ok', text: stored.text, finalUrl: stored.url, via: 'builtin' } as const)
+      : await resolve(candidate.hit.url, signal);
 
     if (outcome.status !== 'ok') {
       unreadable++;
@@ -344,13 +408,15 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
       continue;
     }
 
+    fetches += stored ? 0 : 1;
+
     let analysis: Record<string, unknown>;
 
     try {
       analysis = await analyse({
         offerText: outcome.text,
         url: outcome.finalUrl,
-        boardFacts: outcome.board,
+        boardFacts: 'board' in outcome ? outcome.board : undefined,
         signal
       });
     } catch {
@@ -448,6 +514,7 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
     hits,
     discovered,
     fetched: reading.length,
+    requested: fetches,
     rated,
     unreadable: unreadable + refused.length,
     refused: refused.length,

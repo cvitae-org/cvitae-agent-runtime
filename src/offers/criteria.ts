@@ -131,6 +131,49 @@ export const readContractTypes = (raw: string): ContractType[] => {
  */
 const skillKey = (value: string): string => fold(value).replace(/[^a-z0-9]/g, '');
 
+/**
+ * Whether any of the skills a posting lists names the one that is wanted.
+ *
+ * Equality on `skillKey` is right when the extraction returns skill names, and
+ * wrong the moment it returns prose — and it does. A live round against a local
+ * model listed "Solid experience with ReactNative" and "Strong knowledge of
+ * JavaScript, HTML, and CSS" as entries, and under equality a `must` on React
+ * fails a posting like that outright: the offer is buried on the strength of
+ * how a model phrased a bullet, with `because` claiming React "is not among
+ * them" when nobody actually checked.
+ *
+ * So equality is tried first, and then the wanted skill is looked for as a
+ * whole word inside each entry. Runs of letters and digits must appear in
+ * order, separated by anything non-alphanumeric or nothing at all, with no
+ * alphanumeric character butting up against either end. `Node.js` therefore
+ * still matches `NodeJS` and `node js` as before, and now also matches
+ * "Strong experience with Node.js 20".
+ *
+ * `ReactNative` still does not match `react`, because there is no boundary
+ * there to match — a fact about the spelling, not a ruling that React Native is
+ * unrelated to React. Written `React Native` it does match. That looseness is
+ * the honest consequence of a mechanical rule, and it errs toward showing the
+ * user an offer rather than hiding one, which is the direction to err in for a
+ * criterion that can fail a `must`. Still no synonym table: `JS` does not match
+ * `JavaScript`, because that is a judgement, and a judgement in here would stop
+ * the score being reproducible from its inputs.
+ */
+const skillPattern = (wanted: string): RegExp | null => {
+  // Alphanumeric runs only, so nothing here can carry regex punctuation.
+  const runs = fold(wanted).match(/[a-z0-9]+/g);
+  if (!runs) return null;
+
+  return new RegExp(`(?<![a-z0-9])${runs.join('[^a-z0-9]*')}(?![a-z0-9])`);
+};
+
+const namesSkill = (offered: string[], wanted: string): boolean => {
+  const key = skillKey(wanted);
+  if (offered.some((entry) => skillKey(entry) === key)) return true;
+
+  const pattern = skillPattern(wanted);
+  return pattern !== null && offered.some((entry) => pattern.test(fold(entry)));
+};
+
 /** Converts to a monthly figure using the user's own stated assumptions. */
 const toMonthly = (
   amount: number,
@@ -339,12 +382,12 @@ const compareSkills = (record: OfferRecord, preferences: Preferences): Criterion
   const { strength, require } = preferences.skills;
   if (require.length === 0) return [];
 
-  const offered = new Set(record.skills.map(skillKey));
+  const offered = record.skills.filter((entry) => entry.trim().length > 0);
 
   return require.map((skill) => {
     const criterion = `skill:${skillKey(skill)}`;
 
-    if (offered.size === 0) {
+    if (offered.length === 0) {
       return {
         criterion,
         strength,
@@ -353,7 +396,7 @@ const compareSkills = (record: OfferRecord, preferences: Preferences): Criterion
       };
     }
 
-    const matched = offered.has(skillKey(skill));
+    const matched = namesSkill(offered, skill);
 
     return {
       criterion,

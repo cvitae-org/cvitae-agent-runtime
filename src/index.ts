@@ -43,6 +43,8 @@ import {
   type ModelOverride
 } from './providers/resolve.js';
 import { runRounds, type RoundReport } from './offers/round.js';
+import { searchBoards } from './offers/boardSearch.js';
+import { buildKeywords, buildQueries } from './offers/queries.js';
 import type { RunContext, RunResult } from './core/types.js';
 import { RuntimeError } from './core/types.js';
 import {
@@ -71,7 +73,16 @@ export type DiscoverOptions = RunOptions & {
   rounds?: number;
   /** Which slice of the derived query list the first round runs. 1-based. */
   round?: number;
-  /** Replaces the queries derived from the CV and preferences. */
+  /**
+   * Where offers are discovered.
+   *
+   * `boards` asks cvitae-scrapper, which runs on this machine: no key, no
+   * quota, and nothing about the search leaves it. `web` asks a search engine,
+   * which needs one configured and is the only way to find a posting on a
+   * company's own careers page rather than on a board.
+   */
+  source?: 'boards' | 'web';
+  /** Replaces the terms derived from the CV and preferences. */
   queries?: string[];
   queriesPerRound?: number;
   searchLimit?: number;
@@ -323,14 +334,32 @@ export class Runtime {
   async discoverOffers(
     options: DiscoverOptions = {}
   ): Promise<RoundReport[]> {
-    const { rounds, round, queries, queriesPerRound, searchLimit, fetchLimit, ...runOptions } =
-      options;
+    const {
+      rounds,
+      round,
+      queries,
+      queriesPerRound,
+      searchLimit,
+      fetchLimit,
+      source = 'boards',
+      ...runOptions
+    } = options;
 
     const store = await this.store();
     const [cv, preferences] = await Promise.all([
       store.documents.read(),
       store.preferences.read()
     ]);
+
+    // The terms differ by source, not just the transport: a board matches a
+    // substring against a URL slug, an engine parses a query. `site:justjoin.it
+    // "Frontend Developer" React remote praca zdalna` matches nothing at all on
+    // a board, so the two lists are built separately.
+    const terms =
+      queries ??
+      (source === 'boards'
+        ? buildKeywords(cv, preferences)
+        : buildQueries(cv, preferences));
 
     return runRounds({
       store,
@@ -339,9 +368,11 @@ export class Runtime {
       rounds,
       round,
       queries,
+      terms,
       queriesPerRound,
       searchLimit,
       fetchLimit,
+      search: source === 'boards' ? searchBoards : undefined,
       signal: runOptions.signal,
       analyse: async ({ offerText, url, boardFacts, signal }) => {
         const result = await this.run(
