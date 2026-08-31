@@ -461,6 +461,18 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
   const prefsFingerprint = fingerprintPreferences(preferences);
   const ratedAt = new Date().toISOString();
 
+  // What an extraction claimed and could not support, from whichever round did
+  // the extracting. Every rated record this round *touched* is re-scored, not
+  // only the ones it read — which is right, because preferences may have moved
+  // — but a round that merely re-saw an offer has re-checked nothing. Defaulting
+  // to an empty list there erased the audit trail on the strength of not having
+  // looked, and it took two rounds and a dismissed offer to notice.
+  const auditedUnverified = (record: OfferRecord): string[] => {
+    const stored = record.score_detail.unverified;
+    if (!Array.isArray(stored)) return [];
+    return stored.filter((entry): entry is string => typeof entry === 'string');
+  };
+
   const ratings: OfferSighting[] = stored.records
     .filter((record) => record.processing === 'rated')
     .map((record) => {
@@ -473,7 +485,7 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
         completeness: evaluation.completeness,
         score_detail: {
           ...evaluation.detail,
-          unverified: unverifiedBy.get(record.id) ?? []
+          unverified: unverifiedBy.get(record.id) ?? auditedUnverified(record)
         },
         rated_at: ratedAt,
         scorer_version: SCORER_VERSION,
@@ -531,7 +543,7 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
       eligibility: record.eligibility,
       fit: record.fit,
       completeness: record.completeness,
-      unverified: unverifiedBy.get(record.id) ?? []
+      unverified: unverifiedBy.get(record.id) ?? auditedUnverified(record)
     }))
   };
 };

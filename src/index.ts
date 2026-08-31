@@ -43,6 +43,7 @@ import {
   type ModelOverride
 } from './providers/resolve.js';
 import { runRounds, type RoundReport } from './offers/round.js';
+import { rescoreOffers as rescore, type RescoreReport } from './offers/rescore.js';
 import { searchBoards } from './offers/boardSearch.js';
 import { buildKeywords, buildQueries } from './offers/queries.js';
 import type { RunContext, RunResult } from './core/types.js';
@@ -385,6 +386,34 @@ export class Runtime {
       }
     });
   }
+
+  /**
+   * Re-scores offers already on file, without a model and without the boards.
+   *
+   * A score answers "how does this posting compare to what the user wants", and
+   * the second half of that question changes whenever `preferences.json` is
+   * edited. Every offer scored before the edit then holds an answer to the old
+   * question. The record has always carried the fingerprints needed to notice
+   * that; until `offers/rescore.ts` nothing read them, so a preferences edit
+   * took effect only on offers discovered afterwards — silently, and in a way
+   * that left two offers on the same screen scored against different wants.
+   *
+   * It is separate from `discoverOffers` because it costs nothing a round
+   * costs: no fetch, no model call, no request to a board. Tying them together
+   * would mean a preferences edit could take effect only by going back out to
+   * search, which on a saturated store never happens.
+   */
+  async rescoreOffers(
+    options: { all?: boolean; signal?: AbortSignal } = {}
+  ): Promise<RescoreReport> {
+    const store = await this.store();
+    const [cv, preferences] = await Promise.all([
+      store.documents.read(),
+      store.preferences.read()
+    ]);
+
+    return rescore({ store, cv, preferences, all: options.all, signal: options.signal });
+  }
 }
 
 export const createRuntime = (options: RuntimeOptions = {}): Runtime =>
@@ -449,7 +478,8 @@ export {
   queriesForRound,
   verifyFacts,
   runRound,
-  runRounds
+  runRounds,
+  rescoreOffers
 } from './offers/index.js';
 export type {
   BoardOffer,
@@ -466,7 +496,9 @@ export type {
   Verification,
   OfferAnalyser,
   RoundOptions,
-  RoundReport
+  RoundReport,
+  RescoreOptions,
+  RescoreReport
 } from './offers/index.js';
 export type { SourceInput, SourceRecord, ReadOutcome } from './sources/index.js';
 export type { ExtractCvInput, ExtractCvResult } from './capabilities/extractCv.js';

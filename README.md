@@ -605,6 +605,21 @@ React. There is still no synonym table: `JS` does not match `JavaScript`,
 because that is a judgement, and a judgement in the scorer would stop the score
 being reproducible from its inputs.
 
+**The extracted list can pass a skill; only the posting can fail one.** The same
+live round returned *two* skills for a posting titled `(React) Frontend
+Developer` whose text says React seven times, and a partial list was being read
+as an exhaustive one — `ineligible`, with `because` asserting React "is not
+among them". So a wanted skill absent from the list but present in the raw text
+is `unknown`: the posting names it, and whether it names it *as a requirement*
+is not something this can tell. Absent from both is a real `fail`. A record with
+no text needs no case of its own — nothing is found in an empty string, so the
+list is the whole posting, which is what it was before. This is the verification
+boundary's rule pointed at incomplete extraction instead of at invented facts,
+and it errs the same way: showing an offer marked `provisional` beats hiding it.
+
+Measured on the store this was found in: 4 of 18 rated offers, 22%, were being
+buried by that.
+
 Two things the scorer refuses rather than approximates. It applies no exchange
 rate, because a rate moves and yesterday's scores would quietly disagree with
 today's for reasons that have nothing to do with the offer. And it will not
@@ -613,6 +628,38 @@ on tax choices this runtime does not know, so there is no honest multiplier and
 the answer is `unknown`. Conversions it *does* make — an hourly or daily rate to
 a monthly floor — run on numbers the user stated in `preferences.json`, and the
 verdict says which assumption was applied.
+
+### Re-scoring, when the question changed
+
+A score is a comparison, and the user owns half of it. Edit `preferences.json`
+and every offer already on file holds an answer to a question nobody is asking
+any more. The record has always carried `scorer_version`, `prefs_fingerprint`
+and `cv_fingerprint`, with a comment saying they exist so a stale score is
+recognisable as stale — and nothing read them, so they were an intention rather
+than a mechanism. A preferences edit took effect only on offers found
+afterwards, leaving two offers on one screen scored against different wants.
+
+```ts
+await runtime.rescoreOffers();
+// { examined: 18, stale: 18, rescored: 5, changed: [ { from: 'ineligible', … } ] }
+```
+
+No fetch, no model call, nothing asked of a board — the text is on file and
+`evaluate` is ordinary code. That is why it is not part of a round: tying them
+together would mean a preferences edit could take effect only by going back out
+to search, which on a saturated store never happens. The fingerprints are
+written even where nothing moved, so a second pass has nothing left to examine.
+
+It will not touch `disposition` — a dismissed offer is rescored and stays
+dismissed, because the numbers should be right whatever the user decided. And
+`unverified` is carried through rather than recomputed: it records what a model
+claimed and could not support, which is a fact about a call that happened once.
+
+That last point was a bug in its own right, found by writing the rescore. A
+round re-scores every rated offer it *touched*, not only the ones it read —
+correct, since preferences may have moved — but it defaulted `unverified` to
+empty, so a round that merely re-saw an offer erased the audit trail on the
+strength of not having looked.
 
 ## Discovery rounds
 
@@ -1065,16 +1112,23 @@ check exercises a full round against a stubbed search, fetch and model —
 including the injection case, where a salary the posting never printed is
 dropped rather than scored.
 
-Two defects came out of running it for real rather than from reading it. An
+Four defects came out of running it for real rather than from reading it. An
 offer whose extraction failed after a successful fetch was stranded in `fetched`
 forever, because the round's own comment said the next round would retry it and
 the predicate it referred to admitted only `candidate`. And a `must` on React
-was failing postings that plainly required React, because the model returns
+was failing postings that plainly required React — twice over: the model returns
 bullets like `Solid experience with React` where the matcher wanted the bare
-word. Both are fixed and both now have a check. Neither was visible from a
-stubbed round, because the stub returned clean skill names and never failed
-mid-way — which is the argument for running the thing against the real world
-before believing it works. What is deliberately
+word, and it returns *partial* lists that were being read as exhaustive, which
+buried 4 of 18 rated offers. Pulling on that turned up a fourth: a round that
+re-saw an already-rated offer wiped the record of what an earlier extraction
+could not verify.
+
+All four are fixed and all four now have a check. None was visible from a
+stubbed round, because the stub returns clean, complete skill names and never
+fails mid-way — which is the argument for running the thing against the real
+world before believing it works. `rescoreOffers` exists because of them: three
+of the four wrote wrong numbers to disk, and a fix that cannot reach the records
+already written is half a fix. What is deliberately
 not built is merging syndicated duplicates, which needs a schema decision the
 [Discovery rounds](#discovery-rounds) section explains, and re-checking live
 offers for expiry, which is a different job from finding new ones.

@@ -45,8 +45,14 @@
 import type { OfferRecord, Eligibility, SalaryPeriod } from '../store/offerRecord.js';
 import type { Preferences, ContractType, Strength } from '../store/preferences.js';
 
-/** Bumped when a rule changes, so a stale score is recognisable as stale. */
-export const SCORER_VERSION = '1';
+/**
+ * Bumped when a rule changes, so a stale score is recognisable as stale.
+ *
+ * `2` matches a skill as a word inside its entry rather than as the whole
+ * entry, and consults the posting text before failing a skill the extraction
+ * did not list. `rescoreOffers` reads this; nothing did before it existed.
+ */
+export const SCORER_VERSION = '2';
 
 export type Verdict = 'pass' | 'fail' | 'unknown';
 
@@ -166,12 +172,16 @@ const skillPattern = (wanted: string): RegExp | null => {
   return new RegExp(`(?<![a-z0-9])${runs.join('[^a-z0-9]*')}(?![a-z0-9])`);
 };
 
+const mentions = (haystack: string, wanted: string): boolean => {
+  const pattern = skillPattern(wanted);
+  return pattern !== null && pattern.test(fold(haystack));
+};
+
 const namesSkill = (offered: string[], wanted: string): boolean => {
   const key = skillKey(wanted);
   if (offered.some((entry) => skillKey(entry) === key)) return true;
 
-  const pattern = skillPattern(wanted);
-  return pattern !== null && offered.some((entry) => pattern.test(fold(entry)));
+  return offered.some((entry) => mentions(entry, wanted));
 };
 
 /** Converts to a monthly figure using the user's own stated assumptions. */
@@ -377,6 +387,26 @@ const compareContract = (
  *
  * A posting with no extracted skills yields unknowns, not failures — the list
  * being empty is a fact about the extraction, not about the job.
+ *
+ * The same argument survives one level further down, which a live round made
+ * unavoidable. `gemma3:4b` returned two skills for a posting titled `(React)
+ * Frontend Developer` whose text says React seven times, and a partial list was
+ * being read as an exhaustive one: the offer came out `ineligible` with
+ * `because` asserting React "is not among them", which is a claim about the job
+ * that nothing had checked. An incomplete extraction is still a fact about the
+ * extraction.
+ *
+ * So the list can *pass* a skill, and only the posting itself can *fail* one.
+ * A wanted skill absent from the list but present in the raw text is `unknown`
+ * — the posting names it, and whether it names it as a requirement is not
+ * something this can tell. Absent from both is a genuine `fail`. A record with
+ * no text falls out of the same rule without needing a case of its own: nothing
+ * is found in an empty string, so the extracted list is the whole posting as
+ * far as this runtime knows, which is what it was before this existed.
+ *
+ * This is the verification boundary's rule pointed at extraction rather than at
+ * invention, and it fails in the same safe direction. Erring here shows the
+ * user an offer marked `provisional`; erring the other way hides it.
  */
 const compareSkills = (record: OfferRecord, preferences: Preferences): CriterionVerdict[] => {
   const { strength, require } = preferences.skills;
@@ -396,15 +426,29 @@ const compareSkills = (record: OfferRecord, preferences: Preferences): Criterion
       };
     }
 
-    const matched = namesSkill(offered, skill);
+    if (namesSkill(offered, skill)) {
+      return {
+        criterion,
+        strength,
+        verdict: 'pass' as const,
+        because: `the posting names ${skill}`
+      };
+    }
+
+    if (mentions(record.text, skill)) {
+      return {
+        criterion,
+        strength,
+        verdict: 'unknown' as const,
+        because: `the extracted skills omit ${skill}, but the posting names it — undecided`
+      };
+    }
 
     return {
       criterion,
       strength,
-      verdict: matched ? ('pass' as const) : ('fail' as const),
-      because: matched
-        ? `the posting names ${skill}`
-        : `the posting lists its skills and ${skill} is not among them`
+      verdict: 'fail' as const,
+      because: `the posting lists its skills and ${skill} is not among them`
     };
   });
 };

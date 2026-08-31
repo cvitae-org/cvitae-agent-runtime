@@ -62,3 +62,5 @@ export type {
   DiscoveryOutcome,
   DiscoverySource
 } from './round.js';
+export { rescoreOffers } from './rescore.js';
+export type { RescoreOptions, RescoreReport } from './rescore.js';

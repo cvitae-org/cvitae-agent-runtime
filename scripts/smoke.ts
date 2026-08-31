@@ -43,6 +43,7 @@ const { boards, boardFor, isFetchable, searchableBoards, scrapableBoards } = awa
 );
 const { verifyFacts } = await import('../src/offers/verify.js');
 const { runRound } = await import('../src/offers/round.js');
+const { rescoreOffers } = await import('../src/offers/rescore.js');
 const { executePlan } = await import('../src/core/orchestrator.js');
 const { ToolRegistry } = await import('../src/tools/registry.js');
 const { defaultTools } = await import('../src/tools/index.js');
@@ -699,6 +700,59 @@ for (const spelling of ['Node.js', 'NodeJS', 'node js', 'Strong knowledge of Nod
   check(`"${spelling}" names Node.js`, verdict === 'pass', String(verdict));
 }
 
+// The same argument one level down. A model that returns two skills for a
+// posting whose title says React is not telling us React is unwanted — it is
+// telling us the extraction is partial, and a `fail` here asserts something
+// about the job that nothing checked.
+const partial = scored({
+  skills: ['Bardzo dobra znajomo\u015b\u0107 JavaScript', 'Do\u015bwiadczenie w pracy z Figma'],
+  text: '(React) Frontend Developer\n\nSzukamy osoby do zespo\u0142u. Stack: React, JavaScript, Figma.'
+});
+check(
+  'a skill the extraction missed but the posting names is undecided, not failed',
+  partial.detail.criteria.find((c) => c.criterion === 'skill:react')?.verdict === 'unknown',
+  partial.detail.criteria.find((c) => c.criterion === 'skill:react')?.because
+);
+// Against a `must` on React — which is what makes the difference matter: the
+// same record was coming out `ineligible` and disappearing.
+const mustReact = preferencesSchema.parse({
+  ...savedPrefs,
+  skills: { strength: 'must', require: ['React'] }
+});
+const buried = evaluate(
+  offerRecordSchema.parse({
+    id: 'partial', work_mode: 'remote',
+    skills: ['Bardzo dobra znajomo\u015b\u0107 JavaScript', 'Do\u015bwiadczenie w pracy z Figma'],
+    text: '(React) Frontend Developer\n\nStack: React, JavaScript, Figma.',
+    first_seen_at: NOW, last_seen_at: NOW
+  }),
+  mustReact
+);
+check(
+  'so the offer stays visible as provisional instead of being buried',
+  buried.eligibility === 'provisional',
+  buried.eligibility
+);
+
+// And the genuine failure still fails. Absent from the list and absent from the
+// posting is the posting saying nothing about it, which is what `fail` means.
+const genuinelyAbsent = scored({
+  skills: ['Java', 'Spring', 'PostgreSQL'],
+  text: 'Backend Engineer. We work in Java and Spring against PostgreSQL.'
+});
+check(
+  'a skill in neither the list nor the text is a real failure',
+  genuinelyAbsent.detail.criteria.find((c) => c.criterion === 'skill:react')?.verdict === 'fail',
+  genuinelyAbsent.detail.criteria.find((c) => c.criterion === 'skill:react')?.because
+);
+
+// A record with no text needs no case of its own: nothing is found in an empty
+// string, so the list is the whole posting, exactly as it was before.
+check(
+  'with no text on file the extracted list is still the whole posting',
+  joined.detail.criteria.find((c) => c.criterion === 'skill:react')?.verdict === 'fail'
+);
+
 // Unchanged, and the reason the looser match is safe: an empty list is a fact
 // about the extraction, so it stays undecided rather than becoming a failure.
 const noSkills = scored({ skills: ['', '  '] });
@@ -1279,6 +1333,82 @@ check(
   'the required skill leads, alone, because a lone term matches most',
   keywords[0] === 'react',
   keywords.slice(0, 3).join(' | ')
+);
+
+// A round re-sees far more offers than it reads, and re-scores every rated one
+// it touched — right, because preferences may have moved. But it has re-checked
+// nothing, so the extraction audit must survive a round that did not extract.
+const auditBefore = (await store.offerRecords.get(rated.id))?.score_detail as {
+  unverified?: string[];
+};
+check(
+  'a round that only re-saw an offer keeps what an earlier extraction could not verify',
+  auditBefore?.unverified?.includes('skills'),
+  JSON.stringify(auditBefore?.unverified)
+);
+
+section('rescoring, when the question changed rather than the answer');
+
+// A score is a comparison, and the user owns half of it. Editing preferences
+// used to leave every offer already on file scored against wants the user no
+// longer held — and the fields that would have revealed it were written by
+// every round and read by nothing.
+const tightened = preferencesSchema.parse({
+  ...savedPrefs,
+  work_mode: { strength: 'must', accept: ['onsite'] }
+});
+await store.preferences.write(tightened);
+
+const firstPass = await rescoreOffers({ store, cv: readBack, preferences: tightened });
+check(
+  'a preferences edit makes the scores on file stale',
+  firstPass.stale === firstPass.examined && firstPass.examined > 0,
+  `${firstPass.stale} of ${firstPass.examined}`
+);
+check(
+  'and the offers that no longer qualify are named, with the reason',
+  firstPass.changed.length > 0 &&
+    firstPass.changed.every((c) => c.because.some((b) => b.startsWith('work_mode:'))),
+  firstPass.changed.map((c) => `${c.from}→${c.to} ${c.because.join(', ')}`).join(' | ')
+);
+
+// Rescoring writes the fingerprints even where nothing moved, which is the
+// whole point of storing them: the second pass has nothing left to examine.
+const secondPass = await rescoreOffers({ store, cv: readBack, preferences: tightened });
+check(
+  'a second pass finds nothing stale',
+  secondPass.stale === 0 && secondPass.rescored === 0,
+  `${secondPass.stale} stale, ${secondPass.rescored} rescored`
+);
+check(
+  'though `all` still forces one, for a rule change a version bump missed',
+  (await rescoreOffers({ store, cv: readBack, preferences: tightened, all: true })).stale > 0
+);
+
+// The user's column, again. Rescoring corrects numbers; it does not revisit a
+// decision, and a dismissed offer stays dismissed with its numbers put right.
+const dismissedBefore = await store.offerRecords.get(rated.id);
+await store.preferences.write(savedPrefs);
+await rescoreOffers({ store, cv: readBack, preferences: savedPrefs });
+const dismissedAfter = await store.offerRecords.get(rated.id);
+check(
+  'rescoring does not touch disposition',
+  dismissedAfter?.disposition === dismissedBefore?.disposition &&
+    dismissedAfter?.disposition === 'dismissed',
+  String(dismissedAfter?.disposition)
+);
+check(
+  'but it does put the numbers back',
+  dismissedAfter?.eligibility === 'eligible',
+  String(dismissedAfter?.eligibility)
+);
+
+// `unverified` records what a model claimed and could not support. Re-deriving
+// it without the model would either invent it or erase the audit trail.
+check(
+  'and the record of what could not be verified survives the rescore',
+  (dismissedAfter?.score_detail as { unverified?: string[] })?.unverified?.includes('skills'),
+  JSON.stringify((dismissedAfter?.score_detail as { unverified?: string[] })?.unverified)
 );
 
 section('fusion and canonicalisation');
