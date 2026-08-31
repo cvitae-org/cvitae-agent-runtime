@@ -1335,6 +1335,31 @@ check(
   keywords.slice(0, 3).join(' | ')
 );
 
+// A CV lists far more frameworks than languages, and the cap used to be applied
+// to raw skill names before they were reduced to slug tokens. Both facts
+// together meant React, React Query and React Native spent three slots on one
+// token, and the CV's own languages were never searched at all.
+const lopsided = cvDocumentSchema.parse({
+  ...readBack,
+  skills: {
+    ...readBack.skills,
+    frameworks: ['React', 'React Query', 'React Native', 'Next.js', 'Redux', 'Jotai', 'GraphQL'],
+    programming_languages: ['TypeScript', 'JavaScript', 'Rust']
+  }
+});
+const lopsidedTerms = buildKeywords(lopsided, savedPrefs).filter((k) => !k.includes(' '));
+
+check(
+  'near-duplicate framework names do not each claim a slot',
+  lopsidedTerms.filter((t) => t === 'react').length === 1,
+  lopsidedTerms.join(' | ')
+);
+check(
+  'and the CV\u2019s languages are searched alongside its frameworks',
+  lopsidedTerms.includes('typescript') && lopsidedTerms.includes('next'),
+  lopsidedTerms.join(' | ')
+);
+
 // A round re-sees far more offers than it reads, and re-scores every rated one
 // it touched — right, because preferences may have moved. But it has re-checked
 // nothing, so the extraction audit must survive a round that did not extract.

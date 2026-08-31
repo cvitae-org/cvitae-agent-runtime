@@ -255,9 +255,34 @@ const slugToken = (skill: string): string => {
  * note at the top of `boardSearch.ts`.
  */
 export const buildKeywords = (cv: CvDocument, preferences: Preferences): string[] => {
-  const techTokens = unique(
-    technologies(cv, preferences).map(slugToken).filter(Boolean)
-  );
+  // Capped after tokenising, not before, which `technologies` cannot do because
+  // it also feeds `buildQueries` — an engine is happy with `React Query` as a
+  // phrase, and a slug filter reduces it to `react`. Taking six raw names first
+  // let near-duplicates eat the budget: a CV listing React, React Query and
+  // React Native spent three of six slots on one token, and `typescript`,
+  // `node` and `nestjs` were never searched at all. Measured on the real CV
+  // this was written against, where five distinct tokens came out of six slots.
+  const tokensOf = (names: string[]): string[] =>
+    unique(names.map(slugToken).filter(Boolean));
+
+  const frameworks = tokensOf(cv.skills.frameworks);
+  const languages = tokensOf(cv.skills.programming_languages);
+
+  // Alternated rather than concatenated, so neither category can starve the
+  // other. Straight concatenation let twelve frameworks fill all six slots and
+  // search none of the CV's languages — and on a Polish board the language is
+  // very often the slug's last token (`…-warszawa-javascript`), which makes it
+  // the better filter of the two.
+  const interleaved: string[] = [];
+  for (let index = 0; index < Math.max(frameworks.length, languages.length); index++) {
+    if (frameworks[index]) interleaved.push(frameworks[index] as string);
+    if (languages[index]) interleaved.push(languages[index] as string);
+  }
+
+  const techTokens = unique([
+    ...tokensOf(preferences.skills.require),
+    ...interleaved
+  ]).slice(0, 6);
 
   const roleTokens = unique(
     roles(cv)
