@@ -35,19 +35,18 @@
  * PLN against a salary in EUR is `unknown`, which is the truthful answer.
  */
 
-import type { SalaryPeriod } from '../../contracts/index.js';
+import type { SalaryPeriod, SalaryReading } from '../../contracts/index.js';
 
-export type ParsedSalary = {
-  /** `null` on an open lower bound, and when nothing was found. */
-  min: number | null;
-  /** `null` on an open upper bound (`od 20 000`), and when nothing was found. */
-  max: number | null;
-  /** ISO-ish code — `PLN`, `EUR`, `USD`, `GBP`. `''` when the text did not say. */
-  currency: string;
-  period: SalaryPeriod;
-};
-
-const EMPTY: ParsedSalary = { min: null, max: null, currency: '', period: '' };
+/**
+ * What this module produces is exactly what the record stores, so it is the
+ * same type. The parser previously declared its own structurally identical
+ * copy, which is how the two would eventually differ by a field nobody noticed
+ * was missing on one side.
+ *
+ * `min` and `max` are `null` on an open bound (`od 20 000`) and when nothing
+ * was found; `currency` is `''` when the text did not say.
+ */
+const EMPTY: SalaryReading = { min: null, max: null, currency: '', period: '' };
 
 /**
  * Currency spellings, longest-first so `zł` is not shadowed by a bare `z`.
@@ -208,7 +207,7 @@ const OPEN_DOWNWARD = /\b(do|up to|max\.?|maximum|maksymalnie|ponizej)\b/;
  * yields a currency and no numbers, and that is a better record than nothing.
  * "Found nothing" is `min === null && max === null && currency === ''`.
  */
-export const parseSalary = (raw: string): ParsedSalary => {
+export const parseSalary = (raw: string): SalaryReading => {
   if (!raw.trim()) return { ...EMPTY };
 
   const text = fold(raw);

@@ -14,7 +14,6 @@ means the consolidation stopped halfway.
 
 | here | goes to | why |
 | --- | --- | --- |
-| `offers/` (8 files left of 17) | `effects/` + `capabilities/` | What remains is the part that reaches the network: `round`, `boardSearch`, `resolve`, `fetch`, `scraper`, `page`, `webSearch`, `index`. Compare each against `effects/offers.ts` and `effects/search.ts` before porting — the spine covers most of this ground already, and better. |
 | `sources/` | `effects/sources.ts` | PDF and image reading. The spine's version covers less. |
 | ~~`store/preferences.ts`~~ | ~~`capabilities/offers/preferences.ts`~~ | **Done.** A `documents` row rather than a JSON file — it is read whole, written whole and never queried by field. `PreferencesStore` is replaced by `DocumentStore`. |
 | ~~`store/offerRecord.ts`~~ | ~~`contracts/offer.ts` + `storage/sqlite/`~~ | **Done.** The vocabulary and the schema. Its `OfferRecordStore` is replaced by `OfferStore`, whose `needingRating` is a WHERE clause where this was a full scan. |
@@ -25,13 +24,26 @@ means the consolidation stopped halfway.
 
 ### Ported so far
 
-`boards`, `identity`, `salary`, `criteria`, `queries`, `verify` and `boardFacts`
-(now `facts.ts`) live in `src/capabilities/offers/`, beside `preferences.ts`.
+`boards`, `identity`, `salary`, `criteria`, `queries` and `verify` live in
+`src/capabilities/offers/`, beside `preferences.ts`.
+
+`boardFacts.ts` came across too and should not have: `analyzeOffer.applyStated`
+is the same function, down to the note about why `contract_type` is not taken
+from the board, and `StatedFacts` was already in `contracts/`. It was deleted
+rather than reconciled. The lesson generalises to the flat `capabilities/*.ts`
+below — check the spine for the function before porting the file.
 They are pure — no I/O, no storage — which is why they went first: they needed
 only the vocabulary, not the engine.
 
 `shortlist` and `rescore` followed, with the queries they used to do in memory
 pushed into `OfferStore` — `staleRatings` and `countRated`.
+
+`round` and `boardSearch` finished the directory. Everything below them was
+already on the spine and better: `resolve`, `fetch`, `page` and `scraper` are
+`effects/offers.ts` — one politeness map, an SSRF guard applied at every
+redirect hop rather than only the first — and `webSearch` is `effects/search.ts`,
+Brave and DuckDuckGo behind an instance rather than module state. They were
+deleted, not ported. `offers/` is gone.
 
 `core/fingerprint.ts` became `src/hash.ts`, and `retrieval/chunk.ts` now uses it
 instead of its own identical copy of the same eight lines.

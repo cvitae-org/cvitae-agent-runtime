@@ -4,8 +4,8 @@
  * A round is the smallest unit of work that leaves the store in a state worth
  * keeping. It searches, removes what it has seen before, reads what looks worth
  * reading, grounds every extracted fact in the posting it came from, scores
- * against `preferences.json`, and persists — all of it, or it reports what it
- * could not do. Nothing is buffered for a later round to finish.
+ * against the user's preferences, and persists — all of it, or it reports what
+ * it could not do. Nothing is buffered for a later round to finish.
  *
  * That is the whole reason the round exists as a thing rather than as a loop
  * body. How many rounds to run is an orchestration choice: an interactive
@@ -43,78 +43,110 @@
  *
  * It never writes `disposition`. That column belongs to the user, and a round
  * that re-saw a dismissed offer must be able to record having seen it without
- * un-dismissing it. The one exception the design allows — marking a 404 as
- * `expired` — is not implemented here, because this round only reads postings
- * it has not read before; re-checking live offers is a different job.
+ * un-dismissing it. `OfferStore.sight` enforces that in SQL, so this module
+ * cannot get it wrong even by accident. The one exception the design allows —
+ * marking a 404 as `expired` — is not implemented here, because this round only
+ * reads postings it has not read before; re-checking live offers is a different
+ * job.
+ *
+ * ## Why it takes ports rather than an `EffectSet`
+ *
+ * A round needs to read offers and to search, and nothing else in the set. It
+ * asks for those two by name so that a caller can see, from the call site, that
+ * a discovery round cannot send mail or write a document — and so the whole
+ * thing runs against two small stubs in a test with no network and no model.
  */
 
-import type { Store } from '../store/store.js';
-import type { CvDocument } from '../store/cvDocument.js';
-import type { Preferences } from '../store/preferences.js';
-import { fingerprintPreferences } from '../store/preferences.js';
-import { fingerprintValue } from '../core/fingerprint.js';
-import type { OfferRecord, OfferSighting } from '../store/offerRecord.js';
-import { searchWeb, type SearchHit } from './webSearch.js';
-import { resolveOffer } from './resolve.js';
-import type { StatedFacts } from './boardFacts.js';
-import { normaliseUrl, offerId } from './identity.js';
+import type {
+  EffectCall,
+  OfferReader,
+  OfferRecord,
+  OfferSighting,
+  OfferStore,
+  SalaryReading,
+  SearchHit,
+  StatedFacts,
+  WebSearch
+} from '../../contracts/index.js';
+import { isWorkMode } from '../../contracts/index.js';
+import { fingerprintCv } from '../cv/document.js';
+import type { CvDocument } from '../cv/document.js';
 import { boardFor, hostOf, isFetchable } from './boards.js';
-import { buildQueries, queriesForRound } from './queries.js';
-import { verifyFacts, type OfferClaims } from './verify.js';
 import { evaluate, SCORER_VERSION } from './criteria.js';
+import { normaliseUrl, offerId } from './identity.js';
+import { fingerprintPreferences } from './preferences.js';
+import type { Preferences } from './preferences.js';
+import { buildQueries, queriesForRound } from './queries.js';
+import { parseSalary } from './salary.js';
+import { verifyFacts, type OfferClaims } from './verify.js';
 
 /**
  * Reading a posting into structured claims.
  *
  * A function rather than the runtime itself, so that this module does not
- * import the thing that imports it — and so the round can be exercised end to
- * end against a stub, which is what makes its dedupe, verification and scoring
+ * import the thing that imports it — the boundary rules forbid it, and the
+ * reason they forbid it is this: the round can then be exercised end to end
+ * against a stub, which is what makes its dedupe, verification and scoring
  * testable without a model.
  */
 export type OfferAnalyser = (input: {
-  offerText: string;
-  url: string;
-  boardFacts?: StatedFacts;
-  signal?: AbortSignal;
+  readonly offerText: string;
+  readonly url: string;
+  readonly stated?: StatedFacts;
+  readonly signal?: AbortSignal;
 }) => Promise<Record<string, unknown>>;
 
 /**
  * What a round accepts as an answer to "what offers exist for this term".
  *
  * Narrower than `SearchOutcome` on purpose: a round has no use for which engine
- * answered, and naming one would tie the seam to the open web. `searchWeb`
- * satisfies this as it stands, and so does `createBoardSearch`, which asks
- * cvitae-scrapper instead and touches no third party at all.
+ * answered, and naming one would tie the seam to the open web. `fromWebSearch`
+ * satisfies this, and so does `boardSearch`, which asks the companion scraper
+ * instead and touches no third party at all.
  */
 export type DiscoveryOutcome =
-  | { status: 'ok'; hits: SearchHit[] }
+  | { readonly status: 'ok'; readonly hits: readonly SearchHit[] }
   /** Nothing is configured or running to search with. Says nothing about the market. */
-  | { status: 'unavailable'; detail: string }
+  | { readonly status: 'unavailable'; readonly detail: string }
   /** It was asked and could not answer. */
-  | { status: 'failed'; detail: string };
+  | { readonly status: 'failed'; readonly detail: string };
 
 export type DiscoverySource = (
   query: string,
-  options?: { limit?: number; signal?: AbortSignal }
+  options: { readonly limit: number; readonly call: EffectCall }
 ) => Promise<DiscoveryOutcome>;
 
+/** The open web as a discovery source. Drops the engine name, keeps the rest. */
+export const fromWebSearch =
+  (search: WebSearch): DiscoverySource =>
+  async (query, { limit, call }) => {
+    const outcome = await search.search(query, { ...call, limit });
+    return outcome.status === 'ok'
+      ? { status: 'ok', hits: outcome.hits }
+      : { status: outcome.status, detail: outcome.detail };
+  };
+
 export type RoundOptions = {
-  store: Store;
-  cv: CvDocument;
-  preferences: Preferences;
-  analyse: OfferAnalyser;
+  readonly store: OfferStore;
+  readonly cv: CvDocument;
+  readonly preferences: Preferences;
+  readonly analyse: OfferAnalyser;
+  /** Reads one posting. Throws `unreadable_source` when there is nothing to read. */
+  readonly read: OfferReader;
+  readonly search: DiscoverySource;
+  readonly call: EffectCall;
   /** Which slice of the derived query list to run. 1-based. */
-  round?: number;
-  queriesPerRound?: number;
+  readonly round?: number;
+  readonly queriesPerRound?: number;
   /** Results asked of the engine, per query. */
-  searchLimit?: number;
+  readonly searchLimit?: number;
   /** How many postings this round will actually read. The round's real cost. */
-  fetchLimit?: number;
+  readonly fetchLimit?: number;
   /**
    * Run exactly these, this round, with no slicing. For a search the user
    * typed, and for tests that want one query and one answer.
    */
-  queries?: string[];
+  readonly queries?: readonly string[];
   /**
    * The full derived list to *slice* per round, replacing the one this module
    * would build from the CV.
@@ -125,29 +157,26 @@ export type RoundOptions = {
    * `buildQueries` does not produce — while still wanting round *n* to search
    * something round *n-1* did not.
    */
-  terms?: string[];
-  signal?: AbortSignal;
-  search?: DiscoverySource;
-  resolve?: typeof resolveOffer;
+  readonly terms?: readonly string[];
 };
 
 export type RoundReport = {
-  round: number;
-  queries: string[];
+  readonly round: number;
+  readonly queries: readonly string[];
   /** Search results, before any dedupe. */
-  hits: number;
+  readonly hits: number;
   /** Distinct offer URLs this round had not seen before. */
-  discovered: number;
+  readonly discovered: number;
   /** Offers worked on this round: read from the board, or re-analysed from stored text. */
-  fetched: number;
+  readonly fetched: number;
   /** Of those, how many were actually requested from a board. */
-  requested: number;
-  rated: number;
-  unreadable: number;
+  readonly requested: number;
+  readonly rated: number;
+  readonly unreadable: number;
   /** Candidates on a board whose terms refuse automated access. Never fetched. */
-  refused: number;
-  added: number;
-  updated: number;
+  readonly refused: number;
+  readonly added: number;
+  readonly updated: number;
   /**
    * The engine returned offers and every one of them was already on file. The
    * signal to stop, and cheap to act on: a saturated round has already paid for
@@ -159,23 +188,23 @@ export type RoundReport = {
    * is soft-blocked. Reading that as saturation would stop the loop on round
    * one and report the run as complete.
    */
-  saturated: boolean;
+  readonly saturated: boolean;
   /** Queries the engine refused or could not answer. Not the same as finding nothing. */
-  searchFailures: string[];
+  readonly searchFailures: readonly string[];
   /**
-   * Offers this round stored that share a company and title with one already on
-   * file. Reported, never merged — see the note above.
+   * Offers this round stored that share a company and position with one already
+   * on file. Reported, never merged — see the note above.
    */
-  duplicates: { id: string; of: string }[];
-  scored: {
-    id: string;
-    url: string;
-    title: string;
-    company: string;
-    eligibility: OfferRecord['eligibility'];
-    fit: number | null;
-    completeness: number | null;
-    unverified: string[];
+  readonly duplicates: readonly { readonly id: string; readonly of: string }[];
+  readonly scored: readonly {
+    readonly id: string;
+    readonly url: string;
+    readonly position: string;
+    readonly company: string;
+    readonly eligibility: string;
+    readonly fit: number | null;
+    readonly completeness: number | null;
+    readonly unverified: readonly string[];
   }[];
 };
 
@@ -191,17 +220,40 @@ const stringOf = (value: unknown): string | undefined =>
 
 /** Maps the analysis record onto the fields the record and the criteria use. */
 const claimsFrom = (analysis: Record<string, unknown>): OfferClaims => ({
-  title: stringOf(analysis.position),
+  position: stringOf(analysis.position),
   company: stringOf(analysis.company),
   location: stringOf(analysis.location),
-  work_mode: stringOf(analysis.work_mode),
+  workMode: stringOf(analysis.work_mode),
   seniority: stringOf(analysis.seniority),
-  contract_type: stringOf(analysis.contract_type),
+  contractType: stringOf(analysis.contract_type),
   salary: stringOf(analysis.salary),
   skills: Array.isArray(analysis.required_skills)
     ? analysis.required_skills.map(String).filter((skill) => skill.trim() !== '')
     : undefined
 });
+
+/**
+ * The figures behind a salary line.
+ *
+ * Derived here rather than in the store, which is where it used to live and is
+ * the wrong layer twice over: reading `20 000 - 25 000 PLN / mies.` is domain
+ * judgment, and a store that parsed it would be a store with an opinion about
+ * Polish payroll. The round is the writer of the fact, so the round derives it.
+ *
+ * Reused unchanged when the text has not moved. That is what lets a figure
+ * stated by a board — which knows its own pay data better than a parser reading
+ * its rendering of it — survive every later sighting, and expire exactly when
+ * the line it described is replaced.
+ */
+const readingFor = (
+  salary: string | undefined,
+  previous: OfferRecord | undefined
+): SalaryReading | undefined => {
+  const text = (salary ?? '').trim();
+  if (!text) return undefined;
+  if (previous?.salary === text && previous.salaryReading) return previous.salaryReading;
+  return parseSalary(text);
+};
 
 /**
  * How interesting a search hit looks before anything is fetched.
@@ -269,14 +321,20 @@ const intentFor = (record: OfferRecord | undefined): Intent => {
   return 'skip';
 };
 
+/** What an extraction claimed and could not support, from whichever round extracted. */
+const auditedUnverified = (record: OfferRecord): string[] => {
+  const stored = record.rating?.detail?.unverified;
+  if (!Array.isArray(stored)) return [];
+  return stored.filter((entry): entry is string => typeof entry === 'string');
+};
+
 /**
  * Runs one round.
  *
  * Never throws for an offer-shaped reason. A refused search, an unreadable
  * board and a model that fails on one posting are all ordinary outcomes that
  * the report names, because nineteen offers and one failure is a good round and
- * discarding the nineteen would be the wrong trade — the same argument
- * `runBatch` makes about a batch.
+ * discarding the nineteen would be the wrong trade.
  */
 export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
   const {
@@ -284,18 +342,20 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
     cv,
     preferences,
     analyse,
+    read,
+    search,
+    call,
     round = 1,
     queriesPerRound = 4,
     searchLimit = 10,
-    fetchLimit = 5,
-    signal,
-    search = searchWeb,
-    resolve = resolveOffer
+    fetchLimit = 5
   } = options;
+
+  const { signal } = call;
 
   const queries =
     options.queries ??
-    queriesForRound(options.terms ?? buildQueries(cv, preferences), round, queriesPerRound);
+    queriesForRound([...(options.terms ?? buildQueries(cv, preferences))], round, queriesPerRound);
 
   /* ------------------------------------------------------------ search -- */
 
@@ -303,15 +363,15 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
   const byUrl = new Map<string, SearchHit>();
   let hits = 0;
 
-  for (const query of queries) {
-    const outcome = await search(query, { limit: searchLimit, signal });
+  for (const [index, query] of queries.entries()) {
+    const outcome = await search(query, { limit: searchLimit, call });
 
     if (outcome.status === 'unavailable') {
       // Nothing is configured to search with, so every remaining query would
       // fail the same way. Reported per query rather than once, because the
       // report's job is to say what did not happen, and "three of four queries
       // are missing" is the thing a caller would otherwise have to infer.
-      for (const remaining of queries.slice(queries.indexOf(query))) {
+      for (const remaining of queries.slice(index)) {
         searchFailures.push(`${remaining}: ${outcome.detail}`);
       }
       break;
@@ -335,11 +395,12 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
 
   /* ------------------------------------------------------------ triage -- */
 
-  const known = new Map((await store.offerRecords.all()).map((record) => [record.id, record]));
-
+  // A lookup per candidate, against the primary key. The predecessor read every
+  // record in the store to build a map and then used a handful of its entries.
   const candidates = [...byUrl.values()]
-    .map((hit) => ({ hit, id: offerId(hit.url), record: known.get(offerId(hit.url)) }))
-    .filter((candidate) => candidate.id !== '');
+    .map((hit) => ({ hit, id: offerId(hit.url) }))
+    .filter((candidate) => candidate.id !== '')
+    .map((candidate) => ({ ...candidate, record: store.get(candidate.id) }));
 
   const discovered = candidates.filter((candidate) => !candidate.record).length;
 
@@ -364,10 +425,10 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
   const reading = actionable.slice(0, fetchLimit);
   const readingIds = new Set(reading.map((candidate) => candidate.id));
 
-  // Everything else is still recorded. A candidate row costs a line in a text
-  // file and is what lets the next round pick up where this one stopped —
-  // without it, an offer below the fetch cut would be rediscovered and
-  // re-ranked from scratch every round, forever.
+  // Everything else is still recorded. A candidate row is one insert and is
+  // what lets the next round pick up where this one stopped — without it, an
+  // offer below the fetch cut would be rediscovered and re-ranked from scratch
+  // every round, forever.
   const sightings: OfferSighting[] = candidates
     .filter((candidate) => !readingIds.has(candidate.id))
     .map((candidate) => ({
@@ -387,46 +448,55 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
   let fetches = 0;
 
   for (const candidate of reading) {
-    signal?.throwIfAborted();
+    signal.throwIfAborted();
 
     // Text already on file, from a round whose extraction failed after the
     // fetch. Nothing is asked of the board a second time.
     const stored = candidate.intent === 'analyse' ? candidate.record : undefined;
 
-    const outcome = stored
-      ? ({ status: 'ok', text: stored.text, finalUrl: stored.url, via: 'builtin' } as const)
-      : await resolve(candidate.hit.url, signal);
+    let text: string;
+    let finalUrl: string;
+    let stated: StatedFacts | undefined;
 
-    if (outcome.status !== 'ok') {
-      unreadable++;
-      sightings.push({
-        id: candidate.id,
-        url: candidate.hit.url,
-        board: hostOf(candidate.hit.url),
-        processing: 'unreadable'
-      });
-      continue;
+    if (stored) {
+      text = stored.text;
+      finalUrl = stored.finalUrl ?? stored.url ?? candidate.hit.url;
+      stated = stored.stated;
+    } else {
+      try {
+        const resolved = await read.resolve(candidate.hit.url, call);
+        text = resolved.text;
+        finalUrl = resolved.finalUrl;
+        stated = resolved.stated;
+      } catch {
+        // `resolve` throws `unreadable_source` for a board that blocked us, one
+        // that renders client-side, one robots.txt forbids. Nothing failed, and
+        // the only way forward is for a person to paste the text.
+        unreadable++;
+        sightings.push({
+          id: candidate.id,
+          url: candidate.hit.url,
+          board: hostOf(candidate.hit.url),
+          processing: 'unreadable'
+        });
+        continue;
+      }
+      fetches++;
     }
-
-    fetches += stored ? 0 : 1;
 
     let analysis: Record<string, unknown>;
 
     try {
-      analysis = await analyse({
-        offerText: outcome.text,
-        url: outcome.finalUrl,
-        boardFacts: 'board' in outcome ? outcome.board : undefined,
-        signal
-      });
+      analysis = await analyse({ offerText: text, url: finalUrl, stated, signal });
     } catch {
       // The posting was read; only the extraction failed. `fetched` says so,
       // and the next round will find it worth another attempt.
       sightings.push({
         id: candidate.id,
-        url: outcome.finalUrl,
-        board: hostOf(outcome.finalUrl),
-        text: outcome.text,
+        url: finalUrl,
+        board: hostOf(finalUrl),
+        stated,
+        text,
         processing: 'fetched'
       });
       continue;
@@ -434,90 +504,117 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
 
     // The boundary. Everything above this line came from the posting or from a
     // model reading it; nothing below may use a fact that is not in the text.
-    const { facts, unverified } = verifyFacts(claimsFrom(analysis), outcome.text);
+    const { facts, unverified } = verifyFacts(claimsFrom(analysis), text);
 
     unverifiedBy.set(candidate.id, unverified);
     rated++;
 
     sightings.push({
       id: candidate.id,
-      url: outcome.finalUrl,
-      board: hostOf(outcome.finalUrl),
-      text: outcome.text,
+      url: finalUrl,
+      board: hostOf(finalUrl),
+      stated,
+      text,
       analysis,
-      ...facts,
+      position: facts.position,
+      company: facts.company,
+      location: facts.location,
+      // Narrowed here rather than trusted. `verifyFacts` only keeps a work mode
+      // it found a marker for, so in practice this always holds — but the claim
+      // arrives as a model's string, and the column is an enum a consumer
+      // switches on. A guard that never fires costs nothing; the absence of one
+      // costs a badge that renders as nothing anybody can see is wrong.
+      workMode: isWorkMode(facts.workMode) ? facts.workMode : undefined,
+      seniority: facts.seniority,
+      contractType: facts.contractType,
+      salary: facts.salary,
+      salaryReading: readingFor(facts.salary, candidate.record),
+      skills: facts.skills,
       processing: 'rated'
     });
   }
 
-  const stored = await store.saveOffers(sightings);
+  const results = store.sight(sightings, Date.now());
+  const added = results.filter((result) => result.isNew).length;
 
   /* ------------------------------------------------------------- score -- */
 
   // Scored from the merged records rather than from the sightings, because a
   // sighting is partial: an offer this round only re-saw still carries what an
   // earlier round extracted, and rating the fragment would throw that away.
-  const cvFingerprint = fingerprintValue({ ...cv, updated_at: '' });
-  const prefsFingerprint = fingerprintPreferences(preferences);
-  const ratedAt = new Date().toISOString();
-
-  // What an extraction claimed and could not support, from whichever round did
-  // the extracting. Every rated record this round *touched* is re-scored, not
-  // only the ones it read — which is right, because preferences may have moved
-  // — but a round that merely re-saw an offer has re-checked nothing. Defaulting
-  // to an empty list there erased the audit trail on the strength of not having
-  // looked, and it took two rounds and a dismissed offer to notice.
-  const auditedUnverified = (record: OfferRecord): string[] => {
-    const stored = record.score_detail.unverified;
-    if (!Array.isArray(stored)) return [];
-    return stored.filter((entry): entry is string => typeof entry === 'string');
+  const inputs = {
+    scorerVersion: SCORER_VERSION,
+    cvFingerprint: fingerprintCv(cv),
+    prefsFingerprint: fingerprintPreferences(preferences)
   };
+  const ratedAt = Date.now();
 
-  const ratings: OfferSighting[] = stored.records
-    .filter((record) => record.processing === 'rated')
-    .map((record) => {
-      const evaluation = evaluate(record, preferences);
+  const scored: RoundReport['scored'][number][] = [];
 
-      return {
-        id: record.id,
-        eligibility: evaluation.eligibility,
-        fit: evaluation.fit,
-        completeness: evaluation.completeness,
-        score_detail: {
-          ...evaluation.detail,
-          unverified: unverifiedBy.get(record.id) ?? auditedUnverified(record)
-        },
-        rated_at: ratedAt,
-        scorer_version: SCORER_VERSION,
-        cv_fingerprint: cvFingerprint,
-        prefs_fingerprint: prefsFingerprint
-      };
+  for (const result of results) {
+    const record = store.get(result.id);
+    if (!record || record.processing !== 'rated') continue;
+
+    const evaluation = evaluate(record, preferences);
+    // Every rated record this round *touched* is re-scored, not only the ones
+    // it read — which is right, because preferences may have moved — but a
+    // round that merely re-saw an offer has re-checked nothing. Defaulting to
+    // an empty list there erased the audit trail on the strength of not having
+    // looked, and it took two rounds and a dismissed offer to notice.
+    const unverified = unverifiedBy.get(record.id) ?? auditedUnverified(record);
+
+    store.rate(record.id, {
+      ...inputs,
+      eligibility: evaluation.eligibility,
+      fit: evaluation.fit,
+      completeness: evaluation.completeness,
+      detail: { ...evaluation.detail, unverified },
+      ratedAt
     });
 
-  const scoredRecords = ratings.length > 0 ? (await store.saveOffers(ratings)).records : [];
+    scored.push({
+      id: record.id,
+      url: record.url ?? '',
+      position: record.position ?? '',
+      company: record.company ?? '',
+      eligibility: evaluation.eligibility,
+      fit: evaluation.fit,
+      completeness: evaluation.completeness,
+      unverified
+    });
+  }
 
   /* --------------------------------------------------------- duplicates -- */
 
-  // Computed over one read of the file rather than a lookup per offer, which is
-  // the same answer for a fraction of the reads.
-  const identity = (record: OfferRecord): string =>
-    `${record.company.trim().toLowerCase()}\u0000${record.title.trim().toLowerCase()}`;
+  // One indexed lookup per scored offer, against the same full-text index
+  // `search` uses. The predecessor read every record in the store and built a
+  // map of every company/title pair on file to answer a question about five of
+  // them.
+  //
+  // The index is asked a broad question and the exact answer is filtered out of
+  // it: FTS matches every record containing these terms, which would call a
+  // "Flutter Developer" a repost of a "Senior Flutter Developer".
+  const fold = (value: string): string => value.trim().toLowerCase();
+  const duplicates: { id: string; of: string }[] = [];
 
-  const byIdentity = new Map<string, string>();
-  const duplicates: RoundReport['duplicates'] = [];
+  for (const entry of scored) {
+    if (!fold(entry.company) || !fold(entry.position)) continue;
 
-  for (const record of await store.offerRecords.all()) {
-    if (!record.company.trim() || !record.title.trim()) continue;
+    const original = store
+      .byIdentity(entry.company, entry.position)
+      .filter(
+        (other) =>
+          other.id !== entry.id &&
+          fold(other.company ?? '') === fold(entry.company) &&
+          fold(other.position ?? '') === fold(entry.position)
+      )
+      // Earliest first: the older record is the original and this one is the
+      // repost, which is the direction a caller would expect. Ties broken by id
+      // so two rows sighted in one transaction do not report each other.
+      .sort((left, right) => left.firstSeenAt - right.firstSeenAt || left.id.localeCompare(right.id))
+      .at(0);
 
-    const key = identity(record);
-    const first = byIdentity.get(key);
-
-    // File order is arrival order, so the earlier record is the original and
-    // this one is the repost — which is the direction a caller would expect.
-    if (first === undefined) byIdentity.set(key, record.id);
-    else if (scoredRecords.some((scored) => scored.id === record.id)) {
-      duplicates.push({ id: record.id, of: first });
-    }
+    if (original) duplicates.push({ id: entry.id, of: original.id });
   }
 
   return {
@@ -530,21 +627,12 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
     rated,
     unreadable: unreadable + refused.length,
     refused: refused.length,
-    added: stored.added,
-    updated: stored.updated,
+    added,
+    updated: results.length - added,
     saturated: hits > 0 && discovered === 0,
     searchFailures,
     duplicates,
-    scored: scoredRecords.map((record) => ({
-      id: record.id,
-      url: record.url,
-      title: record.title,
-      company: record.company,
-      eligibility: record.eligibility,
-      fit: record.fit,
-      completeness: record.completeness,
-      unverified: unverifiedBy.get(record.id) ?? auditedUnverified(record)
-    }))
+    scored
   };
 };
 
@@ -557,7 +645,7 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
  * the queries this CV implies.
  */
 export const runRounds = async (
-  options: RoundOptions & { rounds?: number }
+  options: RoundOptions & { readonly rounds?: number }
 ): Promise<RoundReport[]> => {
   const { rounds = 1, ...rest } = options;
   const reports: RoundReport[] = [];

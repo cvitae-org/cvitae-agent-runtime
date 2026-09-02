@@ -43,13 +43,22 @@
 import { parseSalary } from './salary.js';
 import { readContractTypes } from './criteria.js';
 
+/**
+ * What a model says a posting contains, in the record's own vocabulary.
+ *
+ * The field names are `OfferRecord`'s and `COUNTED_FACTS`', not the model's:
+ * `verified` and `unverified` are lists of these names, they are stored in the
+ * audit trail and shown to a person beside the completeness score, and a list
+ * that says `work_mode` next to a score computed over `workMode` is two
+ * spellings of one fact pretending to be two facts.
+ */
 export type OfferClaims = {
-  title?: string;
+  position?: string;
   company?: string;
   location?: string;
-  work_mode?: string;
+  workMode?: string;
   seniority?: string;
-  contract_type?: string;
+  contractType?: string;
   salary?: string;
   skills?: string[];
 };
@@ -63,7 +72,7 @@ export type Verification = {
 };
 
 /** The facts a criterion can consult, and therefore the ones that are enforced. */
-const GATING = new Set(['salary', 'work_mode', 'contract_type', 'skills']);
+const GATING = new Set(['salary', 'workMode', 'contractType', 'skills']);
 
 const fold = (value: string): string =>
   value
@@ -192,25 +201,25 @@ export const verifyFacts = (claims: OfferClaims, rawText: string): Verification 
     }
   );
 
-  const workMode = (claims.work_mode ?? '').trim().toLowerCase();
+  const workMode = (claims.workMode ?? '').trim().toLowerCase();
   settle(
-    'work_mode',
+    'workMode',
     workMode !== '' && workMode !== 'unknown',
     WORK_MODE_MARKERS[workMode]?.test(text) ?? false,
     () => {
-      facts.work_mode = workMode;
+      facts.workMode = workMode;
     }
   );
 
-  const contract = (claims.contract_type ?? '').trim();
+  const contract = (claims.contractType ?? '').trim();
   const claimed = readContractTypes(contract);
   const inText = readContractTypes(rawText);
   settle(
-    'contract_type',
+    'contractType',
     contract !== '',
     claimed.length > 0 && claimed.some((type) => inText.includes(type)),
     () => {
-      facts.contract_type = contract;
+      facts.contractType = contract;
     }
   );
 
@@ -229,7 +238,7 @@ export const verifyFacts = (claims: OfferClaims, rawText: string): Verification 
 
   /* ---------------------------------------------------- descriptive --- */
 
-  for (const field of ['title', 'company', 'location', 'seniority'] as const) {
+  for (const field of ['position', 'company', 'location', 'seniority'] as const) {
     const claim = (claims[field] ?? '').trim();
     settle(field, claim !== '' && claim.toLowerCase() !== 'unknown', statesPhrase(claim, text), () => {
       facts[field] = claim;

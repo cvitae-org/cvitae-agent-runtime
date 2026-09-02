@@ -189,6 +189,14 @@ export const createOfferStore = (db: Db): OfferStore => {
    * board search yields a title and a URL and no body, and letting that
    * overwrite a posting we had already fetched in full would lose the only copy
    * of it.
+   *
+   * `processing` is coalesced against the *parameter* rather than against
+   * `excluded`, which is the only way to tell "this sighting says nothing about
+   * the state" from "this sighting says candidate". The column is NOT NULL with
+   * a default, so `excluded.processing` on a sighting that omitted it is the
+   * literal `'candidate'` — and updating from that demotes every rated offer a
+   * standing search re-saw, which means fetching and re-analysing the entire
+   * store on the next round. Every night, silently, forever.
    */
   const sightOne = db.prepare(
     `INSERT INTO offers
@@ -196,7 +204,7 @@ export const createOfferStore = (db: Db): OfferStore => {
         first_seen_at, last_seen_at, processing, disposition)
      VALUES
        (:id, ${FACT_VALUES}, :text, :searchText,
-        :at, :at, :processing, 'active')
+        :at, :at, coalesce(:processing, 'candidate'), 'active')
      ON CONFLICT (id) DO UPDATE SET
        url = coalesce(excluded.url, url),
        final_url = coalesce(excluded.final_url, final_url),
@@ -221,7 +229,7 @@ export const createOfferStore = (db: Db): OfferStore => {
        search_text = CASE WHEN length(excluded.text) > length(text)
                    THEN excluded.search_text ELSE search_text END,
        last_seen_at = excluded.last_seen_at,
-       processing = excluded.processing`
+       processing = coalesce(:processing, processing)`
   );
 
   const byId = db.prepare<[string]>('SELECT * FROM offers WHERE id = ?');
@@ -300,7 +308,7 @@ export const createOfferStore = (db: Db): OfferStore => {
           text,
           searchText: foldForSearch(text),
           at,
-          processing: offer.processing ?? 'candidate'
+          processing: offer.processing ?? null
         });
         return { id: offer.id, isNew };
       })

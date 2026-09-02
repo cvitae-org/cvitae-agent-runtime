@@ -1,10 +1,11 @@
 /**
  * Discovery through the boards themselves, needing no search engine.
  *
- * The same shape as `webSearch.ts` and a different mechanism entirely. A web
- * search asks somebody else's index what exists; this asks the boards, through
- * cvitae-scrapper running on the user's own machine. No key, no quota, no
- * account, and nothing about what the user is looking for leaves the laptop.
+ * The same shape as the open-web source and a different mechanism entirely. A
+ * web search asks somebody else's index what exists; this asks the boards,
+ * through the companion scraper running on the user's own machine. No key, no
+ * quota, no account, and nothing about what the user is looking for leaves the
+ * laptop.
  *
  * It is also more complete. An engine returns what it chose to index and ranked
  * highly; `justjoin`'s sitemap is every live offer on the board — 9,783 of them
@@ -30,28 +31,26 @@
  * still visible, marked `provisional`.
  */
 
-import { searchBoard, isScraperEnabled, type ListingItem } from './scraper.js';
+import type { Listing, SearchHit, SiteReader } from '../../contracts/index.js';
 import { scrapableBoards, type Board } from './boards.js';
-import type { SearchHit } from './webSearch.js';
 import type { DiscoveryOutcome, DiscoverySource } from './round.js';
 
-/** Injected so a round can be exercised without the scraper running. */
 export type BoardSearchOptions = {
-  search?: typeof searchBoard;
-  boards?: Board[];
+  /** Injected so a round can be exercised against boards that do not exist. */
+  readonly boards?: readonly Board[];
   /**
    * Rows scanned per board.
    *
    * A cap on what is read back, not one the board honours: `justjoin` returns
-   * its whole matching set whatever this says, because the scraper's `limit`
+   * its whole matching set whatever this says, because the scraper's limit
    * bounds offers *fetched* rather than rows listed. Scanning is free; this
    * exists so a board that one day answers with ten thousand does not turn a
    * round into a sort.
    */
-  rowsPerBoard?: number;
+  readonly rowsPerBoard?: number;
 };
 
-const toHit = (row: ListingItem): SearchHit => ({
+const toHit = (row: Listing): SearchHit => ({
   url: row.url,
   // Slug-derived on boards that list from a sitemap, and replaced by the real
   // one the moment the offer is read. Good enough to rank a fetch queue, which
@@ -68,32 +67,34 @@ const toHit = (row: ListingItem): SearchHit => ({
  * Sequential rather than parallel: the scraper throttles per host at two
  * seconds anyway, so firing them at once would only queue inside it, and one
  * board at a time keeps the failure message about the board that failed.
+ *
+ * Nothing here asks whether the scraper is configured. `listBoard` answers
+ * `unavailable` when it is not, which is the same fact arriving through the
+ * port that would have to deal with it anyway — and a capability that read the
+ * environment to find out would be a capability with an opinion about how the
+ * runtime is deployed.
  */
-export const createBoardSearch = (
-  options: BoardSearchOptions = {}
-): DiscoverySource => {
-  const { search = searchBoard, boards = scrapableBoards(), rowsPerBoard = 200 } = options;
+export const boardSearch = (reader: SiteReader, options: BoardSearchOptions = {}): DiscoverySource => {
+  const { boards = scrapableBoards(), rowsPerBoard = 200 } = options;
 
-  return async (keyword: string, { signal }: { signal?: AbortSignal } = {}): Promise<DiscoveryOutcome> => {
-    if (boards.length === 0) {
+  return async (keyword, { call }): Promise<DiscoveryOutcome> => {
+    const searchable = boards.filter((board) => board.scraperId);
+
+    if (searchable.length === 0) {
       return { status: 'unavailable', detail: 'No board in the registry can be searched directly.' };
-    }
-
-    if (search === searchBoard && !isScraperEnabled()) {
-      return {
-        status: 'unavailable',
-        detail: 'SCRAPER_URL is empty, so board search is switched off.'
-      };
     }
 
     const hits: SearchHit[] = [];
     const failures: string[] = [];
     let unavailable = 0;
 
-    for (const board of boards) {
-      signal?.throwIfAborted();
+    for (const board of searchable) {
+      call.signal.throwIfAborted();
 
-      const outcome = await search(board.scraperId as string, keyword, rowsPerBoard, signal);
+      const outcome = await reader.listBoard(
+        { board: board.scraperId as string, keyword, limit: rowsPerBoard },
+        call
+      );
 
       if (outcome.status === 'ok') {
         hits.push(...outcome.data.map(toHit));
@@ -108,22 +109,21 @@ export const createBoardSearch = (
       failures.push(`${board.name}: ${outcome.detail}`);
     }
 
-    if (unavailable === boards.length) {
+    if (unavailable === searchable.length) {
       return {
         status: 'unavailable',
-        detail: `cvitae-scrapper is not answering, so no board could be searched. Start it, or set WEB_SEARCH and use the open web instead. (${failures[0] ?? ''})`
+        detail:
+          'The companion scraper is not answering, so no board could be searched. ' +
+          `Start it, or configure web search and use the open web instead. (${failures[0] ?? ''})`
       };
     }
 
     // A board answering "nothing matched" is an answer. Only every board
     // failing is a failure, and then the detail names each one.
-    if (hits.length === 0 && failures.length === boards.length) {
+    if (hits.length === 0 && failures.length === searchable.length) {
       return { status: 'failed', detail: failures.join('; ') };
     }
 
     return { status: 'ok', hits };
   };
 };
-
-/** The default source: every board the scraper has an adapter for. */
-export const searchBoards: DiscoverySource = createBoardSearch();

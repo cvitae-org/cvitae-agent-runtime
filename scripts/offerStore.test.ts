@@ -198,6 +198,42 @@ test('rating does not promote a source that could not be read', () => {
 });
 
 /**
+ * The defect this pins would have cost a fetch and a model call per offer per
+ * night, forever, and every symptom of it looks like the system working: the
+ * rows are all there, the counts are right, and the store just keeps paying to
+ * learn what it already knew.
+ *
+ * `processing` is NOT NULL with a default of `'candidate'`, so a sighting that
+ * says nothing about the state still arrives at `excluded.processing` as the
+ * literal `'candidate'`. Updating the column from `excluded` therefore demotes
+ * every rated offer a standing search re-saw.
+ */
+test('re-seeing an offer does not forget that it was already read', () => {
+  const s = scratch();
+  try {
+    const store = createOfferStore(s.db);
+    store.sight([{ id: 'offer-1', url: 'https://boards.example/1', text: 'the full posting' }], AT);
+    store.sight(
+      [{ id: 'offer-1', url: 'https://boards.example/1', text: 'the full posting', processing: 'rated' }],
+      AT
+    );
+
+    // A later round sees the same URL on a board listing: an id, a URL, no body
+    // and nothing to say about state.
+    store.sight([{ id: 'offer-1', url: 'https://boards.example/1' }], AT + 1000);
+
+    assert.equal(store.get('offer-1')?.processing, 'rated');
+    assert.equal(store.get('offer-1')?.text, 'the full posting');
+
+    // A sighting that *does* state a processing state still wins.
+    store.sight([{ id: 'offer-1', processing: 'unreadable' }], AT + 2000);
+    assert.equal(store.get('offer-1')?.processing, 'unreadable');
+  } finally {
+    s.dispose();
+  }
+});
+
+/**
  * Three things at once, because they are the three ways this query was wrong
  * before it was a query: a dismissed offer is still rescored (only the decision
  * is the user's, the numbers are ours), an unrated offer is not (it needs a
