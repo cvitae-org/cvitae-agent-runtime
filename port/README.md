@@ -20,6 +20,8 @@ means the consolidation stopped halfway.
 | ~~`ai/logging.ts`~~ | ~~`effects/ai.ts`~~ | **Done.** An `ai_calls` table, and the default sink. See below for the three things here that were deliberately not taken. |
 | ~~`prompt/builder.ts`~~ | ~~`context/`~~ | **Done.** Superseded entirely — see below. |
 | ~~`capabilities/*.ts` (flat)~~ | ~~`src/capabilities/`~~ | **Done.** All twelve had a counterpart. The spine's survived each, and one guard came back with them. |
+| `core/batch.ts` | `runtime/` | One capability over many inputs, results streamed as they finish. Waiting on the transport — see below. |
+| `index.ts` | `runtime/create.ts` | The old public surface. Four of its nine methods have no counterpart yet. |
 | `scripts/*.test.ts` | `scripts/` | The tests that cover the above, rewritten against the ported shape. |
 
 ### Ported so far
@@ -57,6 +59,40 @@ keeps the document. The one real loss was the `=== SOURCE: … ===` boundary
 between concatenated documents — a model reading that marker is measurably less
 likely to merge two employers across the join — so `cv/extract.ts` writes it
 again, and only when there is more than one source to separate.
+
+`core/` (bar `batch.ts`), `mail/`, `providers/`, `retrieval/`, `store/`,
+`tools/` and `env.ts` are gone. Every one had a counterpart, and the two worth
+naming are the ones where the spine's version is a decision rather than a
+translation. `planner.ts`'s tool-selection prompt is superseded by
+`context/tools.ts`, which carries the measurement that says why the verb
+changed and why the restraint sentence is not there. And `retrieval/chunk.ts`'s
+eight chunk kinds are down to two: `capabilities/cv/pieces.ts` indexes the
+prose and nothing else, because a certificate issuer or a language level is
+looked up rather than searched for, and a one-word skills entry retrieves every
+CV that lists it while distinguishing none. `store/paths.ts` went with them;
+one SQLite file replaces the directory it described.
+
+**Four methods from the old public surface have no counterpart yet.** Three are
+recorded here; the fourth is the next commit.
+
+- `runBatch`, over `core/batch.ts` — M plans rather than one flattened plan,
+  results emitted in completion order so a caller writes each one as it lands
+  and an interruption at twelve of twenty keeps eleven. It is kept because its
+  shape depends on a transport that does not exist yet: `Harness.run` returns
+  one result, and a batch that streams wants the event channel the stdio host
+  will carry. Building it against the current signature would fix the wrong
+  shape.
+- `runFromText` — a natural-language request routed to a capability by the
+  model. `core/router.ts` already has `routeWithModel`, written and measured
+  (6 of 6 on `gemma4:12b`), and **nothing on the spine calls it.** It is the
+  one piece of dead code in `src/`.
+- `listTools` — `Harness` exposes `capabilities` and not the tool registry.
+
+The fourth is `discoverOffers` and `rescoreOffers`, and it is worse than a
+missing method: `capabilities/offers/{round,rescore,shortlist}.ts` were ported
+into this branch and wired to nothing. They are registered in no capability
+map and reachable from no `Harness` method, so 1,100 lines of working, tested
+discovery machinery is currently unreachable from outside the test suite.
 
 The twelve flat `capabilities/*.ts` were reconciled by comparing what actually
 carries the domain judgment — the rule strings, the thresholds, the regexes —

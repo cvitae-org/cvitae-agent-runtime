@@ -30,6 +30,8 @@
  * write port, and indexing is the same kind of thing for the same reason.
  */
 
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { open } from '../storage/sqlite/open.js';
 import { migrate } from '../storage/sqlite/migrate.js';
 import { createRunStore } from '../storage/sqlite/run-store.js';
@@ -170,9 +172,17 @@ export type Harness = {
   close(): void;
 };
 
+/**
+ * `CVITAE_DB`, else one file under the user's home directory.
+ *
+ * `homedir()` rather than `$HOME`, which is a Windows bug waiting to happen:
+ * the variable is unset there — `USERPROFILE` carries it — so the fallback
+ * would put the database in the current working directory, and the runtime's
+ * state would follow whatever folder the app happened to be launched from.
+ * This host ships for macOS and Windows both.
+ */
 const defaultDatabasePath = (): string =>
-  process.env.CVITAE_DB
-  ?? `${process.env.HOME ?? '.'}/.cvitae/runtime.db`;
+  process.env.CVITAE_DB ?? join(homedir(), '.cvitae', 'runtime.db');
 
 export const createHarness = (options: CreateOptions = {}): Harness => {
   const db = open(options.databasePath ?? defaultDatabasePath());
