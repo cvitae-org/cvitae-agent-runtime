@@ -91,6 +91,18 @@ module.exports = {
       to: { path: '^src/effects/mail\\.ts$' }
     },
     {
+      name: 'no-stdio-wraps-mail',
+      comment:
+        'The same rule again, one layer further out. A pipe is served to whatever ' +
+        'spawned this process, and the frames on it are shaped by whoever is ' +
+        'driving that program. Offer text written by strangers reaches model ' +
+        'context; an outbound channel reachable from this surface is an ' +
+        'exfiltration path with a plausible cover story.',
+      severity: 'error',
+      from: { path: '^src/adapters/stdio/' },
+      to: { path: '^src/effects/mail\\.ts$' }
+    },
+    {
       name: 'retrieval-holds-no-write-handle',
       comment:
         'retrieval/ is typed against ChunkReader, which has no write method. This ' +

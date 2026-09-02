@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
+  "bin": {
+    "cvitae-runtime-stdio": "./dist/adapters/stdio/main.js"
+  },
   "types": "./dist/index.d.ts",
   "files": [
     "dist"
@@ -25,7 +28,8 @@
     "boundaries": "depcruise src --config .dependency-cruiser.cjs",
     "test": "node --import tsx --test scripts/*.test.ts",
     "check": "pnpm typecheck && pnpm lint && pnpm boundaries && pnpm test",
-    "cli": "tsx src/adapters/cli/main.ts"
+    "cli": "tsx src/adapters/cli/main.ts",
+    "stdio": "tsx src/adapters/stdio/main.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.68",
