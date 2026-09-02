@@ -17,7 +17,7 @@ means the consolidation stopped halfway.
 | ~~`sources/`~~ | ~~`effects/sources.ts`~~ | **Done.** PDF and image reading. The spine's version covers more, not less — see below. |
 | ~~`store/preferences.ts`~~ | ~~`capabilities/offers/preferences.ts`~~ | **Done.** A `documents` row rather than a JSON file — it is read whole, written whole and never queried by field. `PreferencesStore` is replaced by `DocumentStore`. |
 | ~~`store/offerRecord.ts`~~ | ~~`contracts/offer.ts` + `storage/sqlite/`~~ | **Done.** The vocabulary and the schema. Its `OfferRecordStore` is replaced by `OfferStore`, whose `needingRating` is a WHERE clause where this was a full scan. |
-| `ai/logging.ts` | `effects/ai.ts` | A durable audit log of model calls. The spine already logs — `effects/ai.ts` wraps every call and `runtime/create.ts` picks a console or silent `AiLogger` — so what is missing is only somewhere for it to land: an `ai_calls` table. The summarizers, `sha256` and `stableStringify` here are all already done on the spine. |
+| ~~`ai/logging.ts`~~ | ~~`effects/ai.ts`~~ | **Done.** An `ai_calls` table, and the default sink. See below for the three things here that were deliberately not taken. |
 | ~~`prompt/builder.ts`~~ | ~~`context/`~~ | **Done.** Superseded entirely — see below. |
 | `capabilities/*.ts` (flat) | reconcile with `src/capabilities/` | Nine of these have a counterpart on the spine. One version survives each. |
 | `scripts/*.test.ts` | `scripts/` | The tests that cover the above, rewritten against the ported shape. |
@@ -57,6 +57,36 @@ keeps the document. The one real loss was the `=== SOURCE: … ===` boundary
 between concatenated documents — a model reading that marker is measurably less
 likely to merge two employers across the join — so `cv/extract.ts` writes it
 again, and only when there is more than one source to separate.
+
+`ai/logging.ts` needed a table, not a logger. The spine has wrapped every model
+call since `effects/ai.ts` was written and `AiLogEntry` already says what a line
+carries; what it lacked was anywhere durable to put one. `storage/sqlite/ai-log.ts`
+is that place, and it is now the default — `consoleLogger` is still exported but
+demoted, and moved from stdout to stderr, because the host this runtime is being
+built for is a child process whose stdout is the transport. A log line inside a
+JSON-RPC frame is worse than no log line.
+
+Three things here were read and deliberately not taken:
+
+- **`withAiTrace` / `currentAiTraceId`.** An `AsyncLocalStorage` carrying the
+  trace id ambiently. The spine threads it explicitly through `EffectCall`, so
+  a call that is missing one does not compile rather than logging under
+  whichever trace happened to be on the stack.
+- **`sha256` of the prompt.** It would tell you the same prompt was sent twice
+  without storing it, which is genuinely useful. It is still a payload-derived
+  identifier in a table whose whole claim — asserted in `aiLog.test.ts` against
+  `PRAGMA table_info` — is that no column can hold one. The claim is worth more
+  than the convenience.
+- **`AiLogMode` and `AI_LOG_MODE`.** Off versus metadata, read from the
+  environment. The caller passes `silentLogger`; an env var is a second way to
+  say the same thing and a second thing to get wrong.
+
+**Still missing, and worth knowing:** which tools a `tool_loop` actually called.
+The port summarised every interaction — name, status, sizes — and the spine logs
+one row for the whole loop and a `toolSteps` count on the step value. On a small
+local model that is the most useful debugging signal there is. It wants a
+second table and a change to the gateway, so it is its own piece of work rather
+than a rider on this one.
 
 `prompt/builder.ts` needed nothing. `compose` is in `context/render.ts` with a
 wider signature; `EXTRACTION_RULES` and `DRAFTING_RULES` are inlined at the

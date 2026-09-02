@@ -372,7 +372,10 @@ test('the widening keeps the rows it found and dates them from what it knew', ()
        VALUES ('old', 'https://b.example/old', 'Kowalski', 'Developer', 'body', 'body', ?)`
     ).run(AT);
 
-    assert.equal(migrate(db), 3);
+    // Up to 3 and no further. This test is about what the widening does, and
+    // running every later migration over it would make it fail the day one of
+    // them lands for a reason that has nothing to do with the claim here.
+    assert.equal(migrate(db, migrations.filter((m) => m.version <= 3)), 3);
 
     const store = createOfferStore(db);
     const row = store.get('old');

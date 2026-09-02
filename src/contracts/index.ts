@@ -6,6 +6,7 @@
  * is a cycle, and the boundary checker would be right to say so.
  */
 
+export * from './ai-log.js';
 export * from './capability.js';
 export * from './chunk-index.js';
 export * from './document-store.js';

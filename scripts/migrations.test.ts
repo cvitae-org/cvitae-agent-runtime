@@ -31,7 +31,7 @@ test('a fresh file reaches the latest version', () => {
 
     for (const expected of [
       'runs', 'run_steps', 'events', 'effect_attempts',
-      'approvals', 'documents', 'chunks', 'offers'
+      'approvals', 'documents', 'chunks', 'offers', 'ai_calls'
     ]) {
       assert.ok(names.includes(expected), `missing table ${expected}`);
     }

@@ -38,6 +38,7 @@ import { createApprovalGate, createApprovalStore } from '../storage/sqlite/appro
 import { createDocumentStore } from '../storage/sqlite/document-store.js';
 import { createChunkIndex } from '../storage/sqlite/chunk-index.js';
 import { createOfferStore } from '../storage/sqlite/offers.js';
+import { createAiLog } from '../storage/sqlite/ai-log.js';
 import { createAttemptLog } from '../storage/sqlite/attempts.js';
 import { createModelResolver } from '../providers/resolve.js';
 import { createAiGateway } from '../effects/ai.js';
@@ -55,6 +56,7 @@ import { startRun, type RuntimeDeps, type RunRequest } from './run.js';
 import { resumeRun, type ResumeRequest } from './resume.js';
 import { recoverInterruptedRuns } from './recover.js';
 import type {
+  AiLog,
   AiLogEntry,
   AiLogger,
   ApprovalStore,
@@ -72,12 +74,19 @@ import type {
 } from '../contracts/index.js';
 
 /**
- * The default log: one line per model call, metadata only.
+ * One line per model call on **stderr**, metadata only.
  *
  * No prompt, no completion, no argument values — only sizes, timings and an
  * outcome. A log that carries prompts carries whatever the user pasted into
  * one, and a debugging convenience is not worth a second copy of a CV in a
  * file nobody remembers rotating.
+ *
+ * Not the default any more, and stderr rather than stdout, for the same
+ * reason: this runtime's host is a child process whose stdout is the transport.
+ * A log line in the middle of a frame is worse than no log line, and a library
+ * writing to a stream it does not own is how that happens. The default sink is
+ * now the `ai_calls` table — durable, queryable, and not on anyone's stdout.
+ * This stays exported for a caller that wants to watch a run go by.
  */
 export const consoleLogger: AiLogger = {
   record(entry: AiLogEntry): void {
@@ -97,7 +106,7 @@ export const consoleLogger: AiLogger = {
       entry.outcome === 'ok' ? 'ok' : `failed=${entry.errorCode ?? 'unknown'}`
     ].filter(Boolean);
 
-    console.info(parts.join(' '));
+    console.error(parts.join(' '));
   }
 };
 
@@ -108,6 +117,7 @@ export type CreateOptions = {
   /** Defaults to `CVITAE_DB`, then `~/.cvitae/runtime.db`. */
   readonly databasePath?: string;
   readonly capabilities?: CapabilityMap;
+  /** Defaults to the `ai_calls` table. `consoleLogger` and `silentLogger` are here. */
   readonly logger?: AiLogger;
   /** Unset uses the default loopback port; `''` switches the scraper off. */
   readonly scraperUrl?: string;
@@ -142,6 +152,11 @@ export type Harness = {
   readonly chunks: ChunkIndex;
   readonly offers: OfferStore;
   /**
+   * What every model call cost, read back. The gateway holds only the write
+   * half — see `AiLog` — so a step can add a line and nothing else.
+   */
+  readonly aiCalls: AiLog;
+  /**
    * The adapter's half of the approval pair: see what is waiting, record an
    * answer. A step holds the gate and can only ask, which is what stops one
    * approving itself.
@@ -170,6 +185,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   const chunks = createChunkIndex(db, options.now);
   const offers = createOfferStore(db);
   const attempts = createAttemptLog(db);
+  const aiLog = createAiLog(db);
 
   const replaceProfile = db.transaction((document: DocumentBody) => {
     const record = documents.update(CV_ID, CV_KIND, () => document);
@@ -177,7 +193,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     return { record, clearedChunks };
   }).immediate;
 
-  const logger = options.logger ?? consoleLogger;
+  const logger = options.logger ?? aiLog;
 
   // Resolution is deferred until a step needs a model, so a runtime with no
   // credential still opens, still lists runs, and still fails at the point of
@@ -239,6 +255,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     },
     chunks,
     offers,
+    aiCalls: aiLog,
     approvals,
     mail: createMailSender({
       guard: createGuard(attempts, options.now),
