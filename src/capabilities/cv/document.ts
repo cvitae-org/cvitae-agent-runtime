@@ -25,6 +25,8 @@
 
 import { z } from 'zod';
 
+import { fingerprintValue } from '../../hash.js';
+
 /** ISO where the source was precise, free-form where it was vague ("2019"). */
 const dateish = z.string();
 
@@ -125,6 +127,17 @@ export type ExperienceEntry = z.infer<typeof experienceEntrySchema>;
  * parameter — a second one would need a way for a caller to say which, and no
  * capability has anything to say about a CV that is not the user's own.
  */
+/**
+ * The CV's contribution to a rating's inputs.
+ *
+ * Whole-document, including fields no criterion reads, because the question is
+ * "is this the same CV" and not "would this change the score" — the second one
+ * cannot be answered without running the scorer, which is what the fingerprint
+ * exists to avoid. Nothing here needs excluding the way preferences exclude
+ * `updated_at`: the store holds the timestamp, so the body is content only.
+ */
+export const fingerprintCv = (cv: CvDocument): string => fingerprintValue(cv);
+
 export const CV_ID = 'cv';
 export const CV_KIND = 'cv';
 

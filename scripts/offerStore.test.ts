@@ -198,48 +198,80 @@ test('rating does not promote a source that could not be read', () => {
 });
 
 /**
- * The never-rated row is the one a naive query loses. Both fingerprint columns
- * are NULL on it, and `NULL <> 'cv-a'` is NULL rather than true — so a `<>`
- * comparison silently filters out exactly the offers that most need a score.
+ * Three things at once, because they are the three ways this query was wrong
+ * before it was a query: a dismissed offer is still rescored (only the decision
+ * is the user's, the numbers are ours), an unrated offer is not (it needs a
+ * fetch and a model, which is a round's work), and a bumped scorer version
+ * makes every score stale on its own.
+ *
+ * The NULL handling is the reason it is `IS NOT` and not `<>`: an unrated row
+ * has NULL in all three columns, and `NULL <> 'cv-a'` is NULL rather than true.
+ * With `<>` the never-rated rows vanish — which here is the wanted answer, but
+ * only by accident, and the same accident hides a row scored by a scorer that
+ * wrote no version.
  */
-test('offers needing a rating include the ones never rated at all', () => {
+test('a stale score is one whose inputs moved, dismissed or not', () => {
   const s = scratch();
   try {
     const store = createOfferStore(s.db);
     store.sight(
       [
         { id: 'never-rated', text: 'a' },
-        { id: 'stale', text: 'b' },
+        { id: 'stale-cv', text: 'b' },
         { id: 'current', text: 'c' },
-        { id: 'dismissed', text: 'd' }
+        { id: 'dismissed', text: 'd' },
+        { id: 'stale-scorer', text: 'e' }
       ],
       AT
     );
 
-    const base = { fit: 1, completeness: 1, ratedAt: AT, scorerVersion: '3' };
-    store.rate('stale', {
+    const base = { fit: 1, completeness: 1, eligibility: 'eligible' } as const;
+    store.rate('stale-cv', {
       ...base,
-      eligibility: 'eligible',
+      ratedAt: AT,
+      scorerVersion: '3',
       cvFingerprint: 'cv-OLD',
       prefsFingerprint: 'prefs-a'
     });
     store.rate('current', {
       ...base,
-      eligibility: 'eligible',
+      ratedAt: AT + 1,
+      scorerVersion: '3',
       cvFingerprint: 'cv-a',
       prefsFingerprint: 'prefs-a'
     });
     store.rate('dismissed', {
       ...base,
-      eligibility: 'eligible',
+      ratedAt: AT + 2,
+      scorerVersion: '3',
       cvFingerprint: 'cv-OLD',
+      prefsFingerprint: 'prefs-a'
+    });
+    store.rate('stale-scorer', {
+      ...base,
+      ratedAt: AT + 3,
+      scorerVersion: '2',
+      cvFingerprint: 'cv-a',
       prefsFingerprint: 'prefs-a'
     });
     store.setDisposition('dismissed', 'dismissed');
 
-    const ids = store.needingRating('cv-a', 'prefs-a', 10).map((o) => o.id);
+    const inputs = { scorerVersion: '3', cvFingerprint: 'cv-a', prefsFingerprint: 'prefs-a' };
 
-    assert.deepEqual(ids, ['never-rated', 'stale']);
+    // Oldest score first, so a capped pass makes progress on the worst of it.
+    assert.deepEqual(
+      store.staleRatings(10, inputs).map((o) => o.id),
+      ['stale-cv', 'dismissed', 'stale-scorer']
+    );
+
+    // No inputs: every rated offer, which is the pass to run when the rules
+    // changed in a way the scorer version did not capture.
+    assert.deepEqual(
+      store.staleRatings(10).map((o) => o.id),
+      ['stale-cv', 'current', 'dismissed', 'stale-scorer']
+    );
+
+    assert.equal(store.countRated(), 4);
   } finally {
     s.dispose();
   }

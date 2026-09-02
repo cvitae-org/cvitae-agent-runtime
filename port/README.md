@@ -14,7 +14,7 @@ means the consolidation stopped halfway.
 
 | here | goes to | why |
 | --- | --- | --- |
-| `offers/` (10 files left of 17) | `effects/` + `capabilities/` | What remains is the part that does I/O or holds state: `round`, `boardSearch`, `rescore`, `shortlist`, `resolve`, `fetch`, `scraper`, `page`, `webSearch`, `index`. The pure judgment is ported. |
+| `offers/` (8 files left of 17) | `effects/` + `capabilities/` | What remains is the part that reaches the network: `round`, `boardSearch`, `resolve`, `fetch`, `scraper`, `page`, `webSearch`, `index`. Compare each against `effects/offers.ts` and `effects/search.ts` before porting — the spine covers most of this ground already, and better. |
 | `sources/` | `effects/sources.ts` | PDF and image reading. The spine's version covers less. |
 | ~~`store/preferences.ts`~~ | ~~`capabilities/offers/preferences.ts`~~ | **Done.** A `documents` row rather than a JSON file — it is read whole, written whole and never queried by field. `PreferencesStore` is replaced by `DocumentStore`. |
 | ~~`store/offerRecord.ts`~~ | ~~`contracts/offer.ts` + `storage/sqlite/`~~ | **Done.** The vocabulary and the schema. Its `OfferRecordStore` is replaced by `OfferStore`, whose `needingRating` is a WHERE clause where this was a full scan. |
@@ -29,6 +29,9 @@ means the consolidation stopped halfway.
 (now `facts.ts`) live in `src/capabilities/offers/`, beside `preferences.ts`.
 They are pure — no I/O, no storage — which is why they went first: they needed
 only the vocabulary, not the engine.
+
+`shortlist` and `rescore` followed, with the queries they used to do in memory
+pushed into `OfferStore` — `staleRatings` and `countRated`.
 
 `core/fingerprint.ts` became `src/hash.ts`, and `retrieval/chunk.ts` now uses it
 instead of its own identical copy of the same eight lines.

@@ -248,13 +248,23 @@ export const createOfferStore = (db: Db): OfferStore => {
   // `IS NOT` rather than `<>`, because a never-rated row holds NULL in both
   // fingerprints and `NULL <> 'abc'` is NULL, which is not true, which would
   // filter out exactly the offers that most need a score.
-  const stale = db.prepare<[string, string, number]>(
+  // `rated_at IS NOT NULL` in the WHERE and not a `processing = 'rated'` test:
+  // the two agree, and this one is the column the index is built on. An offer
+  // that was rated and later found unreadable keeps its score and its staleness
+  // — `processing` moved on, the numbers did not.
+  const stale = db.prepare<[string, string, string, number]>(
     `SELECT * FROM offers
-      WHERE disposition = 'active'
-        AND (cv_fingerprint IS NOT ? OR prefs_fingerprint IS NOT ?)
-      ORDER BY rated_at IS NOT NULL, rated_at ASC
+      WHERE rated_at IS NOT NULL
+        AND (scorer_version IS NOT ? OR cv_fingerprint IS NOT ? OR prefs_fingerprint IS NOT ?)
+      ORDER BY rated_at ASC
       LIMIT ?`
   );
+
+  const everyRated = db.prepare<[number]>(
+    `SELECT * FROM offers WHERE rated_at IS NOT NULL ORDER BY rated_at ASC LIMIT ?`
+  );
+
+  const ratedCount = db.prepare(`SELECT count(*) AS n FROM offers WHERE rated_at IS NOT NULL`);
 
   const identity = db.prepare<[string, number]>(
     `SELECT o.* FROM offers_fts
@@ -353,8 +363,20 @@ export const createOfferStore = (db: Db): OfferStore => {
       applyDisposition.run(disposition, id);
     },
 
-    needingRating(cvFingerprint, prefsFingerprint, limit) {
-      return (stale.all(cvFingerprint, prefsFingerprint, limit) as OfferRow[]).map(toOffer);
+    staleRatings(limit, staleAgainst) {
+      const rows = staleAgainst
+        ? stale.all(
+            staleAgainst.scorerVersion,
+            staleAgainst.cvFingerprint,
+            staleAgainst.prefsFingerprint,
+            limit
+          )
+        : everyRated.all(limit);
+      return (rows as OfferRow[]).map(toOffer);
+    },
+
+    countRated() {
+      return (ratedCount.get() as { n: number }).n;
     },
 
     byIdentity(company, position) {

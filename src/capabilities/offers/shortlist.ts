@@ -1,36 +1,41 @@
 /**
- * What is worth looking at, and why — read off records already on disk.
+ * What is worth looking at, and why — read off records already stored.
  *
  * This is the report half of the hunt: no model, no board, no fetch. It exists
- * as a module rather than inside `scripts/hunt.ts` because there are now two
- * readers of the same answer — the terminal and cvitae's research table — and
- * "worth a look" is not a rendering detail. If the CLI and the UI each decided
- * which offers make the list and in what order, they would disagree the first
- * time either was edited, and the disagreement would be invisible: both would
- * look plausible, and neither would be obviously wrong.
+ * as a module rather than inside a CLI command because there are two readers of
+ * the same answer — the terminal and the desktop app's table — and "worth a
+ * look" is not a rendering detail. If each decided which offers make the list
+ * and in what order, they would disagree the first time either was edited, and
+ * the disagreement would be invisible: both would look plausible, and neither
+ * would be obviously wrong.
  *
- * ## Reading `score_detail`
+ * ## Reading `rating.detail`
  *
- * `OfferRecord.score_detail` is stored as `Record<string, unknown>` so a record
+ * `OfferRating.detail` is stored as `Record<string, unknown>` so a record
  * written by an older scorer still parses — the field is an audit trail, and a
  * schema that rejected last month's shape would throw away exactly the history
- * it exists to keep. The cost is that every reader has to narrow it, and until
- * now every reader did it differently: `rescore.ts` narrowed defensively while
- * `hunt.ts` cast and hoped. `readScoreDetail` is the one narrowing, and it
- * drops what it cannot recognise rather than guessing.
+ * it exists to keep. The cost is that every reader has to narrow it, and each
+ * reader used to do it differently: the rescore pass narrowed defensively while
+ * the CLI cast and hoped. `readScoreDetail` is the one narrowing, and it drops
+ * what it cannot recognise rather than guessing.
  *
  * ## Why the view omits `text` and `analysis`
  *
- * A shortlist of forty offers carrying full postings is several megabytes of
- * JSON to render one table, and `analysis` is the model's raw output — the
- * unverified half, kept for audit, never the basis of anything shown as fact.
- * Neither belongs in a list view. Whoever wants a posting can ask for that
- * offer by id, which is a different route and a different question.
+ * A shortlist of forty offers carrying full postings is several megabytes to
+ * render one table, and `analysis` is the model's raw output — the unverified
+ * half, kept for audit, never the basis of anything shown as fact. Neither
+ * belongs in a list view. Whoever wants a posting can ask for that offer by id,
+ * which is a different route and a different question.
+ *
+ * The rows still arrive here with their `text` attached, because `OfferStore`
+ * reads whole records. That is a read this module cannot make cheaper from the
+ * outside; the place to fix it is a projection on the store, and the reason to
+ * fix it is memory rather than correctness.
  */
 
+import type { Disposition, Eligibility, OfferRecord } from '../../contracts/index.js';
 import { boardFor } from './boards.js';
 import type { CriterionVerdict, ScoreDetail, Verdict } from './criteria.js';
-import type { OfferRecord } from '../store/offerRecord.js';
 
 const verdicts: readonly string[] = ['pass', 'fail', 'unknown'];
 
@@ -56,8 +61,8 @@ const criterionOf = (value: unknown): CriterionVerdict | null => {
   };
 };
 
-/** The one narrowing of a stored `score_detail`. Unrecognised entries are dropped. */
-export const readScoreDetail = (detail: Record<string, unknown>): ScoreDetail => ({
+/** The one narrowing of a stored `rating.detail`. Unrecognised entries are dropped. */
+export const readScoreDetail = (detail: Readonly<Record<string, unknown>>): ScoreDetail => ({
   scorer: typeof detail.scorer === 'string' ? detail.scorer : '',
   criteria: Array.isArray(detail.criteria)
     ? detail.criteria.map(criterionOf).filter((entry): entry is CriterionVerdict => entry !== null)
@@ -69,28 +74,33 @@ export const readScoreDetail = (detail: Record<string, unknown>): ScoreDetail =>
 /**
  * One offer as a caller outside this process sees it.
  *
- * snake_case throughout, matching `OfferRecord` and the JSONL cvitae already
- * imports, so a field means the same thing wherever it is read.
+ * Flat and camelCase, matching `OfferRecord`, so a field means the same thing
+ * wherever it is read. Flat because the optionality on `OfferRecord` says
+ * "unknown to the store" and a table cell says "" — a view that forwarded
+ * `undefined` would make every reader write the same fallback.
+ *
+ * Timestamps are the epoch milliseconds the store holds, not formatted strings.
+ * A caller that renders them has a locale; this module does not.
  */
 export type OfferView = {
   id: string;
   url: string;
   board: string;
-  title: string;
+  position: string;
   company: string;
   location: string;
-  work_mode: string;
+  workMode: string;
   seniority: string;
-  contract_type: string;
+  contractType: string;
   salary: string;
-  salary_min: number | null;
-  salary_max: number | null;
-  salary_currency: string;
-  salary_period: string;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  salaryCurrency: string;
+  salaryPeriod: string;
   skills: string[];
   processing: string;
-  disposition: string;
-  eligibility: string;
+  disposition: Disposition;
+  eligibility: Eligibility;
   fit: number | null;
   completeness: number | null;
   /** Every criterion, not only the failures: why it passed is also an answer. */
@@ -100,46 +110,49 @@ export type OfferView = {
   missing: string[];
   /** Claims a model made that the posting did not support. Read before applying. */
   unverified: string[];
-  first_seen_at: string;
-  last_seen_at: string;
-  rated_at: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  ratedAt: number | null;
 };
 
 export const offerView = (record: OfferRecord): OfferView => {
-  const detail = readScoreDetail(record.score_detail);
+  const rawDetail = record.rating?.detail ?? {};
+  const detail = readScoreDetail(rawDetail);
+  const url = record.url ?? '';
+  const salary = record.salaryReading;
 
   return {
     id: record.id,
-    url: record.url,
+    url,
     // The board table's display name wins over the stored value, which is a
-    // bare domain. Not cosmetic: `unread_by_board` groups by the same name, and
+    // bare domain. Not cosmetic: `unreadByBoard` groups by the same name, and
     // one payload calling the same board `justjoin.it` in one field and `Just
     // Join IT` in another cannot be filtered on.
-    board: boardFor(record.url)?.name || record.board,
-    title: record.title,
-    company: record.company,
-    location: record.location,
-    work_mode: record.work_mode,
-    seniority: record.seniority,
-    contract_type: record.contract_type,
-    salary: record.salary,
-    salary_min: record.salary_min,
-    salary_max: record.salary_max,
-    salary_currency: record.salary_currency,
-    salary_period: record.salary_period,
-    skills: record.skills,
+    board: boardFor(url)?.name || (record.board ?? ''),
+    position: record.position ?? '',
+    company: record.company ?? '',
+    location: record.location ?? '',
+    workMode: record.workMode ?? '',
+    seniority: record.seniority ?? '',
+    contractType: record.contractType ?? '',
+    salary: record.salary ?? '',
+    salaryMin: salary?.min ?? null,
+    salaryMax: salary?.max ?? null,
+    salaryCurrency: salary?.currency ?? '',
+    salaryPeriod: salary?.period ?? '',
+    skills: [...(record.skills ?? [])],
     processing: record.processing,
     disposition: record.disposition,
-    eligibility: record.eligibility,
-    fit: record.fit,
-    completeness: record.completeness,
+    eligibility: record.rating?.eligibility ?? 'unrated',
+    fit: record.rating?.fit ?? null,
+    completeness: record.rating?.completeness ?? null,
     criteria: detail.criteria,
     stated: detail.stated,
     missing: detail.missing,
-    unverified: strings(record.score_detail.unverified),
-    first_seen_at: record.first_seen_at,
-    last_seen_at: record.last_seen_at,
-    rated_at: record.rated_at
+    unverified: strings(rawDetail.unverified),
+    firstSeenAt: record.firstSeenAt,
+    lastSeenAt: record.lastSeenAt,
+    ratedAt: record.rating?.ratedAt ?? null
   };
 };
 
@@ -151,7 +164,12 @@ export const offerView = (record: OfferRecord): OfferView => {
  * about salary sits below the ones that clear the floor and above the ones that
  * do not, which is where a human reading the list would put it.
  */
-const ORDER = { eligible: 0, provisional: 1, ineligible: 2, unrated: 3 } as const;
+const ORDER: Record<Eligibility, number> = {
+  eligible: 0,
+  provisional: 1,
+  ineligible: 2,
+  unrated: 3
+};
 
 /** What the caller asked to see. `shortlist` is the answer to "what now". */
 export type Scope = 'shortlist' | 'rated' | 'all';
@@ -163,7 +181,7 @@ export type Tally = {
   eligible: number;
   provisional: number;
   /** Rated, active, and off the shortlist. */
-  ruled_out: number;
+  ruledOut: number;
   /** Found on a board and never fetched: the work a round would do next. */
   unread: number;
   /**
@@ -182,13 +200,15 @@ export type Shortlist = {
   offers: OfferView[];
   tally: Tally;
   /** Where the unread backlog sits, so the next round can be aimed. */
-  unread_by_board: { board: string; count: number }[];
+  unreadByBoard: { board: string; count: number }[];
 };
+
+const eligibilityOf = (record: OfferRecord): Eligibility => record.rating?.eligibility ?? 'unrated';
 
 const isShortlisted = (record: OfferRecord): boolean =>
   record.processing === 'rated' &&
   record.disposition === 'active' &&
-  (record.eligibility === 'eligible' || record.eligibility === 'provisional');
+  (eligibilityOf(record) === 'eligible' || eligibilityOf(record) === 'provisional');
 
 /**
  * Ranks the offers on file and counts what is around them.
@@ -198,7 +218,7 @@ const isShortlisted = (record: OfferRecord): boolean =>
  * very differently when two hundred offers are still unread than when none are.
  */
 export const shortlist = (
-  records: OfferRecord[],
+  records: readonly OfferRecord[],
   options: { scope?: Scope; limit?: number } = {}
 ): Shortlist => {
   const { scope = 'shortlist', limit } = options;
@@ -208,14 +228,13 @@ export const shortlist = (
   const shortlisted = rated.filter(isShortlisted);
   const unread = active.filter((record) => record.processing !== 'rated');
 
-  const selected =
-    scope === 'all' ? records : scope === 'rated' ? rated : shortlisted;
+  const selected = scope === 'all' ? records : scope === 'rated' ? rated : shortlisted;
 
   const ranked = [...selected].sort(
     (left, right) =>
-      ORDER[left.eligibility] - ORDER[right.eligibility] ||
-      (right.fit ?? 0) - (left.fit ?? 0) ||
-      (right.completeness ?? 0) - (left.completeness ?? 0)
+      ORDER[eligibilityOf(left)] - ORDER[eligibilityOf(right)] ||
+      (right.rating?.fit ?? 0) - (left.rating?.fit ?? 0) ||
+      (right.rating?.completeness ?? 0) - (left.rating?.completeness ?? 0)
   );
 
   const byBoard = new Map<string, number>();
@@ -225,7 +244,7 @@ export const shortlist = (
   // name would aim the next round at a request it does not have to make.
   for (const record of unread) {
     if (record.processing !== 'candidate') continue;
-    const board = boardFor(record.url)?.name ?? 'elsewhere';
+    const board = boardFor(record.url ?? '')?.name ?? 'elsewhere';
     byBoard.set(board, (byBoard.get(board) ?? 0) + 1);
   }
 
@@ -234,15 +253,15 @@ export const shortlist = (
     tally: {
       total: records.length,
       shortlisted: shortlisted.length,
-      eligible: shortlisted.filter((record) => record.eligibility === 'eligible').length,
-      provisional: shortlisted.filter((record) => record.eligibility === 'provisional').length,
-      ruled_out: rated.length - shortlisted.length,
+      eligible: shortlisted.filter((record) => eligibilityOf(record) === 'eligible').length,
+      provisional: shortlisted.filter((record) => eligibilityOf(record) === 'provisional').length,
+      ruledOut: rated.length - shortlisted.length,
       unread: unread.filter((record) => record.processing === 'candidate').length,
       unanalysed: unread.filter((record) => record.processing === 'fetched').length,
       unreadable: unread.filter((record) => record.processing === 'unreadable').length,
       decided: records.length - active.length
     },
-    unread_by_board: [...byBoard]
+    unreadByBoard: [...byBoard]
       .map(([board, count]) => ({ board, count }))
       .sort((left, right) => right.count - left.count)
   };

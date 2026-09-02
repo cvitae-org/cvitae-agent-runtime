@@ -203,6 +203,19 @@ export type OfferRating = {
 };
 
 /** An offer as it is stored: canonical text plus whatever the board stated. */
+/**
+ * The three things a score is a function of besides the posting itself.
+ *
+ * Named as a triple because they are only ever compared as one: a score is
+ * current when all three match, and stale when any differs. Splitting them into
+ * three parameters invites a call site that checks two.
+ */
+export type RatingInputs = {
+  readonly scorerVersion: string;
+  readonly cvFingerprint: string;
+  readonly prefsFingerprint: string;
+};
+
 export type OfferRecord = {
   readonly id: string;
   readonly url?: string;
@@ -299,18 +312,30 @@ export interface OfferStore {
   setDisposition(id: string, disposition: Disposition): void;
 
   /**
-   * Offers whose score was computed against different inputs than the current
-   * ones, oldest rating first.
+   * Offers already carrying a score that was computed from different inputs
+   * than the ones given — a different scorer, a different CV, different
+   * preferences — oldest score first.
    *
    * A WHERE clause rather than a scan the caller filters. The predecessor read
    * every offer into memory to find the stale ones, which is affordable at a
    * hundred offers and is the shape that stops being affordable first.
+   *
+   * Three things this deliberately does *not* do. It does not skip dismissed
+   * offers: the numbers should be right whatever the user decided about the
+   * job, and only the decision is theirs. It does not return unrated offers:
+   * they need a model and a fetch, which is a round's work, not a rescore's.
+   * And with no `staleAgainst` it returns every rated offer, which is the pass
+   * to run when the rules changed in a way `scorerVersion` did not capture.
    */
-  needingRating(
-    cvFingerprint: string,
-    prefsFingerprint: string,
-    limit: number
-  ): OfferRecord[];
+  staleRatings(limit: number, staleAgainst?: RatingInputs): OfferRecord[];
+
+  /**
+   * How many offers carry a score at all.
+   *
+   * The denominator a rescore report needs and can no longer count for itself,
+   * now that it only ever sees the stale ones.
+   */
+  countRated(): number;
 
   /**
    * Offers matching a company and position, for recognising the same job posted
