@@ -83,7 +83,7 @@ export const providers = {
     defaultEmbeddingModel: 'text-embedding-3-small'
   },
   local: {
-    label: 'a local server',
+    label: 'Local server',
     // Ollama's OpenAI-compatible endpoint. LM Studio uses :1234/v1, llama.cpp
     // and vLLM :8080/v1 — all overridable through LOCAL_BASE_URL.
     baseURL: 'http://localhost:11434/v1',

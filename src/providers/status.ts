@@ -28,6 +28,10 @@ import type { Environment } from './environment.js';
 /** How long to wait for a local server before calling it absent. */
 const PROBE_MS = 1_500;
 
+/**
+ * A provider as a settings page draws it. The label is a name rather than a
+ * phrase for the same reason: it is rendered on a button, not in a sentence.
+ */
 export type ProviderSummary = {
   readonly id: ProviderId;
   readonly label: string;
