@@ -80,6 +80,18 @@ export type TextRequest = EffectCall & {
   readonly prompt: string;
   readonly maxOutputTokens: number;
   readonly temperature?: number;
+  /**
+   * Called with each fragment of the completion as it arrives.
+   *
+   * Optional on the request, and optional in the other direction too: a gateway
+   * that never calls it and returns the whole text at the end is *correct*, not
+   * broken. That is deliberate. A provider without a streaming endpoint, a
+   * cached answer and every fake in the test suite all satisfy this contract
+   * without pretending to stream, and a caller cannot be written to depend on
+   * fragments arriving — the result is the answer, and this is only how it
+   * feels to wait for it.
+   */
+  readonly onDelta?: (text: string) => void;
 };
 
 export type TextResult = {
@@ -109,6 +121,18 @@ export type ToolLoopRequest = EffectCall & {
   readonly tools: readonly ToolHandle[];
   /** Hard ceiling on model turns. Nothing here ever runs unbounded. */
   readonly maxSteps: number;
+  /**
+   * Called with each fragment of the model's prose as it arrives. Same contract
+   * as `TextRequest.onDelta`, and here for the same reason it is not a separate
+   * `streamText` method: the one answer a person actually watches being written
+   * — a question about their own CV — is produced by a tool loop, so streaming
+   * that only covered plain generation would not cover the case it exists for.
+   *
+   * Tool calls and their results are not deltas. A person watching an answer
+   * appear is not watching a trace, and the tool traffic is already in the
+   * run's events.
+   */
+  readonly onDelta?: (text: string) => void;
 };
 
 export type ToolLoopResult = {

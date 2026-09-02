@@ -29,6 +29,7 @@ import type {
   RunContext,
   RunResult,
   RunStore,
+  StepDelta,
   StepOutcome,
   ToolRegistry
 } from '../contracts/index.js';
@@ -50,6 +51,15 @@ export type RuntimeDeps = {
   readonly retrieval: Retriever;
   readonly index: ChunkIndex;
   readonly logger: AiLogger;
+  /**
+   * Where every run's deltas go, if anywhere.
+   *
+   * Process-wide and keyed by `runId` rather than registered per run, because
+   * the one caller that wants deltas — a host with a window attached — is
+   * already routing by run id for events. Absent means nobody is listening,
+   * which is the ordinary case.
+   */
+  readonly deltas?: (delta: StepDelta & { readonly runId: string }) => void;
   readonly newRunId: () => string;
   readonly now?: () => number;
   /** Wall-clock ceiling applied when a caller names no deadline. */
@@ -86,7 +96,10 @@ export const buildRunContext = (
   retrieval: deps.retrieval,
   index: deps.index,
   approvals: deps.gate(fields.runId, 'plan'),
-  logger: deps.logger
+  logger: deps.logger,
+  // The run id is added here rather than passed by the step, because a step
+  // that had to name the run it belongs to could name the wrong one.
+  deltas: (delta) => deps.deltas?.({ ...delta, runId: fields.runId })
 });
 
 /**

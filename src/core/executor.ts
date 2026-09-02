@@ -60,6 +60,16 @@ export const runStep = async (
     signal: context.signal
   };
 
+  /**
+   * The step's prose, forwarded as it is written.
+   *
+   * Only the two kinds that produce prose get one. An `extract` step's output
+   * is a structured object assembled from a partial JSON stream — fragments of
+   * it are not a shorter answer, they are an unparseable one — and a
+   * `transform` runs no model at all.
+   */
+  const onDelta = (text: string): void => context.deltas({ step: step.name, text });
+
   switch (step.kind) {
     case 'transform':
       return step.run(context);
@@ -94,7 +104,8 @@ export const runStep = async (
         ...call,
         system: step.system,
         prompt: renderPrompt(step.prompt, context),
-        maxOutputTokens: step.maxOutputTokens
+        maxOutputTokens: step.maxOutputTokens,
+        onDelta
       });
 
       rejectTruncation(step, finishReason, step.maxOutputTokens);
@@ -125,7 +136,8 @@ export const runStep = async (
         system: step.system,
         prompt: renderPrompt(step.prompt, context),
         tools: handles,
-        maxSteps: step.maxSteps
+        maxSteps: step.maxSteps,
+        onDelta
       });
 
       // A loop that stopped because it hit `maxSteps` has not answered; it ran

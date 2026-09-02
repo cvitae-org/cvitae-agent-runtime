@@ -72,7 +72,8 @@ import type {
   OfferStore,
   RunRecord,
   RunResult,
-  RunStore
+  RunStore,
+  StepDelta
 } from '../contracts/index.js';
 
 /**
@@ -126,6 +127,14 @@ export type CreateOptions = {
   /** Unset reads `MAIL_URL`. Loopback only, checked at construction. */
   readonly mailUrl?: string;
   readonly timeoutMs?: number;
+  /**
+   * Where prose goes as it is produced, if anyone is watching.
+   *
+   * Absent by default, and absent is the ordinary case — a CLI, a test and a
+   * scheduled job all want the finished answer and nothing before it. A host
+   * with a window attached supplies one and routes by `runId`.
+   */
+  readonly deltas?: (delta: StepDelta & { readonly runId: string }) => void;
   readonly newRunId?: () => string;
   readonly now?: () => number;
 };
@@ -257,6 +266,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     retrieval,
     index: chunks,
     logger,
+    ...(options.deltas ? { deltas: options.deltas } : {}),
     newRunId: options.newRunId ?? (() => crypto.randomUUID()),
     ...(options.now ? { now: options.now } : {}),
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs })

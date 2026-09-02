@@ -9,7 +9,7 @@
  * builds is validated by the SDK itself on the way past.
  */
 
-import { MockEmbeddingModelV2, MockLanguageModelV2 } from 'ai/test';
+import { MockEmbeddingModelV2, MockLanguageModelV2, simulateReadableStream } from 'ai/test';
 import type { EmbeddingModel, LanguageModel } from 'ai';
 import type { ModelChoice, ModelResolver, ProviderId } from '../../src/providers/resolve.js';
 
@@ -37,6 +37,23 @@ export const fakeResolver = (options: {
   delayMs?: number;
   fail?: () => never;
   onCall?: (prompt: string) => void;
+  /**
+   * The fragments `doStream` emits, in order.
+   *
+   * Their concatenation is what the streamed call must return, and the split
+   * is deliberately not on word boundaries in the tests that use this: a
+   * consumer that reassembles by joining on spaces passes a friendlier
+   * fixture and fails a real model.
+   */
+  chunks?: readonly string[];
+  /**
+   * Emitted instead of a completion, as the SDK's `error` stream part.
+   *
+   * The part that matters about this: the SDK does not surface error parts on
+   * `textStream`, so a gateway that only reads the text sees a *successful,
+   * empty* answer here. That is the case the streamed path has to catch.
+   */
+  streamError?: unknown;
 } = {}): Fake => {
   const providerId: ProviderId = options.providerId ?? 'local';
   const modelId = options.modelId ?? 'mock';
@@ -53,6 +70,8 @@ export const fakeResolver = (options: {
     peak = Math.max(peak, inFlight);
   };
 
+  const usage = { inputTokens: 11, outputTokens: 7, totalTokens: 18 };
+
   const language = new MockLanguageModelV2({
     doGenerate: async ({ prompt }) => {
       enter();
@@ -65,8 +84,40 @@ export const fakeResolver = (options: {
         return {
           content: [{ type: 'text' as const, text: answer }],
           finishReason: 'stop' as const,
-          usage: { inputTokens: 11, outputTokens: 7, totalTokens: 18 },
+          usage,
           warnings: []
+        };
+      } finally {
+        inFlight -= 1;
+      }
+    },
+
+    doStream: async ({ prompt }) => {
+      enter();
+      options.onCall?.(textOf(prompt));
+
+      try {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        options.fail?.();
+
+        const chunks = options.chunks ?? [answer];
+
+        return {
+          stream: simulateReadableStream({
+            chunkDelayInMs: null,
+            initialDelayInMs: null,
+            chunks: [
+              { type: 'stream-start' as const, warnings: [] },
+              ...(options.streamError === undefined
+                ? [
+                    { type: 'text-start' as const, id: '1' },
+                    ...chunks.map((delta) => ({ type: 'text-delta' as const, id: '1', delta })),
+                    { type: 'text-end' as const, id: '1' }
+                  ]
+                : [{ type: 'error' as const, error: options.streamError }]),
+              { type: 'finish' as const, finishReason: 'stop' as const, usage }
+            ]
+          })
         };
       } finally {
         inFlight -= 1;

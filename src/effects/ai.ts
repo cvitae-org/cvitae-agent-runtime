@@ -46,6 +46,7 @@ import {
   generateObject,
   generateText,
   stepCountIs,
+  streamText,
   tool,
   APICallError,
   type LanguageModel,
@@ -134,6 +135,14 @@ const held = new AsyncLocalStorage<ReadonlySet<string>>();
  * `APICallError` it routinely contains the response body verbatim.
  */
 const redact = (error: unknown): { code: string; message: string } => {
+  // Ours, and therefore already safe. A `RuntimeError` was constructed in this
+  // codebase out of facts this codebase chose, so there is no prompt in it to
+  // strip — and its code is the one the caller needs. An abort in particular
+  // has to survive as an abort: a run a person cancelled, recorded in
+  // `ai_calls` as `model_call_failed`, is a provider being blamed for a button
+  // the user pressed.
+  if (error instanceof RuntimeError) return { code: error.code, message: error.message };
+
   if (APICallError.isInstance(error)) {
     const status = error.statusCode ? ` (HTTP ${error.statusCode})` : '';
     let host = 'the provider';
@@ -158,6 +167,97 @@ const redact = (error: unknown): { code: string; message: string } => {
   }
 
   return { code: 'error', message: 'The call failed.' };
+};
+
+/**
+ * Hands a fragment to whoever asked for it, and never lets them break the call.
+ *
+ * A sink is a notification. A window that threw while rendering a token — a
+ * closed channel, a disposed controller — must not turn a model call that is
+ * still producing a perfectly good answer into a failed run. Worse, the throw
+ * would arrive at `redact` and be reported as a provider failure, which is a
+ * lie about whose fault it was.
+ */
+const notify = (onDelta: ((text: string) => void) | undefined, text: string): void => {
+  if (!onDelta) return;
+  try {
+    onDelta(text);
+  } catch {
+    // Deliberately silent, and deliberately not logged: the logger is the
+    // thing most likely to be downstream of whatever just broke.
+  }
+};
+
+/**
+ * What a completion is, once the two SDK calls are made to agree.
+ *
+ * `generateText` and `streamText` report the same run of the same model through
+ * differently shaped results. Normalising here rather than at each call site is
+ * what keeps the choice of path invisible above this file: a step that streams
+ * and a step that does not are the same step, told the same things.
+ */
+type Completion = {
+  readonly text: string;
+  readonly finishReason: FinishReason;
+  readonly usage: TokenUsage;
+  readonly steps: number;
+};
+
+const completed = (result: {
+  text: string;
+  finishReason: FinishReason;
+  totalUsage: Parameters<typeof usageOf>[0];
+  steps: readonly unknown[];
+}): Completion => ({
+  text: result.text,
+  finishReason: result.finishReason,
+  usage: usageOf(result.totalUsage),
+  steps: result.steps.length
+});
+
+/**
+ * The streaming form, for the calls a person is watching happen.
+ *
+ * Two properties of the SDK's stream this exists to contain, both of which turn
+ * a failure into a plausible-looking success if left alone.
+ *
+ * Errors do not reach `textStream` — the SDK's own documentation says error
+ * parts are not surfaced there — so a provider that refused mid-call would end
+ * the stream and hand back an *empty completion*, which is the worst available
+ * shape for a failure: nothing wrong on its face, and indistinguishable from a
+ * model that had nothing to say. `onError` captures it and it is rethrown into
+ * `call`'s redaction, the same path a non-streamed failure takes.
+ *
+ * An abort ends the stream early rather than surfacing on it, so what has been
+ * collected is a *prefix* of an answer wearing the shape of a whole one. The
+ * SDK does currently reject `result.text` in that case, so the explicit check
+ * after the loop is belt and braces — deliberately, because "the library
+ * rejects" is a property of a version, and the thing being protected is that a
+ * cancelled run never produces a confident truncated answer.
+ */
+const streamed = async (
+  begin: (onError: (event: { error: unknown }) => void) => ReturnType<typeof streamText>,
+  signal: AbortSignal,
+  onDelta: ((text: string) => void) | undefined
+): Promise<Completion> => {
+  let failure: unknown;
+  const result = begin(({ error }) => {
+    failure = error;
+  });
+
+  for await (const delta of result.textStream) notify(onDelta, delta);
+
+  if (failure !== undefined) throw failure;
+  signal.throwIfAborted();
+
+  const [text, finishReason, totalUsage, steps] = await Promise.all([
+    result.text,
+    result.finishReason,
+    result.totalUsage,
+    result.steps
+  ]);
+
+  return completed({ text, finishReason, totalUsage, steps });
 };
 
 const usageOf = (usage: {
@@ -350,19 +450,31 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
         choice,
         request.system.length + request.prompt.length,
         async () => {
-          const result = await generateText({
+          const settings = {
             model: await language(),
             system: request.system,
             prompt: request.prompt,
             maxOutputTokens: request.maxOutputTokens,
             ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
             abortSignal: request.signal
-          });
+          };
+
+          // Streamed only when somebody is listening. The two SDK calls report
+          // failure and cancellation differently, so taking the streaming path
+          // for a caller that will never see the fragments would buy nothing
+          // and change the error surface under every existing step.
+          const result = request.onDelta
+            ? await streamed(
+                (onError) => streamText({ ...settings, onError }),
+                request.signal,
+                request.onDelta
+              )
+            : completed(await generateText(settings));
 
           const value: TextResult = {
             text: result.text,
             finishReason: result.finishReason,
-            usage: usageOf(result.usage)
+            usage: result.usage
           };
 
           return {
@@ -432,7 +544,7 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
         choice,
         request.system.length + request.prompt.length,
         async () => {
-          const result = await generateText({
+          const settings = {
             model: await language(),
             system: request.system,
             prompt: request.prompt,
@@ -442,13 +554,21 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
             // executor decides what an exhausted loop means.
             stopWhen: stepCountIs(request.maxSteps),
             abortSignal: request.signal
-          });
+          };
+
+          const result = request.onDelta
+            ? await streamed(
+                (onError) => streamText({ ...settings, onError }),
+                request.signal,
+                request.onDelta
+              )
+            : completed(await generateText(settings));
 
           const value: ToolLoopResult = {
             text: result.text,
-            steps: result.steps.length,
+            steps: result.steps,
             finishReason: result.finishReason,
-            usage: usageOf(result.totalUsage)
+            usage: result.usage
           };
 
           return {

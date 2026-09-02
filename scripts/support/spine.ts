@@ -26,6 +26,7 @@ import type {
   Stage,
   Step,
   StepContext,
+  StepDelta,
   ToolRegistry
 } from '../../src/contracts/index.js';
 import type { RuntimeDeps } from '../../src/runtime/run.js';
@@ -185,6 +186,8 @@ export const spine = (
     tools?: ToolRegistry;
     /** Replaces the empty retriever, for a test that indexes something first. */
     retrieval?: Retriever;
+    /** Where prose goes as it is produced. Absent means nobody is watching. */
+    deltas?: (delta: StepDelta & { readonly runId: string }) => void;
     on?: Scratch;
     now?: () => number;
   } = {}
@@ -222,6 +225,7 @@ export const spine = (
     retrieval: options.retrieval ?? stubRetriever,
     index: chunks,
     logger: log,
+    ...(options.deltas ? { deltas: options.deltas } : {}),
     newRunId,
     ...(options.now ? { now: options.now } : {})
   };

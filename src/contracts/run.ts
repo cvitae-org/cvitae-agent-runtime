@@ -195,6 +195,38 @@ export const isRunSuspension = (value: unknown): value is RunSuspension =>
  * it. `context/build.ts` produces the second from the first and freezes it, so a
  * step cannot observe a value changing underneath it mid-execution.
  */
+/**
+ * A fragment of prose, as it is being written.
+ *
+ * The reason this is a callback and not an event: an event is written in the
+ * same transaction as the state change it announces, and a token announces no
+ * state change. Persisting one row per fragment would put thousands of rows in
+ * a log whose `seq` exists so a caller can follow what a run *did*, and bury
+ * the six rows that say it under the ten thousand that say it is still typing.
+ *
+ * So a delta is heard or it is missed, and missing one costs nothing: the
+ * finished text is canonical, lives in the run's result, and is what a caller
+ * that arrived late reads. Streaming is how an answer feels; the result is what
+ * an answer is.
+ */
+export type StepDelta = {
+  readonly step: string;
+  readonly text: string;
+};
+
+/**
+ * Where a run's deltas go.
+ *
+ * Required on the context rather than optional, for the same reason `signal`
+ * is: a sink some call sites remember is a sink that works intermittently, and
+ * intermittent streaming is harder to diagnose than none. `buildRunContext`
+ * supplies a no-op when nobody is listening, so a step never checks.
+ *
+ * A sink is a notification, so it must not be able to fail the work it is
+ * reporting on — see how `effects/ai.ts` calls it.
+ */
+export type DeltaSink = (delta: StepDelta) => void;
+
 export type RunContext = {
   readonly runId: string;
   readonly traceId: string;
@@ -250,6 +282,14 @@ export type RunContext = {
   readonly index: ChunkIndex;
   readonly approvals: ApprovalGate;
   readonly logger: AiLogger;
+
+  /**
+   * Prose leaving the run as it is produced, for whoever is watching.
+   *
+   * A no-op when nobody is, which is the common case — a CLI run, a test, a
+   * scheduled job. Nothing downstream branches on whether anyone is listening.
+   */
+  readonly deltas: DeltaSink;
 };
 
 export type StepContext = RunContext & {
