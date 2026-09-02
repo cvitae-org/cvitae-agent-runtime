@@ -24,6 +24,7 @@ import {
   buildRunContext,
   recordedOutcomes,
   settleFailure,
+  type RunHandle,
   type RuntimeDeps
 } from './run.js';
 
@@ -34,10 +35,19 @@ export type ResumeRequest = {
   readonly deadlineAt?: number;
 };
 
-export const resumeRun = async (
+/**
+ * Picks a suspended run up and returns before it finishes.
+ *
+ * The same split as `beginRun`, for the same reason and one more: every check
+ * below — the run exists, it is suspended, no attempt is unsettled — is a
+ * refusal a caller has to *see*. Deferring "this run has an unsettled attempt
+ * against mail" into a promise would turn the one answer that means *stop and
+ * ask a person* into something a caller could forget to await.
+ */
+export const beginResume = (
   deps: RuntimeDeps,
   request: ResumeRequest
-): Promise<RunResult> => {
+): RunHandle => {
   const now = deps.now ?? Date.now;
   const record = deps.runs.get(request.runId);
 
@@ -78,20 +88,30 @@ export const resumeRun = async (
       request.deadlineAt ?? now() + (deps.timeoutMs ?? 10 * 60 * 1000)
   });
 
-  try {
-    const plan = await makePlan(capability, input, context);
+  const settled = (async (): Promise<RunResult> => {
+    try {
+      const plan = await makePlan(capability, input, context);
 
-    const result = await executePlan(plan, context, {
-      checkpoint,
-      aggregate: capability.aggregate?.bind(capability),
-      approvalsFor: (step) => deps.gate(record.id, step),
-      completedSteps: recordedOutcomes(deps, record.id),
-      now
-    });
+      const result = await executePlan(plan, context, {
+        checkpoint,
+        aggregate: capability.aggregate?.bind(capability),
+        approvalsFor: (step) => deps.gate(record.id, step),
+        completedSteps: recordedOutcomes(deps, record.id),
+        now
+      });
 
-    checkpoint.succeeded(result.data, result.degraded, result.elapsedMs);
-    return result;
-  } catch (error) {
-    return settleFailure(checkpoint, error);
-  }
+      checkpoint.succeeded(result.data, result.degraded, result.elapsedMs);
+      return result;
+    } catch (error) {
+      return settleFailure(checkpoint, error);
+    }
+  })();
+
+  return { runId: record.id, settled };
 };
+
+/** The blocking form. See the note on `startRun`. */
+export const resumeRun = async (
+  deps: RuntimeDeps,
+  request: ResumeRequest
+): Promise<RunResult> => beginResume(deps, request).settled;

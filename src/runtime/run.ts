@@ -115,10 +115,39 @@ export const settleFailure = (
   throw error;
 };
 
-export const startRun = async (
-  deps: RuntimeDeps,
-  request: RunRequest
-): Promise<RunResult> => {
+/**
+ * A run that has been created and is now executing.
+ *
+ * The id exists before the work does, and that is the whole point. `run.cancel`
+ * and `runs.events` need something to name while the run is still going: a
+ * front door that answers only once the run is over turns its event log into a
+ * transcript nobody could subscribe to, and makes an approval answerable only
+ * after the run that asked for it has already returned.
+ *
+ * `settled` is exactly the promise `startRun` returns. Whoever holds a handle
+ * must attach a handler to it — a run failing is an ordinary outcome here, and
+ * an unwatched rejection is a process-level warning about something that is not
+ * a defect.
+ */
+export type RunHandle = {
+  readonly runId: string;
+  readonly settled: Promise<RunResult>;
+};
+
+/**
+ * Creates the run, sets it going, and returns its id without waiting for it.
+ *
+ * Everything before the first `await` is deliberately synchronous, so that by
+ * the time this returns the row exists, the run is `running`, and `run.queued`
+ * and `run.started` are already in the log. A caller that turns round and asks
+ * for events finds them; one that cancels finds a run to cancel.
+ *
+ * Routing and validation throw *to this caller* rather than into `settled`, for
+ * the reason the original comment gave: a request naming a capability that does
+ * not exist never became a run. There is no id to hand out for it, and burying
+ * the refusal in a promise would leave the caller holding an id for nothing.
+ */
+export const beginRun = (deps: RuntimeDeps, request: RunRequest): RunHandle => {
   const now = deps.now ?? Date.now;
 
   // Both of these throw before a run row exists, and that is correct: a request
@@ -150,22 +179,37 @@ export const startRun = async (
     deadlineAt
   });
 
-  try {
-    const plan = await makePlan(capability, input, context);
+  const settled = (async (): Promise<RunResult> => {
+    try {
+      const plan = await makePlan(capability, input, context);
 
-    const result = await executePlan(plan, context, {
-      checkpoint,
-      aggregate: capability.aggregate?.bind(capability),
-      approvalsFor: (step) => deps.gate(runId, step),
-      now
-    });
+      const result = await executePlan(plan, context, {
+        checkpoint,
+        aggregate: capability.aggregate?.bind(capability),
+        approvalsFor: (step) => deps.gate(runId, step),
+        now
+      });
 
-    checkpoint.succeeded(result.data, result.degraded, result.elapsedMs);
-    return result;
-  } catch (error) {
-    return settleFailure(checkpoint, error);
-  }
+      checkpoint.succeeded(result.data, result.degraded, result.elapsedMs);
+      return result;
+    } catch (error) {
+      return settleFailure(checkpoint, error);
+    }
+  })();
+
+  return { runId, settled };
 };
+
+/**
+ * The blocking form: begin a run and wait for it.
+ *
+ * Kept because it is the honest shape for a CLI and for a test, both of which
+ * have nothing to do between the two halves. A UI wants `beginRun`.
+ */
+export const startRun = async (
+  deps: RuntimeDeps,
+  request: RunRequest
+): Promise<RunResult> => beginRun(deps, request).settled;
 
 /** The outcomes of steps that already finished, for a resumed run. */
 export const recordedOutcomes = (deps: RuntimeDeps, runId: string): StepOutcome[] =>

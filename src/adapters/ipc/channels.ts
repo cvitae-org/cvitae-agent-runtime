@@ -70,6 +70,21 @@ export const payloads = {
   'run.resume': z.object({ runId }),
 
   /**
+   * Waits for a run to reach a terminal state, and answers with what it
+   * produced.
+   *
+   * The other half of `run.start` returning an id. Progress arrives as events;
+   * the *outcome* is a separate question because it is answered at a different
+   * time, and a caller usually wants both — the timeline while it happens, the
+   * result once it is over.
+   *
+   * Answerable after the fact. A run this process is no longer executing is
+   * read from its row, which carries the result, the names of the steps that
+   * degraded, and the code a failure ended with.
+   */
+  'run.await': z.object({ runId }),
+
+  /**
    * Cancellation is a channel rather than a signal because an `AbortSignal`
    * does not serialise. The dispatcher holds the controller for each run it
    * started; a run started by another process is not this one's to cancel, and

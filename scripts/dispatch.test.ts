@@ -29,6 +29,13 @@
  *     controller for a finished run, so cancelling it reports success.
  *   `RunSuspension` is treated as an error — the suspend test gets
  *     `{ ok: false }` where a parked run should read as an answer.
+ *   `run.start` awaits the run before answering — the cancel test deadlocks.
+ *     The id a caller needs in order to cancel arrives only once there is
+ *     nothing left to cancel, which is the whole reason the front door is
+ *     shaped this way.
+ *   `run.await` reads only the in-flight map — a run that settled before the
+ *     call was made reads as `not_found`, so whether a caller ever sees its
+ *     result depends on how quickly it asked.
  */
 
 import assert from 'node:assert/strict';
@@ -256,19 +263,36 @@ test('profile replacement rolls its document write back if index invalidation fa
   }
 });
 
-test('a run goes out and comes back as data, not as a promise a caller has to hold', async () => {
+test('a run answers with its id first, and with its result when asked for it', async () => {
   const { harness, dispose } = harnessFor(capabilities());
   const dispatch = createDispatch(harness);
 
   try {
-    const result = data<{ runId: string; data: Record<string, unknown> }>(
+    const { runId } = data<{ runId: string }>(
       await dispatch('run.start', { capability: 'fine', input: {} })
     );
 
+    // The load-bearing assertion in this file. The run exists, is executing,
+    // and is nameable — so it can be cancelled, its events subscribed to and
+    // its approvals answered — all while it is still going. A front door that
+    // answered with the result would have nothing to say until it was too late
+    // for any of the three.
+    assert.equal(harness.runs.get(runId)?.status, 'running');
+
+    const result = data<{ runId: string; data: Record<string, unknown> }>(
+      await dispatch('run.await', { runId })
+    );
+
+    assert.equal(result.runId, runId);
     assert.deepEqual(result.data, { answer: 42 });
 
-    const seen = data<{ run: RunRecord }>(await dispatch('runs.get', { runId: result.runId }));
+    const seen = data<{ run: RunRecord }>(await dispatch('runs.get', { runId }));
     assert.equal(seen.run.status, 'succeeded');
+
+    // Asked again, past the point where this dispatcher was still holding it.
+    // The row is the durable copy of the same answer, so the second reading
+    // agrees with the first rather than being a different kind of thing.
+    assert.deepEqual(data(await dispatch('run.await', { runId })), result);
   } finally {
     dispose();
   }
@@ -279,13 +303,25 @@ test('a failing run is an envelope with a code, not a rejected promise', async (
   const dispatch = createDispatch(harness);
 
   try {
+    // Starting a doomed run still succeeds. The request was well formed and a
+    // row exists; the failure belongs to the outcome, and conflating the two
+    // would leave a real run with no id to look it up by.
+    const { runId } = data<{ runId: string }>(
+      await dispatch('run.start', { capability: 'broken', input: {} })
+    );
+
     // The assertion is as much that this line completes as what it returns: a
     // rejection here would cross a real IPC boundary as an empty object.
-    const response = await dispatch('run.start', { capability: 'broken', input: {} });
+    const response = await dispatch('run.await', { runId });
 
     assert.equal(response.ok, false);
     assert.ok(!response.ok && response.error.code, 'the failure carried no code');
     assert.ok(!response.ok && response.error.message.includes('gave up'));
+
+    // And again from the row, once the promise that carried it is gone. A
+    // reason that survives only as long as the process held the run is a reason
+    // a caller can lose by reconnecting.
+    assert.deepEqual(await dispatch('run.await', { runId }), response);
   } finally {
     dispose();
   }
@@ -316,22 +352,36 @@ test('a run that stops to ask reads as an answer, not as a failure', async () =>
   const dispatch = createDispatch(harness);
 
   try {
-    const parked = data<{ suspended: boolean; runId: string; step: string }>(
+    const { runId } = data<{ runId: string }>(
       await dispatch('run.start', { capability: 'asks', input: {} })
     );
 
+    const parked = data<{ suspended: boolean; runId: string; step: string }>(
+      await dispatch('run.await', { runId })
+    );
+
     assert.equal(parked.suspended, true);
+    assert.equal(parked.runId, runId);
     assert.equal(parked.step, 'work');
 
+    // The same question asked twice, once off the promise this dispatcher was
+    // holding and once off the log after it let go. Two readings that disagreed
+    // would mean a window showed a different question depending on whether it
+    // was open when the run stopped, which is the case a person actually hits.
+    assert.deepEqual(data(await dispatch('run.await', { runId })), parked);
+
     const [waiting] = data<{ id: string; question: string }[]>(
-      await dispatch('approvals.pending', { runId: parked.runId })
+      await dispatch('approvals.pending', { runId })
     );
     assert.equal(waiting?.question, 'Proceed?');
 
     data(await dispatch('approvals.decide', { approvalId: waiting!.id, status: 'granted' }));
 
+    const resumed = data<{ runId: string }>(await dispatch('run.resume', { runId }));
+    assert.equal(resumed.runId, runId);
+
     const finished = data<{ data: Record<string, unknown> }>(
-      await dispatch('run.resume', { runId: parked.runId })
+      await dispatch('run.await', { runId })
     );
     assert.deepEqual(finished.data, { went: 'granted' });
   } finally {
@@ -344,15 +394,19 @@ test('cancelling reaches the running step; cancelling anything else says so', as
   const dispatch = createDispatch(harness);
 
   try {
-    const runId = 'run-to-cancel';
-    const running = dispatch('run.start', { capability: 'slow', input: {}, runId });
+    // The id is the harness's, not the caller's. Inventing one up front used to
+    // be the only way to have something to cancel while a run was still going;
+    // now the front door hands it back, and a caller that never thought about
+    // ids can still stop the work.
+    const { runId } = data<{ runId: string }>(
+      await dispatch('run.start', { capability: 'slow', input: {} })
+    );
+    const settling = dispatch('run.await', { runId });
 
-    // The id was the caller's, which is the only reason there is anything to
-    // name while the run is still going.
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.deepEqual(data(await dispatch('run.cancel', { runId })), { cancelled: true });
 
-    const response = await running;
+    const response = await settling;
     assert.equal(response.ok, false);
 
     const seen = data<{ run: RunRecord }>(await dispatch('runs.get', { runId }));
@@ -377,6 +431,10 @@ test('the event tail pages from a cursor, and the same cursor twice is not a rep
     const { runId } = data<{ runId: string }>(
       await dispatch('run.start', { capability: 'fine', input: {} })
     );
+
+    // Read the log only once the run is over. A tail compared against a log
+    // that is still growing tests the timing of the test, not the cursor.
+    data(await dispatch('run.await', { runId }));
 
     const whole = data<{ events: RunEvent[]; caughtUp: boolean }>(
       await dispatch('runs.events', { runId })

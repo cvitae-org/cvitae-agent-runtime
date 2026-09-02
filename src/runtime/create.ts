@@ -54,8 +54,8 @@ import { createToolRegistry } from '../tools/registry.js';
 import { defaultTools } from '../tools/index.js';
 import { capabilities as defaultCapabilities } from '../capabilities/index.js';
 import { CV_ID, CV_KIND } from '../capabilities/cv/document.js';
-import { startRun, type RuntimeDeps, type RunRequest } from './run.js';
-import { resumeRun, type ResumeRequest } from './resume.js';
+import { beginRun, startRun, type RunHandle, type RuntimeDeps, type RunRequest } from './run.js';
+import { beginResume, resumeRun, type ResumeRequest } from './resume.js';
 import { recoverInterruptedRuns } from './recover.js';
 import type {
   AiLog,
@@ -131,6 +131,15 @@ export type CreateOptions = {
 };
 
 export type Harness = {
+  /**
+   * Start a run and get its id back before it finishes.
+   *
+   * The asynchronous front door, and the one an interactive host wants. `run`
+   * below is the same thing awaited, kept for callers with nothing to do in
+   * between — a CLI, a test.
+   */
+  begin(request: RunRequest): RunHandle;
+  beginResume(request: ResumeRequest): RunHandle;
   run(request: RunRequest): Promise<RunResult>;
   resume(request: ResumeRequest): Promise<RunResult>;
   readonly runs: RunStore;
@@ -254,6 +263,8 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   };
 
   return {
+    begin: (request) => beginRun(deps, request),
+    beginResume: (request) => beginResume(deps, request),
     run: (request) => startRun(deps, request),
     resume: (request) => resumeRun(deps, request),
     runs,
