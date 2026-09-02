@@ -41,6 +41,7 @@ import {
   MIN_CLAIMS,
   minChars,
   review,
+  unevidenced,
   withoutContacts,
   type Fact,
   type Requirement,
@@ -276,7 +277,7 @@ export const requirementsOf = (offer: z.infer<typeof offerSchema>): Requirement[
 /* ------------------------------------------------------------------ prompts */
 
 /**
- * Nine rules, seven of which a deterministic check enforces.
+ * Ten rules, eight of which a deterministic check enforces.
  *
  * Deliberately shorter than the fifteen this carried in the previous runtime,
  * on a cost measured while porting `translate_cv`: prompt length buys reasoning
@@ -302,6 +303,7 @@ const rules = (max: number): string =>
     '- Each line is one complete sentence and ends with a full stop.',
     '- The "summary" fact is the candidate\'s own earlier description: use it as evidence, never copy a sentence from it.',
     '- State a language level only from a "lang" fact, at exactly the level it gives.',
+    '- A requirement marked [not on the CV] is one the candidate has no evidence for. Never claim it.',
     '- Never claim the candidate is the best, perfect or ideal fit.',
     '- Output the lines and nothing else. No preamble, no heading, no closing line.'
   ].join('\n');
@@ -321,12 +323,34 @@ const renderFacts = (facts: readonly Fact[]): string =>
     DEFAULT_BUDGET.source
   );
 
-const renderRequirements = (requirements: readonly Requirement[]): string =>
-  labelled(
+/**
+ * Requirements, with the ones the CV cannot support marked on the line.
+ *
+ * They stay in the list rather than being scrubbed out of it — the paragraph
+ * argues against what the offer asked for, and a requirement the candidate
+ * does not meet is still something to write around. What the mark prevents is
+ * the model reaching for the word because it is right there: `review` refuses
+ * a claim that names one, so an unmarked list is a run that fails for a reason
+ * nothing in the prompt mentioned.
+ */
+const renderRequirements = (
+  requirements: readonly Requirement[],
+  missing: readonly string[]
+): string => {
+  const absent = new Set(missing);
+
+  return labelled(
     'REQUIREMENTS',
-    requirements.map((entry) => `${entry.id} | (${entry.category}) ${entry.text}`).join('\n'),
+    requirements
+      .map(
+        (entry) =>
+          `${entry.id} | (${entry.category}) ${entry.text}`
+          + (absent.has(entry.text) ? ' [not on the CV]' : '')
+      )
+      .join('\n'),
     DEFAULT_BUDGET.retrieved
   );
+};
 
 /* ------------------------------------------------------------------- steps */
 
@@ -442,7 +466,10 @@ export const generateEvidenceSummary: Capability<EvidenceSummaryInput> = {
                 const material = materialOf(context);
                 return compose(
                   renderFacts(material.facts),
-                  renderRequirements(material.requirements)
+                  renderRequirements(
+                    material.requirements,
+                    unevidenced(material.requirements, material.facts)
+                  )
                 );
               },
               /**

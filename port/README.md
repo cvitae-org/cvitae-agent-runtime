@@ -19,7 +19,7 @@ means the consolidation stopped halfway.
 | ~~`store/offerRecord.ts`~~ | ~~`contracts/offer.ts` + `storage/sqlite/`~~ | **Done.** The vocabulary and the schema. Its `OfferRecordStore` is replaced by `OfferStore`, whose `needingRating` is a WHERE clause where this was a full scan. |
 | ~~`ai/logging.ts`~~ | ~~`effects/ai.ts`~~ | **Done.** An `ai_calls` table, and the default sink. See below for the three things here that were deliberately not taken. |
 | ~~`prompt/builder.ts`~~ | ~~`context/`~~ | **Done.** Superseded entirely — see below. |
-| `capabilities/*.ts` (flat) | reconcile with `src/capabilities/` | Nine of these have a counterpart on the spine. One version survives each. |
+| ~~`capabilities/*.ts` (flat)~~ | ~~`src/capabilities/`~~ | **Done.** All twelve had a counterpart. The spine's survived each, and one guard came back with them. |
 | `scripts/*.test.ts` | `scripts/` | The tests that cover the above, rewritten against the ported shape. |
 
 ### Ported so far
@@ -57,6 +57,41 @@ keeps the document. The one real loss was the `=== SOURCE: … ===` boundary
 between concatenated documents — a model reading that marker is measurably less
 likely to merge two employers across the join — so `cv/extract.ts` writes it
 again, and only when there is more than one source to separate.
+
+The twelve flat `capabilities/*.ts` were reconciled by comparing what actually
+carries the domain judgment — the rule strings, the thresholds, the regexes —
+rather than by reading 5,000 lines of plumbing that is different by definition.
+`findSummary` and `applicationText` came out with *identical* sets of string
+literals and numeric constants against `cv/summary.ts` and `apply/text.ts`. The
+recipient trio, `translate_cv`, `extract_cv`, `draft_application` and
+`analyze_offer` differed only in schema descriptions, renamed constants
+(`HIGHLIGHT_LIMIT` is `PASSAGE_LIMIT`, same value, same job) and import paths.
+Both registries list the same six capabilities.
+
+One thing was genuinely missing, and it is a guard rather than a feature, so it
+came back: the previous `generate_evidence_summary` refused a claim naming a
+technology the vacancy asked for that the candidate has no evidence for. It did
+it with a `forbiddenTechnologies` array the *caller* had to compute and pass in,
+which is why it was easy to lose — nothing on the spine ever set it. It does not
+need to be passed: `analyze_offer` already produces the offer's required skills
+and the fact catalogue already holds everything the CV says, so `claims.ts`
+computes the difference itself and `review` refuses on it, beside the invented-
+number check it is the sibling of. The requirements the CV cannot support are
+marked `[not on the CV]` in the prompt so a run does not fail on a rule it was
+never told.
+
+**Recorded rather than restored** — features the previous runtime had that the
+spine deliberately does not, each now written down somewhere it will be found:
+
+- `ask_profile` answered about **saved offers** as well as the CV. The spine's
+  answers about the CV only, because there is no `search_offers` tool. The
+  header of `src/tools/index.ts` says that tool needs a port that does not
+  exist; that is now out of date — `OfferStore.search` exists — and what is
+  left is a `ToolContext` that does not carry offers.
+- `read_cv_summary`. Same file, same note, still true: it would put one
+  capability's knowledge of the CV schema in the path of every other.
+- `tool_calls` in `ask_profile`'s result. Deliberate, and the reasoning is in
+  `askProfile.ts` itself rather than here.
 
 `ai/logging.ts` needed a table, not a logger. The spine has wrapped every model
 call since `effects/ai.ts` was written and `AiLogEntry` already says what a line

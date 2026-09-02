@@ -32,6 +32,11 @@
  *   the review step made non-critical     1  a draft that fails review fails …
  *   the draft step made non-critical      1  a failed model call is reported …
  *   the catalogue step made non-critical  1  a missing CV costs no model call
+ *   the vacancy-only check removed        2  a technology the offer wants … /
+ *                                            a short technology name is …
+ *   short terms matched by substring      1  a short technology name is …
+ *   responsibilities checked as skills    1  a responsibility the CV does not …
+ *   the [not on the CV] mark dropped      1  the prompt marks the requirement …
  *
  * Three of these are worth reading rather than counting. Replacing `fitWithin`'s
  * whole-sentence selection with a substring of the right length passes the
@@ -324,6 +329,125 @@ test('fewer cited claims than the minimum is refused', () => {
   );
 });
 
+/* ------------------------------------------- what the offer asked for and the CV lacks */
+
+/**
+ * `review` against facts and requirements written for the case, rather than
+ * derived from the fixture CV.
+ *
+ * The fixture's offer asks for TypeScript and React and the fixture CV has
+ * both, which is the right default for every other test here and useless for
+ * this one: the whole subject is the gap between the two lists.
+ */
+const against = (
+  draft: string,
+  factTexts: readonly string[],
+  skills: readonly string[]
+) =>
+  review(draft, {
+    facts: factTexts.map((text, index) => ({
+      id: `job:${index}`,
+      kind: 'job' as const,
+      text
+    })),
+    requirements: skills.map((text, index) => ({
+      id: `req:${index}`,
+      category: 'skill' as const,
+      text
+    })),
+    maxChars: MAX
+  });
+
+test('a technology the offer wants and the CV never mentions is refused', () => {
+  // The failure this exists for: the offer says Kubernetes, the CV says
+  // nothing about it, and the model writes the word because it is the most
+  // obvious way to answer the requirement it was handed.
+  assert.throws(
+    () =>
+      against(
+        'EVIDENCE(job:0) REQUIREMENTS(req:0) :: Runs the checkout service on Kubernetes in production.\n'
+        + 'EVIDENCE(job:0) REQUIREMENTS(req:0) :: Rebuilt the checkout under sustained load.',
+        ['Acme — Senior Frontend, 2020 to present. Rebuilt the checkout in React.'],
+        ['Kubernetes']
+      ),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, 'step_failed');
+      assert.match(error.message, /Kubernetes/);
+      // The term came from the offer. The CV's prose still does not travel.
+      assert.doesNotMatch(error.message, /Rebuilt the checkout/);
+      return true;
+    }
+  );
+});
+
+test('a short technology name is matched as a word, not as a substring', () => {
+  const facts = ['Acme — Senior Backend, 2020 to present. Built the billing API in Django.'];
+
+  // "Go" is inside "Django" and inside nothing the candidate can claim. A
+  // squashed substring match calls this CV evidence for Go and lets the claim
+  // through; the boundary match does not.
+  assert.throws(
+    () =>
+      against(
+        'EVIDENCE(job:0) REQUIREMENTS(req:0) :: Wrote the billing service in Go.\n'
+        + 'EVIDENCE(job:0) REQUIREMENTS(req:0) :: Built and ran the billing API end to end.',
+        facts,
+        ['Go']
+      ),
+    (error: Error & { code?: string }) => {
+      assert.match(error.message, /"Go"/);
+      return true;
+    }
+  );
+
+  // And the other direction: the word the CV really does contain is fine.
+  assert.equal(
+    against(
+      'EVIDENCE(job:0) REQUIREMENTS(req:0) :: Built the billing API in Django at Acme.\n'
+      + 'EVIDENCE(job:0) REQUIREMENTS(req:0) :: Ran that service end to end from 2020.',
+      facts,
+      ['Go']
+    ).claims.length,
+    2
+  );
+});
+
+/**
+ * The property that makes refusing on this safe at all.
+ *
+ * `unevidenced` compares a required skill against the whole catalogue, so a
+ * requirement written as a sentence lands in the set almost every time. It has
+ * to be harmless when it does — and it is, because a claim would have to
+ * contain that entire sentence verbatim to trip on it.
+ */
+test('a requirement written as a sentence is unevidenced and never fires', () => {
+  const kept = against(
+    'EVIDENCE(job:0) REQUIREMENTS(req:0) :: Eight years building distributed payment systems at scale.\n'
+    + 'EVIDENCE(job:0) REQUIREMENTS(req:0) :: Owned the billing service end to end at Acme, from schema to on-call.',
+    ['Acme — Senior Backend, 2020 to present. Eight years on distributed payment systems.'],
+    ['5+ years of hands-on experience with large-scale distributed systems']
+  );
+
+  assert.equal(kept.claims.length, 2);
+  assert.deepEqual(kept.warnings, []);
+});
+
+test('a responsibility the CV does not cover is not a forbidden word', () => {
+  // Only skills are checked. A responsibility is a duty to argue against, and
+  // its words — "mentoring", "roadmap" — are ordinary English a claim may use.
+  const kept = review(
+    'EVIDENCE(job:0) REQUIREMENTS(req:0) :: Mentoring engineers was part of the checkout rebuild.\n'
+    + 'EVIDENCE(job:0) REQUIREMENTS(req:0) :: Owned that work from design through to release.',
+    {
+      facts: [{ id: 'job:0', kind: 'job', text: 'Acme — Senior Frontend, 2020 to present.' }],
+      requirements: [{ id: 'req:0', category: 'responsibility', text: 'Mentoring engineers' }],
+      maxChars: MAX
+    }
+  );
+
+  assert.equal(kept.claims.length, 2);
+});
+
 /* ------------------------------------------------------------- what is dropped */
 
 test('a level the cited fact does not state drops the claim and says so', () => {
@@ -509,6 +633,22 @@ test('the prompt carries the ids the model is asked to cite', async () => {
     assert.match(prompt, /req:0 \| \(skill\) TypeScript/);
     // What the model cannot cite, it cannot leak.
     assert.doesNotMatch(prompt, /601 234 567/);
+  });
+});
+
+test('the prompt marks the requirement the CV cannot support', async () => {
+  await harness({}, async (s, asked) => {
+    seed(s);
+    await summarise(s, {
+      offer: { ...OFFER, required_skills: ['TypeScript', 'Kubernetes'] }
+    });
+
+    const prompt = asked.requests[0]?.prompt ?? '';
+    // Left in the list, because the paragraph still has to answer the offer —
+    // marked, because `review` refuses a claim that names it, and a run that
+    // fails on a rule the prompt never stated is a run that fails for nothing.
+    assert.match(prompt, /req:1 \| \(skill\) Kubernetes \[not on the CV\]/);
+    assert.match(prompt, /req:0 \| \(skill\) TypeScript\n/);
   });
 });
 

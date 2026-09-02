@@ -305,6 +305,80 @@ const unsupportedLevels = (
 
 const escaped = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/* ------------------------------------------------------- unevidenced skills */
+
+/**
+ * Whether a term is stated somewhere in a body of text.
+ *
+ * Two matchers, split on length, and the split is what makes short technology
+ * names usable at all: `Go`, `R`, `C#` and `AI` are substrings of ordinary
+ * words, so a squashed `includes` would find "Go" in "Django" and "R" in
+ * everything. Under four characters the term has to stand alone between
+ * non-letters; above it, punctuation and spacing are squashed away on both
+ * sides so "Node.js" matches "nodejs" and "React Native" matches "react-native".
+ *
+ * The short branch matches the term as written rather than the squashed key,
+ * which is the difference between looking for `C#` and looking for `c`. Two of
+ * the four names above squash to a single letter, so squashing first would
+ * turn the branch that exists to be strict into the loosest one there is.
+ *
+ * The same split `offers/verify.ts` makes against a posting, for the same
+ * reason. It is not shared code because the two are matching different things
+ * against different corpora and a common helper would have to be told which,
+ * which is the whole of both functions.
+ */
+const states = (term: string, text: string, squashedText: string): boolean => {
+  const trimmed = term.normalize('NFC').trim();
+  if (trimmed.length === 0) return false;
+
+  if (trimmed.length <= 3) {
+    return new RegExp(`(^|[^\\p{L}\\d])${escaped(trimmed)}([^\\p{L}\\d]|$)`, 'iu').test(text);
+  }
+
+  const key = squashedTerm(trimmed);
+  return key.length > 0 && squashedText.includes(key);
+};
+
+const squashedTerm = (value: string): string =>
+  value.normalize('NFC').toLocaleLowerCase().replace(/[^\p{L}\d]+/gu, '');
+
+/**
+ * The offer's required skills that nothing on the CV states.
+ *
+ * This is the guard the previous runtime asked its *caller* to supply — a list
+ * of "vacancy-only technologies", computed somewhere outside the runtime and
+ * passed in. It does not need to be: `analyze_offer` already produces the
+ * offer's required skills as a list, and the fact catalogue already holds
+ * everything the CV says. The difference between those two sets is the answer,
+ * and computing it here means it cannot be forgotten by a caller who does not
+ * know the parameter exists.
+ *
+ * Why this is safe to refuse on, when a general "noun the CV does not contain"
+ * check would not be: the phrase-shaped entries filter themselves out. A
+ * required skill reading `3+ years of experience with distributed systems`
+ * matches no fact and lands in this set, and then never fires — no claim
+ * contains that whole phrase either. Only term-shaped entries, which are the
+ * technologies, can both miss the CV and appear verbatim in a sentence.
+ */
+export const unevidenced = (
+  requirements: readonly Requirement[],
+  facts: readonly Fact[]
+): string[] => {
+  const corpus = facts.map((fact) => fact.text).join(' ');
+  const squashedCorpus = squashedTerm(corpus);
+
+  return requirements
+    .filter((requirement) => requirement.category === 'skill')
+    .map((requirement) => requirement.text)
+    .filter((skill) => !states(skill, corpus, squashedCorpus));
+};
+
+/** Which of those a claim actually asserts. */
+const asserted = (text: string, terms: readonly string[]): string[] => {
+  const squashedText = squashedTerm(text);
+  return terms.filter((term) => states(term, text, squashedText));
+};
+
 const normalise = (value: string): string =>
   value.normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase();
 
@@ -379,8 +453,9 @@ export type ReviewInput = {
  *
  * A claim is **refused** — the whole run fails — when keeping it would put
  * something false in front of an employer: a number the evidence does not
- * support, a contact detail, a sentence copied whole from the previous
- * description, or no citation at all. A claim is **dropped**, with a warning,
+ * support, a technology the offer asks for and the CV has never mentioned, a
+ * contact detail, a sentence copied whole from the previous description, or no
+ * citation at all. A claim is **dropped**, with a warning,
  * when it is merely unusable: unfinished prose, a duplicate, a language level
  * the cited facts do not carry.
  *
@@ -421,6 +496,7 @@ export const review = (generated: string, input: ReviewInput): Review => {
     .map((fact) => fact.text.split(' — ')[0]?.trim() ?? '')
     .filter((name) => name.length > 0);
   const requirementIds = new Set(input.requirements.map((requirement) => requirement.id));
+  const vacancyOnly = unevidenced(input.requirements, input.facts);
   const previous = new Set(
     sentences(input.facts.find((fact) => fact.kind === 'summary')?.text ?? '')
       .map(normalise)
@@ -481,6 +557,19 @@ export const review = (generated: string, input: ReviewInput): Review => {
       throw new RuntimeError(
         `Claim ${at} states ${invented.length} ${invented.length === 1 ? 'number' : 'numbers'} `
           + 'that its cited facts do not.',
+        'step_failed'
+      );
+    }
+
+    // The same refusal as an invented number, one category over. A number the
+    // evidence does not carry and a technology the CV has never mentioned are
+    // both a false statement to an employer, and the offer having asked for the
+    // technology is exactly what makes the model reach for it.
+    const claimed = asserted(claim.text, vacancyOnly);
+    if (claimed.length > 0) {
+      throw new RuntimeError(
+        `Claim ${at} claims ${claimed.map((term) => `"${term}"`).join(', ')}, which the offer `
+          + `asks for and the CV does not mention.`,
         'step_failed'
       );
     }
