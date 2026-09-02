@@ -1,127 +1,69 @@
 /**
- * Turns text into vectors.
+ * Turning chunks into rows an index can store.
  *
- * Thin on purpose. `embedMany` already batches, retries and preserves order, so
- * what is left here is the two things it does not do: keep the local server
- * from being asked for more than it can serve at once, and normalise the
- * result.
+ * Thin, because the gateway already does the work that used to live here: it
+ * batches, it limits how many calls a provider gets at once, it propagates
+ * cancellation, and it L2-normalises every vector on the way out. What is left
+ * is the part the gateway has no business knowing — that these vectors belong
+ * to a document, and that they are only meaningful alongside a record of what
+ * produced them.
  *
- * Normalising at write time rather than at query time is worth the line it
- * costs. Cosine similarity over unit vectors is a dot product, so every
- * subsequent comparison skips two square roots — and more usefully, it makes
- * LanceDB's L2 distance rank identically to cosine, which means the same stored
- * column serves either metric without a re-index.
+ * That record is the whole point of this file existing rather than the caller
+ * calling `ai.embed` directly. Vectors whose provenance is not stored beside
+ * them are vectors that keep answering queries after a model swap: nothing
+ * fails, dimensions still match, and the ranking is quietly wrong.
  */
 
-import { embed, embedMany } from 'ai';
-import type { EmbeddingModel } from 'ai';
-import {
-  createAiLogger,
-  summarizeEmbeddingInput,
-  summarizeEmbeddingOutput,
-  withAiLogging,
-  type AiLogger
-} from '../ai/logging.js';
+import type {
+  AiGateway,
+  EffectCall,
+  EmbeddingFingerprint,
+  IndexedChunk
+} from '../contracts/index.js';
+import type { Chunk } from './chunk.js';
+import { fingerprintOf } from './fingerprint.js';
+
+export type Embedded = {
+  readonly fingerprint: EmbeddingFingerprint;
+  readonly chunks: readonly IndexedChunk[];
+};
 
 /**
- * Ollama serves embeddings from one model instance, so a large parallel batch
- * queues internally and risks the request timeout rather than going faster.
- * Hosted providers are happy with more, but the ceiling only binds when it is
- * the smaller of the two.
+ * Embeds a document's chunks and pairs them with their fingerprint.
+ *
+ * Returns `undefined` for an empty input rather than inventing a fingerprint
+ * from nothing. There is no call to make, so there is nothing to describe, and
+ * a caller clearing a document's index does not need one — the distinction is
+ * real and the type makes the caller face it.
+ *
+ * Throws whatever the gateway raises, and does not catch it. Embedding is not
+ * something this layer can degrade: the alternative to a vector is not a worse
+ * vector, it is a search with half its evidence missing. A caller that
+ * genuinely wants the lexical half alone asks for it, which is what
+ * `ChunkQuery.lexicalOnly` is.
  */
-const LOCAL_PARALLEL_CALLS = 2;
-const HOSTED_PARALLEL_CALLS = 8;
+export const embedChunks = async (
+  chunks: readonly Chunk[],
+  ai: AiGateway,
+  call: EffectCall
+): Promise<Embedded | undefined> => {
+  if (chunks.length === 0) return undefined;
 
-export const normalise = (vector: number[]): number[] => {
-  let sum = 0;
-  for (const value of vector) sum += value * value;
+  const result = await ai.embed({ ...call, values: chunks.map((chunk) => chunk.text) });
 
-  const magnitude = Math.sqrt(sum);
-  // A zero vector has no direction to preserve; returning it unchanged keeps
-  // the dimension right and lets it rank last, which is the honest outcome.
-  if (magnitude === 0) return vector;
-
-  return vector.map((value) => value / magnitude);
-};
-
-export type Embedder = {
-  one: (text: string) => Promise<number[]>;
-  many: (texts: string[]) => Promise<number[][]>;
-  modelId: string;
-  /** Learned from the first response; nothing declares it up front. */
-  dimensions: number | null;
-};
-
-export const createEmbedder = ({
-  model,
-  modelId,
-  providerId,
-  aiLogger = createAiLogger()
-}: {
-  model: EmbeddingModel<string>;
-  modelId: string;
-  providerId: string;
-  aiLogger?: AiLogger;
-}): Embedder => {
-  const maxParallelCalls =
-    providerId === 'local' ? LOCAL_PARALLEL_CALLS : HOSTED_PARALLEL_CALLS;
-
-  let dimensions: number | null = null;
-
-  const remember = (vector: number[] | undefined): void => {
-    if (vector && dimensions === null) dimensions = vector.length;
-  };
+  // A short result would silently pair chunk n with chunk n+1's vector, and
+  // every one of them would still be a valid vector of the right width.
+  if (result.vectors.length !== chunks.length) {
+    throw new Error(
+      `The embedder returned ${result.vectors.length} vectors for ${chunks.length} chunks.`
+    );
+  }
 
   return {
-    modelId,
-
-    get dimensions() {
-      return dimensions;
-    },
-
-    async one(text: string) {
-      const { embedding } = await withAiLogging({
-        logger: aiLogger,
-        operation: 'embed',
-        purpose: 'embedding',
-        providerId,
-        modelId,
-        input: summarizeEmbeddingInput([text]),
-        call: () => embed({ model, value: text }),
-        summarizeResult: (result) => ({
-          output: summarizeEmbeddingOutput([result.embedding]),
-          usage: result.usage
-        })
-      });
-      remember(embedding);
-      return normalise(embedding);
-    },
-
-    async many(texts: string[]) {
-      if (texts.length === 0) return [];
-
-      const { embeddings } = await withAiLogging({
-        logger: aiLogger,
-        operation: 'embedMany',
-        purpose: 'embedding',
-        providerId,
-        modelId,
-        input: summarizeEmbeddingInput(texts),
-        call: () =>
-          embedMany({
-            model,
-            values: texts,
-            maxParallelCalls
-          }),
-        summarizeResult: (result) => ({
-          output: summarizeEmbeddingOutput(result.embeddings),
-          usage: result.usage
-        })
-      });
-
-      remember(embeddings[0]);
-
-      return embeddings.map(normalise);
-    }
+    fingerprint: fingerprintOf(result),
+    chunks: chunks.map((chunk, index) => ({
+      ...chunk,
+      vector: result.vectors[index] as Float32Array
+    }))
   };
 };

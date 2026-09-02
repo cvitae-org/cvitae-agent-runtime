@@ -1,62 +1,138 @@
 /**
  * The other execution mode: a question whose steps are not known in advance.
  *
- * "Which of my offers would suit me best, and what have I done that fits?"
- * cannot be a declared pipeline, because how many searches it takes and what to
- * search for both depend on what the previous search returned. This is the case
- * a tool loop is actually for.
+ * "What have I done that involved payment systems, and where?" cannot be a
+ * declared pipeline, because how many searches it takes and what to search for
+ * both depend on what the previous search returned. Every other capability here
+ * declares its steps and is better for it — declared is faster, cheaper,
+ * reproducible, and runs on models that cannot call tools at all. This one
+ * cannot, and it is the only case in the tree where a tool loop is the honest
+ * shape rather than the lazy one.
  *
  * It carries a requirement the declared capabilities do not: the model has to
- * support tool calling. On the local runner that means gemma4:12b and not
- * gemma3:4b, which advertises `completion` only. That is the practical reason
- * offer extraction is not built this way — it would stop working on the smaller
- * model that runs it five times faster.
+ * support tool calling. On a local runner that rules out the small models that
+ * answer an extraction step five times faster, which is the practical reason
+ * extraction is not built this way.
+ *
+ * Two things are bounded on purpose, because an open loop against a paid
+ * provider is the failure mode this pattern is known for. `maxSteps` caps model
+ * turns, and the executor treats a loop that spends them all without answering
+ * as a failed step rather than returning a half-finished investigation. And the
+ * tools are a fixed registry of reads over local storage — the model cannot run
+ * a query, open a path, fetch a URL, or send anything anywhere, so a confused
+ * or prompt-injected loop returns something unhelpful rather than mailing the
+ * CV somewhere.
  */
 
 import { z } from 'zod';
-import type { Capability, Plan, RunContext } from '../core/types.js';
-import { planWithModel } from '../core/planner.js';
-import { toolSystemPrompt } from '../prompt/builder.js';
+import { selectTools } from '../context/tools.js';
+import type { Capability, Plan, RunContext } from '../contracts/index.js';
+import { READ_CV_TOOL } from './cv/tools.js';
 
 export const inputSchema = z.object({
   question: z.string().min(1, 'A question is required.'),
-  /** Caps model turns. Each turn is a provider request against a daily quota. */
+  /**
+   * Caps model turns. Each turn is a provider request against a quota, and the
+   * ceiling is what stops a loop that cannot find an answer from spending the
+   * afternoon looking for one.
+   */
   maxSteps: z.number().int().min(1).max(12).default(6)
 });
 
 export type AskProfileInput = z.infer<typeof inputSchema>;
 
-const SYSTEM = toolSystemPrompt(
-  `You answer questions about the user's CV and their saved job offers.
-Search before answering. Answer in plain prose, and name the company or offer any claim came from.`
-);
+/**
+ * What the loop is allowed to claim, and what it must admit.
+ *
+ * The last line is the one that matters. A model that cannot find something is
+ * far more likely to produce a fluent answer from its own priors than to say
+ * nothing matched, and a fluent invented answer about the user's own career is
+ * worse than no answer — the user has no way to tell which they received.
+ *
+ * The subject is deliberately narrower than the previous runtime's. That one
+ * offered to answer about saved offers as well, and here nothing indexes an
+ * offer: the offers table is canonical rows, not searchable text, and the tool
+ * that would search it needs a port that does not exist yet. Promising it in
+ * the prompt and having no tool behind it produces exactly the invented answer
+ * the last line exists to prevent.
+ */
+const SYSTEM = [
+  "You answer questions about the user's own CV and work history.",
+  'You cannot see any of it directly. Use the tools to read it.',
+  'Use read_cv for current canonical facts. Use search_profile to locate relevant indexed passages when useful.',
+  'Answer in plain prose. Name the employer or role that each claim came from.',
+  'Base every statement on what a tool returned. If the tools return nothing, say so plainly and stop.'
+].join('\n');
 
 export const askProfile: Capability<AskProfileInput> = {
   name: 'ask_profile',
   describe:
-    "Answer an open-ended question about the user's CV or their saved job offers, searching as needed.",
+    "Answer an open-ended question about the user's CV and work history, searching as needed.",
   input: inputSchema,
 
-  plan: async (input, context: RunContext): Promise<Plan> =>
-    planWithModel({
+  /**
+   * The plan is declared here like every other capability's. One stage, one
+   * step, and the only thing a model decides is which tools go into it.
+   *
+   * That single decision is also the reason this is the one capability whose
+   * plan reads the run context: `selectTools` needs the registry to know what
+   * exists and the gateway to choose from it. Both are built by `runtime/`
+   * before any step runs, so nothing here is a step reaching forward — but it
+   * is the exception to "a plan is made from the input alone", and it is worth
+   * knowing that the exception exists.
+   */
+  plan: async (input, context: RunContext): Promise<Plan> => {
+    const selected = await selectTools({ goal: input.question, context });
+    const tools = [
+      ...selected.filter((name) => name !== READ_CV_TOOL),
+      READ_CV_TOOL
+    ];
+
+    return {
       capability: 'ask_profile',
-      goal: input.question,
-      system: SYSTEM,
-      context,
-      maxSteps: input.maxSteps
-    }),
+      source: 'llm',
+      stages: [
+        {
+          name: 'investigate',
+          concurrency: 1,
+          steps: [
+            {
+              kind: 'tool_loop',
+              name: 'investigate',
+              system: SYSTEM,
+              prompt: input.question,
+              // Always include the canonical read. The search index is a
+              // derived view and is deliberately cleared after a manual edit.
+              tools,
+              maxSteps: input.maxSteps,
+              critical: true
+            }
+          ]
+        }
+      ]
+    };
+  },
 
   /**
-   * The loop produces prose, not fields, so the default shallow merge would
-   * flatten a `text` key into the result and lose which step wrote it.
+   * The loop produces prose, not fields.
+   *
+   * The default shallow merge would put the loop's `text` key straight into the
+   * result, where nothing says what it is. Naming it `answer` costs one function
+   * and is the difference between a result a caller can read and one it has to
+   * be told about.
+   *
+   * `tool_calls` is not carried over. The previous runtime returned the call
+   * list for a UI to show, and `ToolLoopResult` here carries a turn count and no
+   * calls — widening the gateway's contract for one capability's display field
+   * is not worth it while the prompt already requires the answer to name its own
+   * sources, which is the same information in the form a person reads.
    */
   aggregate: (outcomes) => {
     const investigation = outcomes.find((outcome) => outcome.step === 'investigate');
 
     return {
       answer: investigation?.value.text ?? '',
-      tool_calls: investigation?.value.toolCalls ?? [],
-      model_steps: investigation?.value.steps ?? 0
+      model_steps: investigation?.value.toolSteps ?? 0
     };
   }
 };

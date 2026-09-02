@@ -1,0 +1,202 @@
+/**
+ * How a unit of work declares itself.
+ *
+ * The load-bearing idea is that a `Plan` is **data, not control flow**. Whether
+ * a capability was decomposed by hand or by a model, the orchestrator receives
+ * the same list of steps and walks it the same way. That is what lets
+ * procedural work — extraction that has to run on models too small to be
+ * trusted with tool calling — share a runtime with open-ended work that
+ * genuinely needs a model in the driving seat.
+ *
+ * The alternative, letting each capability implement its own control flow,
+ * looks simpler for the first two and stops being simpler by the fourth: every
+ * cross-cutting concern added afterwards — cancellation, checkpoints, event
+ * emission, degradation — has to be written into each one by hand, and the
+ * fourth is where somebody forgets.
+ */
+
+import type { z } from 'zod';
+import type { RunContext, StepContext, StepKind } from './run.js';
+
+type StepBase = {
+  readonly name: string;
+  /**
+   * Whether a failure here invalidates the whole run.
+   *
+   * Non-critical steps degrade instead: the aggregator fills their fields from
+   * `fallback` and records the name, so a partial answer reaches the caller
+   * with the gap *named* rather than silently missing. Offer analysis runs five
+   * steps and allows four of them to fail this way, because an analysis missing
+   * its salary reading is still worth reading and an analysis missing its facts
+   * is not.
+   */
+  readonly critical: boolean;
+};
+
+/**
+ * One structured call against a narrow schema.
+ *
+ * No tool calling, so this runs on models that cannot do it. Narrow is the
+ * operative word: a schema with four fields is answered reliably by a model
+ * that returns `{}` for a schema with twenty.
+ */
+export type ExtractStep = StepBase & {
+  readonly kind: 'extract';
+  readonly schema: z.ZodTypeAny;
+  readonly system: string;
+  readonly prompt: string | ((context: StepContext) => string);
+  readonly maxOutputTokens: number;
+  /** Values used when this step degrades. Keys should cover the schema. */
+  readonly fallback?: Readonly<Record<string, unknown>>;
+};
+
+/**
+ * One text call, for a step whose whole output is prose.
+ *
+ * This kind exists because of a measurement, not a preference. Application
+ * drafting was first written as an `extract` step returning `{ body: string }`,
+ * which is the obvious shape — one field, one schema, the same machinery as
+ * everything else. It failed completely, and the numbers are worth keeping:
+ *
+ *   gemma3:4b    generateObject   0/3   empty, empty, empty        0.5s
+ *   gemma3:4b    generateText     3/3   129, 129, 129 words        2.7s
+ *   gemma3:12b   generateObject   0/3   length, length, length    24.7s
+ *   gemma3:12b   generateText     0/3   empty, empty, empty       22.1s
+ *
+ * Six prompt variants were tried against the 4B model first — instruction only,
+ * rules only, no system prompt, a shorter field description, the instruction
+ * moved into the user turn — and all six returned `{}`. The wording was not the
+ * variable. Asking a small model to wrap 130 words of prose in a JSON string is:
+ * it has to hold the letter *and* the escaping, and it drops one of them. The
+ * 12B model drops the other, running to the token ceiling without ever closing
+ * the object.
+ *
+ * So a schema here is not a safeguard, it is the failure. Text out returns
+ * exactly what an email body is — a string — and the same 4B model that could
+ * not produce it as JSON writes it identically on every run in under three
+ * seconds.
+ *
+ * The rule this leaves behind: **`extract` is for values carved out of text,
+ * `generate` is for text.** A schema earns its place when the output has parts.
+ */
+export type GenerateStep = StepBase & {
+  readonly kind: 'generate';
+  readonly system: string;
+  readonly prompt: string | ((context: StepContext) => string);
+  readonly maxOutputTokens: number;
+  /** The key the text lands under, so the aggregator sees a named field. */
+  readonly key: string;
+  readonly fallback?: Readonly<Record<string, unknown>>;
+};
+
+export type ToolLoopStep = StepBase & {
+  readonly kind: 'tool_loop';
+  readonly system: string;
+  readonly prompt: string | ((context: StepContext) => string);
+  /** Registry names. The model can call nothing else. */
+  readonly tools: readonly string[];
+  /** Hard ceiling on model turns; nothing here ever runs unbounded. */
+  readonly maxSteps: number;
+};
+
+export type TransformStep = StepBase & {
+  readonly kind: 'transform';
+  readonly run: (context: StepContext) => Promise<Record<string, unknown>>;
+};
+
+export type Step = ExtractStep | GenerateStep | ToolLoopStep | TransformStep;
+
+/** Compile-time proof that the step union and the persisted column agree. */
+export type StepKindOf<S extends Step> = S['kind'] extends StepKind ? S['kind'] : never;
+
+/**
+ * `'auto'` resolves to 1 against a local provider and to the step count
+ * otherwise.
+ *
+ * A local server is one GPU: overlapping calls only contend. A 4m39s run was
+ * measured where firing five at once starved one of them into returning nothing
+ * at all — not slower, empty. So the honest default is a property of the
+ * provider, not of the plan, and `'auto'` is how a capability says it does not
+ * want to decide.
+ */
+export type Concurrency = number | 'auto';
+
+/**
+ * Steps run in declaration order within a stage; stages run in sequence.
+ *
+ * Stages exist because the previous runtime had none, and scheduling therefore
+ * meant "every model step, then every transform". Preparation work could not be
+ * expressed as a step at all, so source reading, fetching and vision calls
+ * happened inside `plan()` — outside the timing, outside the failure policy,
+ * outside the events, and invisible to the elapsed time the caller was shown.
+ */
+export type Stage = {
+  readonly name: string;
+  readonly steps: readonly Step[];
+  readonly concurrency: Concurrency;
+};
+
+export type Plan = {
+  readonly capability: string;
+  readonly stages: readonly Stage[];
+  /** Named so a caller can tell a declared plan from a generated one. */
+  readonly source: 'declared' | 'llm';
+};
+
+export type StepOutcome = {
+  readonly step: string;
+  readonly status: 'ok' | 'degraded';
+  /** Present when the step degraded, for the source note shown to the user. */
+  readonly reason?: string;
+  readonly value: Readonly<Record<string, unknown>>;
+};
+
+export type RunResult<T = Record<string, unknown>> = {
+  readonly runId: string;
+  readonly capability: string;
+  readonly data: T;
+  readonly degraded: readonly string[];
+  readonly outcomes: readonly StepOutcome[];
+  /** Wall time in ms for the whole run, including preparation stages. */
+  readonly elapsedMs: number;
+};
+
+/**
+ * A unit of work the runtime exposes.
+ *
+ * `plan` is where the two execution modes diverge: return a fixed list of stages
+ * for procedural work, or call a model to produce one for open-ended work. The
+ * orchestrator cannot tell the difference, and that is the point.
+ */
+export interface Capability<TInput extends Record<string, unknown> = Record<string, unknown>> {
+  readonly name: string;
+  /** One line, usable as a routing hint and shown by the capability listing. */
+  readonly describe: string;
+  readonly input: z.ZodType<TInput>;
+
+  /**
+   * Declared as a method rather than a function-typed property, deliberately.
+   *
+   * TypeScript checks method parameters bivariantly and property function types
+   * contravariantly, and a registry of differently-typed capabilities needs the
+   * former: `Capability<{ url: string }>` has to be storable in a map of
+   * `Capability<Record<string, unknown>>` or every entry needs a cast. The
+   * looseness is paid for at the boundary — the router validates the caller's
+   * input against `input` before `plan` is ever reached, so the only value that
+   * arrives here has already been proven to match `TInput`.
+   */
+  plan(input: TInput, context: RunContext): Plan | Promise<Plan>;
+
+  /**
+   * Folds step outputs into the capability's result shape. Defaults to a
+   * shallow merge, which is what an extraction pipeline wants.
+   *
+   * This is also where domain judgment about *precedence* belongs — that a
+   * board's stated salary beats a model's reading of the same page is a rule
+   * about this subject, and rules about a subject live in exactly one file.
+   */
+  aggregate?(outcomes: readonly StepOutcome[]): Record<string, unknown>;
+}
+
+/** What the router holds. See the note on `plan` for why this typechecks. */
+export type CapabilityMap = Readonly<Record<string, Capability>>;

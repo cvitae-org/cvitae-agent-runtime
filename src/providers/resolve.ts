@@ -1,62 +1,58 @@
 /**
- * Resolves the models the runtime talks to.
+ * Which model the runtime talks to, and how a client for it is built.
  *
- * Ported from cvitae's `libs/ai/providers.ts` and kept deliberately close to
- * it, so one `.env` can serve both while the runtime is being adopted. Two
- * things are added here.
+ * Two things here are deliberate and both were learned from the previous
+ * runtime.
  *
- * The first is embeddings, which need their own provider rather than
- * inheriting the generation one: OpenRouter serves no embedding endpoint at
- * all, so the common setup — generate on a hosted free tier, embed locally
- * through Ollama — is not expressible with a single provider setting.
+ * **Describing is separate from resolving.** `describe` answers "what would
+ * this call use" without touching a credential; `language` builds the client.
+ * They were one function before, and the cost was runs refusing over keys they
+ * had no use for: a plan that is transforms end to end makes no model call at
+ * all, yet it answered "Missing OPENROUTER_API_KEY" — naming a provider it was
+ * never going to reach — because something wanted to read two strings off a
+ * resolved model.
  *
- * The second is that credentials are resolved here, and by default live in this
- * process and nowhere else. cvitae currently holds them because it makes the
- * model calls; once it delegates to the runtime, the browser and the Next.js
- * server both stop being places a key can leak from.
+ * **Nothing here is module state.** The client caches live on the resolver
+ * instance, so a second runtime in the same process is genuinely a second
+ * runtime and a test can build one without inheriting whatever the last test
+ * put in a module-level `Map`. The old caches were module-level and, being
+ * keyed by provider and model rather than by credential, would have handed the
+ * next caller a client carrying somebody else's key had a caller-supplied key
+ * ever been stored in one. Here a supplied key bypasses the cache entirely.
  *
- * "By default", because a caller may send its own key with a call — see
- * `credentialFor`. That is not a hole in the arrangement above but the case it
- * did not cover: a user who supplies their own credential in cvitae's Settings
- * rather than relying on the server's. Such a key is used for the one call and
- * kept nowhere, which is what the cache bypass in `resolveModel` enforces.
+ * Embeddings resolve independently of generation, and default to the local
+ * server whatever `AI_PROVIDER` says. Two reasons: OpenRouter serves no
+ * embedding endpoint at all, so "generate hosted, embed locally" is not
+ * expressible with one setting; and embedding runs over the whole of a user's
+ * CV, which makes it the one step where sending the data out would leak exactly
+ * what keeping storage local is meant to protect.
  */
 
 import type { EmbeddingModel, LanguageModel } from 'ai';
-
 import type * as OpenAi from '@ai-sdk/openai';
 import type * as OpenAiCompatible from '@ai-sdk/openai-compatible';
+import { RuntimeError } from '../contracts/index.js';
+import { credentialFor, type Env } from '../secrets/env.js';
 
-type OpenAIImport = typeof OpenAi;
-type OpenAICompatibleImport = typeof OpenAiCompatible;
-
-export const providerIds = [
-  'openrouter',
-  'huggingface',
-  'openai',
-  'local'
-] as const;
+export const providerIds = ['openrouter', 'huggingface', 'openai', 'local'] as const;
 export type ProviderId = (typeof providerIds)[number];
 
 type ProviderDefinition = {
-  label: string;
-  /** Omitted for OpenAI proper, which uses the native provider package. */
-  baseURL?: string;
-  /** Empty for providers that need no credential, i.e. a local server. */
-  apiKeyEnvVar: string;
-  defaultModel: string;
+  readonly label: string;
+  /** Absent for OpenAI proper, which uses its own provider package. */
+  readonly baseURL?: string;
+  /** Empty for a provider that needs no credential. */
+  readonly apiKeyEnvVar: string;
+  readonly defaultModel: string;
   /**
-   * Whether the default model honours `response_format: json_schema`.
-   * `generateObject` falls back to plain JSON mode when this is false, which is
-   * looser and occasionally returns malformed objects.
+   * Whether the default model honours `response_format: json_schema`. When it
+   * does not, structured calls fall back to plain JSON mode, which is looser
+   * and returns a malformed object often enough to matter.
    */
-  supportsStructuredOutputs: boolean;
-  /**
-   * Whether the provider serves an embeddings endpoint at all. OpenRouter does
-   * not, which is the whole reason embeddings resolve separately.
-   */
-  embeds: boolean;
-  defaultEmbeddingModel?: string;
+  readonly supportsStructuredOutputs: boolean;
+  /** OpenRouter serves none, which is why embeddings resolve separately. */
+  readonly embeds: boolean;
+  readonly defaultEmbeddingModel?: string;
 };
 
 export const providers = {
@@ -87,28 +83,32 @@ export const providers = {
     defaultEmbeddingModel: 'text-embedding-3-small'
   },
   local: {
-    label: 'Local server',
+    label: 'a local server',
     // Ollama's OpenAI-compatible endpoint. LM Studio uses :1234/v1, llama.cpp
-    // and vLLM :8080/v1 — all overridable.
+    // and vLLM :8080/v1 — all overridable through LOCAL_BASE_URL.
     baseURL: 'http://localhost:11434/v1',
-    // Local servers accept any bearer token, so there is no secret to manage.
     apiKeyEnvVar: '',
     defaultModel: 'gemma4:12b',
     supportsStructuredOutputs: true,
     embeds: true,
-    // 768 dimensions, 274MB, and the one most likely to already be pulled.
+    // 768 dimensions, 274MB, and the one most likely to be pulled already.
     defaultEmbeddingModel: 'nomic-embed-text'
   }
 } satisfies Record<ProviderId, ProviderDefinition>;
 
-export const defaultProviderId: ProviderId = 'openrouter';
-
-export class AiConfigError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'AiConfigError';
-  }
-}
+/**
+ * What generation uses when nothing is configured.
+ *
+ * `local`, so an unconfigured checkout runs. Every other provider fails on the
+ * first call with a missing-credential error, which is a poor first impression
+ * of a harness whose whole claim is that it runs on the machine it is on. This
+ * matches `describeEmbedding`, which has always defaulted to `local` for the
+ * same reason, and it matches what `.env.example` documents.
+ *
+ * A hosted deployment sets `AI_PROVIDER` explicitly; it is the case that knows
+ * it is hosted, so it is the case that should have to say so.
+ */
+export const defaultProviderId: ProviderId = 'local';
 
 export const isProviderId = (value: unknown): value is ProviderId =>
   typeof value === 'string' && (providerIds as readonly string[]).includes(value);
@@ -116,10 +116,10 @@ export const isProviderId = (value: unknown): value is ProviderId =>
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
 /**
- * The base URL can arrive from a caller, so the runtime would otherwise fetch
- * whatever it is handed — an SSRF hole, and a worse one for a process holding
- * API keys. Restricting it to loopback covers every local runner (Ollama, LM
- * Studio, llama.cpp, vLLM) while making the setting inert anywhere else.
+ * The local base URL can arrive from a caller, and a process holding API keys
+ * that fetches whatever URL it is handed is an SSRF hole with credentials
+ * attached. Loopback covers every local runner — Ollama, LM Studio, llama.cpp,
+ * vLLM — and makes the setting inert anywhere else.
  */
 export const assertLoopbackUrl = (value: string): string => {
   let url: URL;
@@ -127,312 +127,229 @@ export const assertLoopbackUrl = (value: string): string => {
   try {
     url = new URL(value);
   } catch {
-    throw new AiConfigError(`"${value}" is not a valid URL.`);
+    throw new RuntimeError(`"${value}" is not a valid URL.`, 'misconfigured');
   }
 
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new AiConfigError('The local server URL must be http or https.');
+    throw new RuntimeError('The local server URL must be http or https.', 'misconfigured');
   }
 
   if (!LOOPBACK_HOSTS.has(url.hostname)) {
-    throw new AiConfigError(
-      `The local server URL must point at localhost, not "${url.hostname}".`
+    throw new RuntimeError(
+      `The local server URL must point at localhost, not "${url.hostname}".`,
+      'misconfigured'
     );
   }
 
   return url.toString().replace(/\/$/, '');
 };
 
-let openaiModulePromise: Promise<OpenAIImport> | null = null;
-const loadOpenAIModule = async (): Promise<OpenAIImport> => {
-  if (!openaiModulePromise) openaiModulePromise = import('@ai-sdk/openai');
-  return openaiModulePromise;
-};
-
-let compatibleModulePromise: Promise<OpenAICompatibleImport> | null = null;
-const loadCompatibleModule = async (): Promise<OpenAICompatibleImport> => {
-  if (!compatibleModulePromise) {
-    compatibleModulePromise = import('@ai-sdk/openai-compatible');
-  }
-  return compatibleModulePromise;
-};
-
-/**
- * The key this call should spend.
- *
- * A key sent with the request wins over the environment, and that ordering is
- * the whole feature: cvitae lets a user enter their own credential in Settings,
- * and until this existed there was nowhere to put it. The request had only
- * `providerId`, `modelId` and `baseURL`, so a delegated run answered on the
- * server's key or — once cvitae started refusing rather than substituting —
- * did not run at all.
- *
- * Trusting a caller with this is not a new grant. Anything that can reach this
- * process can already spend the server's credential, so arriving with your own
- * is strictly less privileged; and the key only ever travels to the provider
- * pinned by `providerId`, whose endpoint is fixed here and, for `local`, is put
- * through the loopback guard. There is nowhere else for it to go.
- */
-const credentialFor = (providerId: ProviderId, supplied?: string): string => {
-  const provider = providers[providerId];
-
-  const fromRequest = supplied?.trim();
-
-  if (fromRequest) return fromRequest;
-
-  if (provider.apiKeyEnvVar === '') return 'local';
-
-  const key = process.env[provider.apiKeyEnvVar]?.trim();
-
-  if (!key) {
-    throw new AiConfigError(
-      `Missing ${provider.apiKeyEnvVar}. It is required when the provider is "${providerId}" (${provider.label}), unless the caller sends its own key with the request.`
-    );
-  }
-
-  return key;
-};
-
-const localBaseUrl = (override?: string): string | undefined => {
-  const configured = override?.trim() || process.env.LOCAL_BASE_URL?.trim();
-  return configured ? assertLoopbackUrl(configured) : undefined;
-};
-
 export type ModelOverride = {
-  providerId?: string;
-  modelId?: string;
-  baseURL?: string;
-  /**
-   * The caller's own credential, spent for this call and forgotten after it.
-   *
-   * Optional, and normally absent: the environment is still where a key lives
-   * for a runtime serving one person. This is for the case where the caller
-   * holds a key the environment does not — cvitae's Settings page — and it is
-   * deliberately not merged into any process-wide default, so it can never
-   * outlive the request that carried it. See `credentialFor` and the cache
-   * bypass in `resolveModel`.
-   */
-  apiKey?: string;
-};
-
-export type ResolvedModel = {
-  providerId: ProviderId;
-  modelId: string;
-  model: LanguageModel;
-};
-
-const modelCache = new Map<string, Promise<LanguageModel>>();
-
-const buildModel = async (
-  providerId: ProviderId,
-  modelId: string,
-  baseURL: string | undefined,
-  suppliedKey: string | undefined
-): Promise<LanguageModel> => {
-  const provider = providers[providerId];
-  const apiKey = credentialFor(providerId, suppliedKey);
-
-  if (!provider.baseURL) {
-    const { createOpenAI } = await loadOpenAIModule();
-    return createOpenAI({ apiKey })(modelId);
-  }
-
-  const { createOpenAICompatible } = await loadCompatibleModule();
-
-  return createOpenAICompatible({
-    name: providerId,
-    baseURL: baseURL ?? provider.baseURL,
-    apiKey,
-    supportsStructuredOutputs: provider.supportsStructuredOutputs
-  })(modelId);
+  readonly providerId?: string;
+  readonly modelId?: string;
+  readonly baseURL?: string;
+  /** Spent on this call and forgotten after it. Never enters a cache. */
+  readonly apiKey?: string;
 };
 
 export type ModelChoice = {
-  providerId: ProviderId;
-  modelId: string;
-  /** Only ever set for `local`; the hosted providers have fixed endpoints. */
-  baseURL: string | undefined;
+  readonly providerId: ProviderId;
+  readonly modelId: string;
+  /** Only ever set for `local`; hosted providers have fixed endpoints. */
+  readonly baseURL: string | undefined;
 };
 
-/**
- * Which provider and model a run would use, without asking for the credential.
- *
- * Split out of `resolveModel` because knowing *what* would be called is not the
- * same as being able to call it, and two callers only need the first: the batch
- * runner, which sizes its concurrency from the provider, and the run context,
- * which carries these names into every log line. Both used to build a whole
- * model to read two strings off it.
- *
- * The cost of that was a run refusing over a credential it had no use for.
- * `verify_recipient` with `search_web` off is transforms end to end — it is
- * tested for exactly that — and it still answered "Missing OPENROUTER_API_KEY",
- * naming a provider it was never going to reach.
- */
-export const describeModel = (override: ModelOverride = {}): ModelChoice => {
-  const configured = override.providerId?.trim() || process.env.AI_PROVIDER?.trim();
+export interface ModelResolver {
+  /** What a call would use. Reads no credential and builds nothing. */
+  describe(override?: ModelOverride): ModelChoice;
+  describeEmbedding(override?: ModelOverride): ModelChoice;
+  language(override?: ModelOverride): Promise<LanguageModel>;
+  embedding(override?: ModelOverride): Promise<EmbeddingModel<string>>;
+}
 
-  let providerId: ProviderId = defaultProviderId;
+export const createModelResolver = (
+  options: { readonly env?: Env } = {}
+): ModelResolver => {
+  const env = options.env ?? process.env;
 
-  if (configured) {
+  // Instance state, not module state — see the note at the top.
+  const languageCache = new Map<string, Promise<LanguageModel>>();
+  const embeddingCache = new Map<string, Promise<EmbeddingModel<string>>>();
+
+  // The provider packages are loaded on first use and shared. Importing both up
+  // front would pull in transports a runtime configured for one provider never
+  // touches.
+  let openai: Promise<typeof OpenAi> | undefined;
+  let compatible: Promise<typeof OpenAiCompatible> | undefined;
+
+  const loadOpenAi = (): Promise<typeof OpenAi> => (openai ??= import('@ai-sdk/openai'));
+  const loadCompatible = (): Promise<typeof OpenAiCompatible> =>
+    (compatible ??= import('@ai-sdk/openai-compatible'));
+
+  const localBaseUrl = (override?: string): string | undefined => {
+    const configured = override?.trim() || env.LOCAL_BASE_URL?.trim();
+    return configured ? assertLoopbackUrl(configured) : undefined;
+  };
+
+  const pick = (configured: string | undefined, setting: string): ProviderId => {
+    if (!configured) return defaultProviderId;
     if (!isProviderId(configured)) {
-      throw new AiConfigError(
-        `Unknown AI_PROVIDER "${configured}". Supported values: ${providerIds.join(', ')}.`
+      throw new RuntimeError(
+        `Unknown ${setting} "${configured}". Supported: ${providerIds.join(', ')}.`,
+        'misconfigured'
       );
     }
-    providerId = configured;
-  }
-
-  const modelId =
-    override.modelId?.trim() ||
-    process.env.AI_MODEL?.trim() ||
-    providers[providerId].defaultModel;
-
-  return {
-    providerId,
-    modelId,
-    // Only the local provider may be repointed; the hosted ones have fixed
-    // endpoints and accepting a URL for them would be an open proxy.
-    baseURL: providerId === 'local' ? localBaseUrl(override.baseURL) : undefined
+    return configured;
   };
-};
 
-export const resolveModel = async (
-  override: ModelOverride = {}
-): Promise<ResolvedModel> => {
-  const { providerId, modelId, baseURL } = describeModel(override);
+  const keyFor = (providerId: ProviderId, supplied: string | undefined): string =>
+    credentialFor(
+      {
+        providerId,
+        label: providers[providerId].label,
+        envVar: providers[providerId].apiKeyEnvVar,
+        ...(supplied ? { supplied } : {})
+      },
+      env
+    );
 
-  const suppliedKey = override.apiKey?.trim();
+  const describe = (override: ModelOverride = {}): ModelChoice => {
+    const providerId = pick(
+      override.providerId?.trim() || env.AI_PROVIDER?.trim(),
+      'AI_PROVIDER'
+    );
 
-  // A caller's key never enters the cache, and the cache is never read for one.
-  //
-  // The cache is keyed by provider, model and base URL — not by credential —
-  // so storing a client-built model under that key would hand the next caller
-  // a client whose Authorization header is somebody else's key. That is the
-  // exact substitution cvitae started refusing delegation to avoid, rebuilt one
-  // layer down and harder to see. Adding the key to the cache key would fix the
-  // collision and leave every key the process has ever been sent held in a
-  // module-level map for the life of the process, which is worse.
-  //
-  // Skipping it costs nothing worth measuring: the provider modules above are
-  // cached separately, and what remains is constructing a client object. No
-  // request is made here.
-  if (suppliedKey) {
+    return {
+      providerId,
+      modelId:
+        override.modelId?.trim() || env.AI_MODEL?.trim() || providers[providerId].defaultModel,
+      // Only the local provider may be repointed. Accepting a URL for a hosted
+      // one would make this an open proxy that spends our credential.
+      baseURL: providerId === 'local' ? localBaseUrl(override.baseURL) : undefined
+    };
+  };
+
+  const describeEmbedding = (override: ModelOverride = {}): ModelChoice => {
+    const providerId = pick(
+      override.providerId?.trim() || env.EMBEDDING_PROVIDER?.trim() || 'local',
+      'EMBEDDING_PROVIDER'
+    );
+    const provider = providers[providerId];
+
+    if (!provider.embeds) {
+      throw new RuntimeError(
+        `${provider.label} serves no embeddings endpoint. Set EMBEDDING_PROVIDER to one `
+          + 'that does — "local" needs no credential.',
+        'misconfigured'
+      );
+    }
+
+    const modelId =
+      override.modelId?.trim()
+      || env.EMBEDDING_MODEL?.trim()
+      || provider.defaultEmbeddingModel;
+
+    if (!modelId) {
+      throw new RuntimeError(
+        `No embedding model configured for ${provider.label}. Set EMBEDDING_MODEL.`,
+        'misconfigured'
+      );
+    }
+
     return {
       providerId,
       modelId,
-      model: await buildModel(providerId, modelId, baseURL, suppliedKey)
+      baseURL: providerId === 'local' ? localBaseUrl(override.baseURL) : undefined
     };
-  }
+  };
 
-  const cacheKey = `${providerId}:${modelId}:${baseURL ?? ''}`;
-  let cached = modelCache.get(cacheKey);
+  /**
+   * Builds through the cache unless the caller brought its own key.
+   *
+   * The cache is keyed by provider, model and base URL — not by credential — so
+   * storing a caller-built client under that key would hand the next caller a
+   * client whose Authorization header belongs to someone else. Adding the key
+   * to the cache key would fix the collision and leave every key the process
+   * has ever seen sitting in a `Map` for its lifetime, which is worse. Skipping
+   * the cache costs the construction of a client object; no request is made.
+   */
+  const through = <T>(
+    cache: Map<string, Promise<T>>,
+    choice: ModelChoice,
+    supplied: string | undefined,
+    build: (choice: ModelChoice, apiKey: string) => Promise<T>
+  ): Promise<T> => {
+    if (supplied) return build(choice, keyFor(choice.providerId, supplied));
 
-  if (!cached) {
-    cached = buildModel(providerId, modelId, baseURL, undefined);
-    modelCache.set(cacheKey, cached);
-    // A failed build (a missing key) must not be cached, or the process keeps
-    // serving the rejection after the environment is fixed.
-    cached.catch(() => modelCache.delete(cacheKey));
-  }
+    const key = `${choice.providerId}:${choice.modelId}:${choice.baseURL ?? ''}`;
+    let cached = cache.get(key);
 
-  return { providerId, modelId, model: await cached };
-};
+    if (!cached) {
+      cached = build(choice, keyFor(choice.providerId, undefined));
+      cache.set(key, cached);
+      // A failed build must not stick, or the process keeps serving the
+      // rejection after the environment is fixed.
+      cached.catch(() => cache.delete(key));
+    }
 
-export type ResolvedEmbeddingModel = {
-  providerId: ProviderId;
-  modelId: string;
-  model: EmbeddingModel<string>;
-};
+    return cached;
+  };
 
-const embeddingCache = new Map<string, Promise<EmbeddingModel<string>>>();
+  const buildLanguage = async (choice: ModelChoice, apiKey: string): Promise<LanguageModel> => {
+    const provider = providers[choice.providerId];
 
-const buildEmbeddingModel = async (
-  providerId: ProviderId,
-  modelId: string,
-  baseURL: string | undefined,
-  suppliedKey: string | undefined
-): Promise<EmbeddingModel<string>> => {
-  const provider = providers[providerId];
-  const apiKey = credentialFor(providerId, suppliedKey);
+    if (!provider.baseURL) {
+      const { createOpenAI } = await loadOpenAi();
+      return createOpenAI({ apiKey })(choice.modelId);
+    }
 
-  if (!provider.baseURL) {
-    const { createOpenAI } = await loadOpenAIModule();
-    return createOpenAI({ apiKey }).textEmbeddingModel(modelId);
-  }
+    const { createOpenAICompatible } = await loadCompatible();
 
-  const { createOpenAICompatible } = await loadCompatibleModule();
+    return createOpenAICompatible({
+      name: choice.providerId,
+      baseURL: choice.baseURL ?? provider.baseURL,
+      apiKey,
+      supportsStructuredOutputs: provider.supportsStructuredOutputs
+    })(choice.modelId);
+  };
 
-  return createOpenAICompatible({
-    name: providerId,
-    baseURL: baseURL ?? provider.baseURL,
-    apiKey
-  }).textEmbeddingModel(modelId);
-};
+  const buildEmbedding = async (
+    choice: ModelChoice,
+    apiKey: string
+  ): Promise<EmbeddingModel<string>> => {
+    const provider = providers[choice.providerId];
 
-/**
- * Resolves the embedding model, defaulting to the local runner.
- *
- * The default is `local` regardless of `AI_PROVIDER` because embedding is the
- * step most worth keeping on the machine: it runs over the user's CV, it is
- * cheap on CPU, and sending it out is the one place this design would leak the
- * data it exists to keep local.
- */
-export const resolveEmbeddingModel = async (
-  override: ModelOverride = {}
-): Promise<ResolvedEmbeddingModel> => {
-  const configured =
-    override.providerId?.trim() || process.env.EMBEDDING_PROVIDER?.trim() || 'local';
+    if (!provider.baseURL) {
+      const { createOpenAI } = await loadOpenAi();
+      return createOpenAI({ apiKey }).textEmbeddingModel(choice.modelId);
+    }
 
-  if (!isProviderId(configured)) {
-    throw new AiConfigError(
-      `Unknown EMBEDDING_PROVIDER "${configured}". Supported values: ${providerIds.join(', ')}.`
-    );
-  }
+    const { createOpenAICompatible } = await loadCompatible();
 
-  const provider = providers[configured];
+    return createOpenAICompatible({
+      name: choice.providerId,
+      baseURL: choice.baseURL ?? provider.baseURL,
+      apiKey
+    }).textEmbeddingModel(choice.modelId);
+  };
 
-  if (!provider.embeds) {
-    throw new AiConfigError(
-      `${provider.label} serves no embeddings endpoint. Set EMBEDDING_PROVIDER to one that does — "local" needs no credential.`
-    );
-  }
-
-  const modelId =
-    override.modelId?.trim() ||
-    process.env.EMBEDDING_MODEL?.trim() ||
-    provider.defaultEmbeddingModel ||
-    '';
-
-  if (!modelId) {
-    throw new AiConfigError(
-      `No embedding model configured for ${provider.label}. Set EMBEDDING_MODEL.`
-    );
-  }
-
-  const baseURL = configured === 'local' ? localBaseUrl(override.baseURL) : undefined;
-
-  const suppliedKey = override.apiKey?.trim();
-
-  // Same rule as `resolveModel`, for the same reason. Reached less often —
-  // embeddings resolve once per runtime rather than per run, and default to a
-  // local server that needs no credential — but the collision it prevents does
-  // not care how rare it is.
-  if (suppliedKey) {
-    return {
-      providerId: configured,
-      modelId,
-      model: await buildEmbeddingModel(configured, modelId, baseURL, suppliedKey)
-    };
-  }
-
-  const cacheKey = `${configured}:${modelId}:${baseURL ?? ''}`;
-  let cached = embeddingCache.get(cacheKey);
-
-  if (!cached) {
-    cached = buildEmbeddingModel(configured, modelId, baseURL, undefined);
-    embeddingCache.set(cacheKey, cached);
-    cached.catch(() => embeddingCache.delete(cacheKey));
-  }
-
-  return { providerId: configured, modelId, model: await cached };
+  // `async` on the two builders is not decoration. Both read a setting and a
+  // credential before any promise exists, and a function that returns a promise
+  // must never also throw synchronously: a caller who writes `.catch(...)` —
+  // which is the reasonable thing to write — would not catch it.
+  return {
+    describe,
+    describeEmbedding,
+    async language(override = {}) {
+      return through(languageCache, describe(override), override.apiKey?.trim(), buildLanguage);
+    },
+    async embedding(override = {}) {
+      return through(
+        embeddingCache,
+        describeEmbedding(override),
+        override.apiKey?.trim(),
+        buildEmbedding
+      );
+    }
+  };
 };

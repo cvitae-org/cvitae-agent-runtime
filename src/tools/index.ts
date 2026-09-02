@@ -1,143 +1,83 @@
 /**
  * The tools shipped with the runtime.
  *
- * Every one of them is a read unless its name says otherwise, and each returns
- * the smallest useful shape rather than whatever the store handed back. That
- * trimming is not tidiness: a tool result goes into the model's context and is
- * paid for on every subsequent turn, so returning a whole offer record where a
- * title and a salary would do is a cost multiplied by the length of the loop.
+ * Every one of them is a read, and each returns the smallest useful shape
+ * rather than whatever the port handed back. That trimming is not tidiness: a
+ * tool result enters the model's context and is paid for again on every
+ * subsequent turn, so returning a whole record where three fields would do is a
+ * cost multiplied by the length of the loop.
  *
- * Note what is absent. There is no tool that runs a query, reads a path, or
- * fetches a URL the model names. Each one answers a specific question against
- * local storage, which is what keeps the blast radius of a confused — or
- * prompt-injected — model to "returned something unhelpful" rather than
- * "exfiltrated the CV".
+ * Note what is absent, and why the absences are the point. There is no tool
+ * that runs a query, reads a path, fetches a URL the model names, or sends
+ * anything anywhere — `ToolContext` cannot reach mail at all, and a boundary
+ * rule fails the build if this directory ever imports it. Each tool answers one
+ * specific question against local storage, which keeps the blast radius of a
+ * confused, or prompt-injected, model at "returned something unhelpful" rather
+ * than "exfiltrated the CV".
+ *
+ * The table is short on purpose. Two more tools are obvious and neither is here
+ * yet: a CV summary would have to know the CV's schema, which is one
+ * capability's domain knowledge and belongs with it rather than in the path of
+ * every other; and an offer search needs a port that does not exist, since
+ * building its filter in this file would put SQL in a tool. Both arrive with
+ * the capabilities that need them.
  */
 
 import { z } from 'zod';
+import { readCvTool } from '../capabilities/cv/tools.js';
 import { defineTool } from './registry.js';
+
+/**
+ * A ceiling on what one call can put into the context window.
+ *
+ * The schema's own `max` bounds the count; this bounds the size. A model asking
+ * for twenty chunks of a verbose document can otherwise spend more context on
+ * one tool result than on the rest of the conversation.
+ */
+const MAX_RESULT_CHARS = 6_000;
 
 export const searchProfileTool = defineTool({
   name: 'search_profile',
   describe:
-    "Search the user's CV for anything relevant to a description of work: experience bullet points, skills, job titles held, education, certificates and languages. Each result says which kind it is, and experience results say which employer and role they came from.",
-  schema: z.object({
+    "Search the user's own documents for material relevant to a description of "
+    + 'work. Returns matching passages with where each came from.',
+  input: z.object({
     query: z
       .string()
+      .min(2)
       .describe('What to look for, e.g. "React and TypeScript frontend work".'),
     limit: z.number().int().min(1).max(20).default(6)
   }),
   execute: async ({ query, limit }, context) => {
-    const hits = await context.store.searchProfile(query, limit);
+    const hits = await context.retrieval.search({ text: query, limit }, context.signal);
 
     if (hits.length === 0) {
+      // Distinguished from "no match" on purpose: an empty index and an
+      // unhelpful query call for completely different next moves, and a model
+      // told only "no results" will rephrase the query forever.
       return {
         results: [],
-        note: 'Nothing indexed yet. The CV may not have been imported, or the index may need rebuilding.'
+        note: 'Nothing matched. The documents may not have been imported yet.'
       };
     }
 
+    let budget = MAX_RESULT_CHARS;
+    const results: { text: string; kind: string; meta: Record<string, unknown> }[] = [];
+
+    for (const hit of hits) {
+      if (hit.text.length > budget) break;
+
+      budget -= hit.text.length;
+      results.push({ text: hit.text, kind: hit.kind, meta: { ...hit.meta } });
+    }
+
+    // The score is not returned. It is a fused rank with no meaning outside
+    // this one query, and a model given a number will reason about it.
     return {
-      // `company` and `title` are only set on the experience kinds, and are
-      // dropped rather than sent as empty strings: a certificate has neither,
-      // and two blank fields per result is context paid for on every subsequent
-      // turn to tell the model nothing.
-      results: hits.map((hit) => ({
-        kind: hit.row.kind,
-        text: hit.row.text,
-        ...(hit.row.company ? { company: hit.row.company } : {}),
-        ...(hit.row.title ? { title: hit.row.title } : {})
-      }))
+      results,
+      ...(results.length < hits.length ? { truncated: hits.length - results.length } : {})
     };
   }
 });
 
-export const readCvSummaryTool = defineTool({
-  name: 'read_cv_summary',
-  describe:
-    "Read the factual summary of the user's CV: name, current role, skills, and the list of employers with dates. Does not include experience bullet points, certificates or theses — use search_profile for those.",
-  schema: z.object({}),
-  execute: async (_args, context) => {
-    const document = await context.store.documents.read();
-
-    return {
-      name: document.personal.name,
-      role: document.skills.role,
-      role_description: document.role_description,
-      skills: {
-        languages: document.skills.programming_languages,
-        frameworks: document.skills.frameworks,
-        tools: document.skills.libraries_and_tools
-      },
-      experience: document.experience.map((entry) => ({
-        company: entry.company,
-        title: entry.title,
-        started: entry.started,
-        finished: entry.finished ?? 'present',
-        highlight_count: entry.highlights.length
-      })),
-      education: document.education.map((entry) => ({
-        university: entry.university,
-        degree: entry.degree
-      })),
-      languages: document.languages
-    };
-  }
-});
-
-/**
- * Offer search, exposed with the filter separated from the query.
- *
- * The split is the point. `where` is a hard predicate the store applies before
- * ranking; `query` only orders what survives. Letting the model express
- * "remote" as part of a similarity query instead of a filter is how a search
- * for senior remote work returns a mid-level onsite role that happens to be
- * written in similar language.
- */
-export const searchOffersTool = defineTool({
-  name: 'search_offers',
-  describe:
-    'Search saved job offers. Use `where` for hard requirements (work mode, seniority, company) and `query` for what the role should be about. Either may be omitted.',
-  schema: z.object({
-    query: z.string().optional().describe('What the role should involve.'),
-    work_mode: z
-      .enum(['remote', 'hybrid', 'onsite'])
-      .optional()
-      .describe('A hard filter, not a preference.'),
-    company: z.string().optional().describe('Exact company name.'),
-    limit: z.number().int().min(1).max(50).default(10)
-  }),
-  execute: async ({ query, work_mode, company, limit }, context) => {
-    const predicates: string[] = [];
-
-    if (work_mode) predicates.push(`work_mode = '${work_mode}'`);
-    // Escaped for the SQL string literal; a company name with an apostrophe
-    // would otherwise terminate it and fail to parse.
-    if (company) predicates.push(`company = '${company.replace(/'/g, "''")}'`);
-
-    const hits = await context.store.searchOffers({
-      query,
-      where: predicates.length > 0 ? predicates.join(' AND ') : undefined,
-      limit
-    });
-
-    return {
-      count: hits.length,
-      results: hits.map((hit) => ({
-        title: hit.row.title,
-        company: hit.row.company,
-        location: hit.row.location,
-        work_mode: hit.row.work_mode,
-        salary: hit.row.salary,
-        seniority: hit.row.seniority,
-        url: hit.row.url
-      }))
-    };
-  }
-});
-
-export const defaultTools = [
-  searchProfileTool,
-  readCvSummaryTool,
-  searchOffersTool
-];
+export const defaultTools = [searchProfileTool, readCvTool];

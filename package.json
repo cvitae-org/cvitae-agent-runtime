@@ -5,39 +5,50 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "engines": {
     "node": ">=20.12"
   },
+  "packageManager": "pnpm@10.30.3",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "tsx watch src/server/index.ts",
-    "serve": "node dist/server/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json",
     "lint": "eslint",
-    "test:ai-logging": "node --import tsx --test scripts/aiLogging.test.ts",
+    "boundaries": "depcruise src --config .dependency-cruiser.cjs",
     "test": "node --import tsx --test scripts/*.test.ts",
-    "smoke": "tsx scripts/smoke.ts"
+    "check": "pnpm typecheck && pnpm lint && pnpm boundaries && pnpm test",
+    "cli": "tsx src/adapters/cli/main.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.68",
     "@ai-sdk/openai-compatible": "^1.0.48",
     "ai": "^5.0.235",
-    "fastify": "^5.2.1",
+    "better-sqlite3": "^13.0.3",
     "unpdf": "^1.8.1",
     "zod": "^4.1.12"
   },
-  "optionalDependencies": {
-    "@lancedb/lancedb": "^0.37.1"
-  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^20",
-    "eslint": "^9",
+    "dependency-cruiser": "^18.2.0",
+    "eslint": "^10.9.1",
     "tsx": "^4.19.2",
     "typescript": "^5",
     "typescript-eslint": "^8.24.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
   }
 }

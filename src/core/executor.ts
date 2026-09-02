@@ -1,298 +1,144 @@
 /**
- * Runs one step, whatever kind it is.
+ * Runs one step.
  *
- * This is the only module that talks to the model, which is the point: the
- * orchestrator decides *what* runs and in what order, the executor knows *how*
- * a step is carried out. Adding a fourth step kind touches this file alone.
+ * It receives a context that is already built and already frozen; it never
+ * assembles one. That split is what stopped the previous runtime's executor
+ * from needing to know about the store, the tool registry and the plan all at
+ * once — here it knows a step, a context, and the four ways a step can be
+ * carried out.
  *
- * The `ai` import is dynamic for the same reason it is in cvitae's routes — it
- * pulls in provider machinery that a process only doing storage work never
- * needs to load.
+ * **The executor retries nothing.** The rule is that a retry belongs to the
+ * effect that knows what is retryable: a 429 with a `Retry-After` is the model
+ * gateway's business, a truncated object is the gateway's business, and a
+ * transform that failed because a board returned 403 must not be run again at
+ * all. An executor-level retry cannot tell those apart, so it would either
+ * re-run the one that must not repeat or paper over the ones that should be
+ * reported. What it does instead is fail clearly, and let the degradation
+ * policy above it decide what that costs.
  */
 
-import type { Step, RunContext } from './types.js';
-import { RuntimeError } from './types.js';
-import {
-  summarizeObject,
-  summarizeText,
-  summarizeToolInteractions,
-  withAiLogging
-} from '../ai/logging.js';
+import { RuntimeError } from '../contracts/index.js';
+import type { FinishReason, Step, StepContext } from '../contracts/index.js';
+import { renderPrompt } from '../context/build.js';
 
-import type * as Ai from 'ai';
-type AiModule = typeof Ai;
-
-let aiModulePromise: Promise<AiModule> | null = null;
-const loadAiModule = async (): Promise<AiModule> => {
-  if (!aiModulePromise) aiModulePromise = import('ai');
-  return aiModulePromise;
-};
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
- * A malformed short object is cheap to redo, so one retry is worth it. This is
- * specifically *not* a general retry: a rate limit or a bad credential fails
- * the same way twice and retrying only doubles the wait before the user is
- * told.
+ * A completion that stopped because it ran out of room is a failure, even when
+ * what came back parses.
+ *
+ * This is not caution. One of five agents in the previous runtime truncated
+ * mid-array at exactly 900 tokens while the other four never came near their
+ * ceiling, and a truncated array still validates against `z.array(...)` — the
+ * step returns four requirements out of nine and nothing anywhere says so. The
+ * per-step `maxOutputTokens` exists so this can be fixed for the one step that
+ * needs it, and this check is what makes the need visible.
  */
-const withMalformedRetry = async <T>(
-  call: () => Promise<T>,
-  isMalformed: (error: unknown) => boolean,
-  stepName: string
-): Promise<T> => {
-  try {
-    return await call();
-  } catch (error) {
-    if (!isMalformed(error)) throw error;
-    console.warn(`Step "${stepName}" returned malformed JSON; retrying.`);
-    return call();
-  }
-};
+const rejectTruncation = (step: Step, finishReason: FinishReason, limit: number): void => {
+  if (finishReason !== 'length') return;
 
-
-/**
- * Extraction is decoding, not writing, so it is run greedily.
- *
- * Nothing set a temperature before this, which meant the provider's default
- * applied — 0.8 on Ollama. That is a sampling width chosen for prose, and every
- * step here is copying values that are already in the prompt: there is no
- * variety worth having in which job title comes back, only the risk that a less
- * likely token wins and takes a bullet or an entry with it.
- *
- * Measured over five runs of the same CV on `gemma3:4b`, before and after:
- *
- *   default (0.8)   bullets 25,25,25,24,25   certs 1,1,2,1,2   29.3–37.6s
- *   temperature 0   bullets 25,25,25,25,25   certs 2,2,2,2,2   29.7–30.0s
- *
- * Jobs were 7/7 on all ten runs, so the headline count was never the unstable
- * part; the drift was underneath it, in a dropped bullet and a wandering
- * certificate count. Bullets are now fixed, and the run time stopped varying by
- * eight seconds, which is the same determinism showing up as a schedule.
- *
- * The certificates line is the finding worth keeping. Greedy decoding did not
- * make that step correct — it made it *consistently wrong*: the second
- * certificate is "ICP Blockchain SDK", which is not a certificate at all but an
- * entry from the skills list, and it now appears on every run instead of two in
- * five. Determinism converts an intermittent hallucination into a reliable one,
- * which is better only because a reliable fault can be seen and fixed. This one
- * is the same shape as the spoken-languages bug already recorded in
- * `extractCv.ts`: a section pulling material from a neighbouring one.
- */
-const runExtract = async (
-  step: Extract<Step, { kind: 'extract' }>,
-  context: RunContext
-): Promise<Record<string, unknown>> => {
-  const { generateObject, NoObjectGeneratedError } = await loadAiModule();
-  const model = await context.model();
-
-  /**
-   * The model spent its whole budget and said nothing.
-   *
-   * `finishReason: 'length'` with empty text is not a truncated answer — it is
-   * no answer, and it is not a ceiling that wants raising. Measured on
-   * `gemma4:12b` against a real CV's skills section: 1200 output tokens
-   * consumed with `text: ""`, then the same again at 4000. `gemma3:4b` returned
-   * the same section in 3.5s. The README records this model doing the same
-   * thing once before under a different prompt wording.
-   *
-   * Told apart from a malformed object because it changes what to do about it.
-   * Malformed JSON is worth one retry; this is deterministic, and retrying only
-   * spends another forty-five seconds to arrive in the same place — which is
-   * what the step was doing, taking ninety-five seconds to degrade.
-   */
-  const producedNothing = (error: unknown): boolean =>
-    NoObjectGeneratedError.isInstance(error) &&
-    error.finishReason === 'length' &&
-    !String(error.text ?? '').trim();
-
-  try {
-    const result = await withMalformedRetry(
-      () =>
-        withAiLogging({
-          logger: context.aiLogger,
-          traceId: context.traceId,
-          operation: 'generateObject',
-          purpose: 'extract',
-          providerId: context.providerId,
-          modelId: context.modelId,
-          capability: context.capability,
-          step: step.name,
-          signal: context.signal,
-          input: summarizeText('text', step.system, step.prompt),
-          call: () =>
-            generateObject({
-              model,
-              schema: step.schema,
-              system: step.system,
-              prompt: step.prompt,
-              maxOutputTokens: step.maxOutputTokens,
-              temperature: 0,
-              abortSignal: context.signal
-            }),
-          summarizeResult: (generated) => ({
-            output: summarizeObject(generated.object),
-            finishReason: generated.finishReason,
-            usage: generated.usage
-          })
-        }),
-      (error) => NoObjectGeneratedError.isInstance(error) && !producedNothing(error),
-      step.name
-    );
-
-    return result.object as Record<string, unknown>;
-  } catch (error) {
-    if (!producedNothing(error)) throw error;
-
-    // Rewritten because the generic message — "no object generated" — sends the
-    // reader to the schema, and the schema is fine. The model is the variable.
-    throw new RuntimeError(
-      `The model produced no output for "${step.name}": it used its whole token budget and returned nothing. This is not a truncated answer and a larger budget does not help — the model is unable to answer this step. Try a smaller, faster model for extraction.`,
-      'step_failed'
-    );
-  }
-};
-
-/**
- * One `generateText` call, for a step whose output is prose.
- *
- * Nearly the simplest thing in this file, and deliberately so — the reason it
- * exists at all is in `GenerateStep`, where the measurement is recorded. No
- * schema, no retry: there is no malformed JSON to retry, because there is no
- * JSON. A model that returns nothing here returns nothing twice.
- *
- * Greedy for the same reason extraction is, with one caveat worth stating.
- * Temperature 0 on prose does trade variety away, and a covering letter is a
- * place variety might be wanted — but a draft the user reads and edits benefits
- * far more from being reproducible, and "run it again and see" is a worse
- * experience than editing a sentence. Measured at `temperature: 0`, gemma3:4b
- * returned the same 129-word letter on three consecutive runs.
- */
-const runGenerate = async (
-  step: Extract<Step, { kind: 'generate' }>,
-  context: RunContext
-): Promise<Record<string, unknown>> => {
-  const { generateText } = await loadAiModule();
-  const model = await context.model();
-
-  const result = await withAiLogging({
-    logger: context.aiLogger,
-    traceId: context.traceId,
-    operation: 'generateText',
-    purpose: 'generate',
-    providerId: context.providerId,
-    modelId: context.modelId,
-    capability: context.capability,
-    step: step.name,
-    signal: context.signal,
-    input: summarizeText('text', step.system, step.prompt),
-    call: () =>
-      generateText({
-        model,
-        system: step.system,
-        prompt: step.prompt,
-        maxOutputTokens: step.maxOutputTokens,
-        maxRetries: step.maxRetries,
-        temperature: 0,
-        abortSignal: context.signal
-      }),
-    summarizeResult: (generated) => ({
-      output: summarizeText('text', generated.text),
-      finishReason: generated.finishReason,
-      usage: generated.usage
-    })
-  });
-
-  const text = result.text.trim();
-
-  // An empty completion is the failure `gemma4:12b` produces on this step, and
-  // it has to be raised rather than returned. Passing "" downstream would give
-  // the caller a draft-shaped object holding no draft, and the degradation
-  // machinery — which exists precisely for this — would never see a failure.
-  if (!text) {
-    throw new RuntimeError(
-      `The model returned nothing for "${step.name}". It finished with reason "${result.finishReason}" and produced no text. Some models return an empty completion for prose steps regardless of the prompt; try a different one.`,
-      'step_failed'
-    );
-  }
-
-  return { [step.key]: text };
-};
-
-/**
- * The mode where the model decides what to do next.
- *
- * Two things are deliberately not negotiable. The model only ever sees tools
- * named in `step.tools`, so a capability cannot be talked into reaching storage
- * it was not given; and `stopWhen` always caps the turn count, so a model that
- * loops calling the same tool costs a bounded number of requests rather than a
- * quota.
- */
-const runToolLoop = async (
-  step: Extract<Step, { kind: 'tool_loop' }>,
-  context: RunContext
-): Promise<Record<string, unknown>> => {
-  const { generateText, stepCountIs } = await loadAiModule();
-  const model = await context.model();
-
-  const tools = context.tools.toolSet(step.tools, context);
-
-  const result = await withAiLogging({
-    logger: context.aiLogger,
-    traceId: context.traceId,
-    operation: 'generateText',
-    purpose: 'tool_loop',
-    providerId: context.providerId,
-    modelId: context.modelId,
-    capability: context.capability,
-    step: step.name,
-    signal: context.signal,
-    input: summarizeText('text', step.system, step.prompt),
-    tools: { offered: step.tools },
-    call: () =>
-      generateText({
-        model,
-        system: step.system,
-        prompt: step.prompt,
-        tools,
-        stopWhen: stepCountIs(step.maxSteps),
-        abortSignal: context.signal
-      }),
-    summarizeResult: (generated) => {
-      const toolSummary = summarizeToolInteractions(generated);
-      return {
-        output: summarizeText('text', generated.text),
-        finishReason: generated.finishReason,
-        usage: generated.totalUsage,
-        steps: generated.steps.length,
-        tools: { offered: step.tools, ...toolSummary }
-      };
-    }
-  });
-
-  return {
-    text: result.text,
-    steps: result.steps.length,
-    toolCalls: result.steps.flatMap((s) =>
-      s.toolCalls.map((call) => call.toolName)
-    )
-  };
+  throw new RuntimeError(
+    `Step "${step.name}" hit its ${limit}-token ceiling before finishing. `
+      + 'The output is truncated and cannot be trusted; raise maxOutputTokens for this step.',
+    'step_failed'
+  );
 };
 
 export const runStep = async (
   step: Step,
-  context: RunContext
+  context: StepContext
 ): Promise<Record<string, unknown>> => {
-  if (context.signal?.aborted) {
-    throw new RuntimeError(`Aborted before step "${step.name}".`, 'aborted');
-  }
+  // Checked once here rather than trusted to the effect below, so a step that
+  // was cancelled while queued costs nothing at all.
+  context.signal.throwIfAborted();
+
+  const call = {
+    traceId: context.traceId,
+    runId: context.runId,
+    step: step.name,
+    signal: context.signal
+  };
 
   switch (step.kind) {
-    case 'extract':
-      return runExtract(step, context);
-    case 'generate':
-      return runGenerate(step, context);
-    case 'tool_loop':
-      return runToolLoop(step, context);
     case 'transform':
       return step.run(context);
+
+    case 'extract': {
+      const { object, finishReason } = await context.effects.ai.generateObject({
+        ...call,
+        schema: step.schema,
+        system: step.system,
+        prompt: renderPrompt(step.prompt, context),
+        maxOutputTokens: step.maxOutputTokens,
+        // Extraction is a reading, not a composition. Sampling here buys
+        // variation in an answer that is supposed to be the same every time.
+        temperature: 0
+      });
+
+      rejectTruncation(step, finishReason, step.maxOutputTokens);
+
+      if (!isRecord(object)) {
+        throw new RuntimeError(
+          `Step "${step.name}" returned ${Array.isArray(object) ? 'an array' : typeof object}, `
+            + 'but an extract step must return an object so its fields can be merged.',
+          'step_failed'
+        );
+      }
+
+      return object;
+    }
+
+    case 'generate': {
+      const { text, finishReason } = await context.effects.ai.generateText({
+        ...call,
+        system: step.system,
+        prompt: renderPrompt(step.prompt, context),
+        maxOutputTokens: step.maxOutputTokens
+      });
+
+      rejectTruncation(step, finishReason, step.maxOutputTokens);
+
+      if (text.trim().length === 0) {
+        throw new RuntimeError(
+          `Step "${step.name}" returned an empty completion.`,
+          'step_failed'
+        );
+      }
+
+      return { [step.key]: text };
+    }
+
+    case 'tool_loop': {
+      const handles = context.tools.handles(step.tools, {
+        traceId: context.traceId,
+        runId: context.runId,
+        step: step.name,
+        signal: context.signal,
+        effects: context.effects,
+        documents: context.documents,
+        retrieval: context.retrieval
+      });
+
+      const result = await context.effects.ai.runToolLoop({
+        ...call,
+        system: step.system,
+        prompt: renderPrompt(step.prompt, context),
+        tools: handles,
+        maxSteps: step.maxSteps
+      });
+
+      // A loop that stopped because it hit `maxSteps` has not answered; it ran
+      // out of turns. Reported as a failure so the step's policy decides,
+      // rather than returning a half-finished investigation as a result.
+      if (result.steps >= step.maxSteps && result.finishReason === 'tool-calls') {
+        throw new RuntimeError(
+          `Step "${step.name}" used all ${step.maxSteps} turns without reaching an answer.`,
+          'step_failed'
+        );
+      }
+
+      return { text: result.text, toolSteps: result.steps };
+    }
   }
 };

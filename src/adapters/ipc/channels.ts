@@ -1,0 +1,139 @@
+/**
+ * The channel names and what may be sent on each.
+ *
+ * One file, no Electron, no `ipcMain`. A host wires these into whatever
+ * transport it has — `ipcMain.handle`, a websocket, an HTTP route table — and
+ * the transport is the only thing that changes. That is why this is a table of
+ * names and schemas rather than a set of handlers: the names and the payload
+ * shapes are the contract, and a handler is an implementation detail of the
+ * process that happens to answer them.
+ *
+ * Every payload is validated here, at the boundary, before it reaches anything.
+ * In an Electron shell the caller is a renderer, and a renderer hosts remote
+ * content — a page it loaded, a script that page pulled in. "The other side of
+ * this channel is our own code" stops being true the first time a window
+ * navigates, and a validated envelope is what makes that stop mattering.
+ *
+ * What is deliberately absent:
+ *
+ *   Mail. Same rule as `tools/`, for the same reason and one step further out,
+ *   and enforced the same way — `no-channel-wraps-mail` in the boundary rules
+ *   forbids this directory from importing `effects/mail.ts` at all. Scraped
+ *   offer text reaches model context; an outbound channel reachable from the
+ *   same process is an exfiltration path whether a model or a page found it.
+ *   `runtime/create.ts` hands the sender to a host directly, and a host is a
+ *   program someone wrote rather than a page someone loaded.
+ *
+ *   Anything returning a handle. A `ChunkIndex`, a `Database`, a store — none
+ *   of them survive being serialised, so a channel offering one would fail at
+ *   the transport rather than at review. Every response below is JSON a
+ *   structured clone can carry.
+ *
+ *   A free-text query channel. `runs.list` takes a status and a capability,
+ *   both closed sets, not a predicate a caller composes. A filter expressed as
+ *   a string is a query language, and the moment a page can influence one the
+ *   shape of the query is in its hands.
+ */
+
+import { z } from 'zod';
+import { cvDocumentSchema } from '../../capabilities/cv/document.js';
+import { runStatuses } from '../../contracts/index.js';
+
+/* ------------------------------------------------------------------ inputs */
+
+const runId = z.string().min(1);
+
+export const payloads = {
+  'capabilities.list': z.object({}),
+
+  /** The one canonical profile stored by the harness. */
+  'profile.get': z.object({}),
+
+  /**
+   * A manual edit replaces the whole document. Parsing here both validates the
+   * schema version and fills its declared defaults before storage sees it.
+   */
+  'profile.update': z.object({ document: cvDocumentSchema }),
+
+  /**
+   * `input` is unknown on purpose. The capability's own zod schema is what
+   * decides whether it is valid, and a second opinion here would be a second
+   * thing to keep in step with the first.
+   */
+  'run.start': z.object({
+    capability: z.string().min(1),
+    input: z.unknown(),
+    /** Lets a caller name the run before it finishes, so it can follow it. */
+    runId: runId.optional()
+  }),
+
+  'run.resume': z.object({ runId }),
+
+  /**
+   * Cancellation is a channel rather than a signal because an `AbortSignal`
+   * does not serialise. The dispatcher holds the controller for each run it
+   * started; a run started by another process is not this one's to cancel, and
+   * saying so is more useful than pretending otherwise.
+   */
+  'run.cancel': z.object({ runId }),
+
+  'runs.list': z.object({
+    status: z.enum(runStatuses).optional(),
+    capability: z.string().min(1).optional(),
+    limit: z.number().int().min(1).max(200).optional(),
+    before: z.number().int().positive().optional()
+  }),
+
+  'runs.get': z.object({ runId }),
+
+  /**
+   * The tail. `after` is the last `seq` the caller saw, which is the whole
+   * reason `seq` is per-run and gapless: reconnecting is this same call with
+   * the same number, so a closed window costs no replay and leaves no gap.
+   */
+  'runs.events': z.object({
+    runId,
+    after: z.number().int().min(0).optional(),
+    limit: z.number().int().min(1).max(500).optional()
+  }),
+
+  'approvals.pending': z.object({ runId }),
+
+  'approvals.decide': z.object({
+    approvalId: z.string().min(1),
+    status: z.enum(['granted', 'denied']),
+    decision: z.record(z.string(), z.unknown()).optional()
+  })
+} as const;
+
+export type Channel = keyof typeof payloads;
+
+export const channels = Object.keys(payloads) as Channel[];
+
+export const isChannel = (value: unknown): value is Channel =>
+  typeof value === 'string' && Object.hasOwn(payloads, value);
+
+export type PayloadOf<C extends Channel> = z.infer<(typeof payloads)[C]>;
+
+/* --------------------------------------------------------------- responses */
+
+/**
+ * Every answer is an envelope, and `dispatch` never rejects.
+ *
+ * A thrown `Error` does not cross a process boundary: structured clone drops
+ * the prototype, the `code` and usually the message, so the far side receives
+ * an empty object where the reason was. Returning the failure as a value means
+ * a caller gets the same `RuntimeErrorCode` a local caller would — which is
+ * what lets a window tell "needs a credential" apart from "the page was
+ * unreadable" without parsing prose.
+ */
+export type Response<T = unknown> =
+  | { readonly ok: true; readonly data: T }
+  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } };
+
+export const ok = <T>(data: T): Response<T> => ({ ok: true, data });
+
+export const failed = (code: string, message: string): Response<never> => ({
+  ok: false,
+  error: { code, message }
+});

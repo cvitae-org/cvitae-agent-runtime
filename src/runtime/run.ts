@@ -1,0 +1,181 @@
+/**
+ * Driving a run from a request to a result.
+ *
+ * This is the one place that knows the *shape* of a run's life: create the row,
+ * mark it running, plan, walk the plan, and record how it ended. Everything it
+ * needs is passed in — it opens nothing, resolves nothing and reads no global.
+ * `create.ts` is where those things are built and handed over.
+ *
+ * The error mapping at the bottom is the interesting part, because it is where
+ * the run-status vocabulary earns its keep. A cancelled run is not a failed
+ * one, a suspended run has not ended at all, and both were, in the previous
+ * runtime, indistinguishable from a step throwing.
+ */
+
+import { executePlan } from '../core/orchestrator.js';
+import { plan as makePlan } from '../core/planner.js';
+import { route, validateInput } from '../core/router.js';
+import { createCheckpointer } from '../runs/checkpoint.js';
+import * as emit from '../events/emit.js';
+import { RuntimeError, isRunSuspension } from '../contracts/index.js';
+import type {
+  AiLogger,
+  ApprovalGate,
+  CapabilityMap,
+  ChunkIndex,
+  DocumentStore,
+  EffectSet,
+  Retriever,
+  RunContext,
+  RunResult,
+  RunStore,
+  StepOutcome,
+  ToolRegistry
+} from '../contracts/index.js';
+
+/**
+ * Everything a run reaches, assembled once at startup.
+ *
+ * The approval gate arrives as a factory rather than an instance because a gate
+ * is bound to a `(run, step)` pair — that pair is the key a person's answer is
+ * filed under, and a gate that did not know it could not find one.
+ */
+export type RuntimeDeps = {
+  readonly capabilities: CapabilityMap;
+  readonly runs: RunStore;
+  readonly gate: (runId: string, step: string) => ApprovalGate;
+  readonly effects: EffectSet;
+  readonly tools: ToolRegistry;
+  readonly documents: DocumentStore;
+  readonly retrieval: Retriever;
+  readonly index: ChunkIndex;
+  readonly logger: AiLogger;
+  readonly newRunId: () => string;
+  readonly now?: () => number;
+  /** Wall-clock ceiling applied when a caller names no deadline. */
+  readonly timeoutMs?: number;
+};
+
+export type RunRequest = {
+  readonly capability: string;
+  readonly input: unknown;
+  readonly signal?: AbortSignal;
+  readonly deadlineAt?: number;
+  /** Supplied by a caller that needs to know the id before the run finishes. */
+  readonly runId?: string;
+  readonly traceId?: string;
+};
+
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+
+export const buildRunContext = (
+  deps: RuntimeDeps,
+  fields: {
+    runId: string;
+    traceId: string;
+    capability: string;
+    input: Readonly<Record<string, unknown>>;
+    signal: AbortSignal;
+    deadlineAt: number;
+  }
+): RunContext => ({
+  ...fields,
+  effects: deps.effects,
+  tools: deps.tools,
+  documents: deps.documents,
+  retrieval: deps.retrieval,
+  index: deps.index,
+  approvals: deps.gate(fields.runId, 'plan'),
+  logger: deps.logger
+});
+
+/**
+ * Records how a run ended and rethrows.
+ *
+ * Shared with `resume.ts`, because the endings are a property of a run rather
+ * than of how it was started, and having two copies is how they drift.
+ */
+export const settleFailure = (
+  checkpoint: ReturnType<typeof createCheckpointer>,
+  error: unknown
+): never => {
+  // Already parked, atomically, by the orchestrator: the run is `suspended` and
+  // the step is back to `pending`. There is nothing to record here, and marking
+  // it failed would destroy a run that is merely waiting for a person.
+  if (isRunSuspension(error)) throw error;
+
+  if (error instanceof RuntimeError && error.code === 'aborted') {
+    checkpoint.cancelled();
+    throw error;
+  }
+
+  const code = error instanceof RuntimeError ? error.code : 'step_failed';
+  const message = String((error as Error)?.message ?? error).slice(0, 500);
+  checkpoint.failed({ code, message });
+  throw error;
+};
+
+export const startRun = async (
+  deps: RuntimeDeps,
+  request: RunRequest
+): Promise<RunResult> => {
+  const now = deps.now ?? Date.now;
+
+  // Both of these throw before a run row exists, and that is correct: a request
+  // naming a capability that does not exist, or carrying input that capability
+  // cannot accept, never became a run. Recording it as a failed one would fill
+  // the history with rows that describe a caller's bug rather than any work.
+  const capability = route(deps.capabilities, request.capability);
+  const input = validateInput(capability, request.input);
+
+  const runId = request.runId ?? deps.newRunId();
+  const traceId = request.traceId ?? runId;
+  const deadlineAt = request.deadlineAt ?? now() + (deps.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const createdAt = now();
+
+  deps.runs.create(
+    { id: runId, capability: capability.name, input, traceId, deadlineAt, createdAt },
+    [emit.runQueued(capability.name, createdAt)]
+  );
+
+  const checkpoint = createCheckpointer(deps.runs, runId, now);
+  checkpoint.started(deps.effects.ai.describe());
+
+  const context = buildRunContext(deps, {
+    runId,
+    traceId,
+    capability: capability.name,
+    input,
+    signal: request.signal ?? new AbortController().signal,
+    deadlineAt
+  });
+
+  try {
+    const plan = await makePlan(capability, input, context);
+
+    const result = await executePlan(plan, context, {
+      checkpoint,
+      aggregate: capability.aggregate?.bind(capability),
+      approvalsFor: (step) => deps.gate(runId, step),
+      now
+    });
+
+    checkpoint.succeeded(result.data, result.degraded, result.elapsedMs);
+    return result;
+  } catch (error) {
+    return settleFailure(checkpoint, error);
+  }
+};
+
+/** The outcomes of steps that already finished, for a resumed run. */
+export const recordedOutcomes = (deps: RuntimeDeps, runId: string): StepOutcome[] =>
+  deps.runs
+    .steps(runId)
+    .filter((step) => step.status === 'ok' || step.status === 'degraded')
+    .sort((a, b) => a.ordinal - b.ordinal)
+    .map((step) => ({
+      step: step.name,
+      status: step.status === 'ok' ? ('ok' as const) : ('degraded' as const),
+      ...(step.reason === undefined ? {} : { reason: step.reason }),
+      value: step.value ?? {}
+    }));

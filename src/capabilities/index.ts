@@ -1,40 +1,33 @@
 /**
- * The capabilities the runtime exposes.
+ * The capability map: everything this runtime knows how to do.
  *
- * Each is one of two kinds, and the kind should be stated when adding another.
- * `extract_cv`, `translate_cv`, `analyze_offer`, `draft_application` and
- * `generate_evidence_summary` are declared pipelines; `ask_profile` is a
- * bounded tool loop. Declared should stay the majority — it is reproducible,
- * runs on models that cannot call tools, and costs a known number of requests.
+ * A plain object rather than a registry class, because it is read once at
+ * startup and never mutated. `runtime/create.ts` passes it to the router, and
+ * the router's only question is whether a name is in it.
  *
- * `verify_recipient` is the odd one: a declared pipeline of three transforms
- * and **no model call at all**. It reads pages written by strangers and its
- * output lands beside a Send button, so nothing on those pages is allowed to
- * decide anything — see the note at the top of that file.
- *
- * `draft_application` writes an application email and deliberately cannot send
- * one: it has no access to `mail/`, and returns a suggested recipient for a
- * person to confirm. A capability that could both read an offer and send mail
- * would put attacker-written text one step from an outbound channel.
+ * The dependency rule worth stating: `core/` must never import this file. The
+ * orchestrator walks steps and knows nothing about offers, CVs or mail, which
+ * is what lets a capability be added here without touching it. A boundary rule
+ * fails the build if that ever stops being true.
  */
 
+import type { CapabilityMap } from '../contracts/index.js';
 import { analyzeOffer } from './analyzeOffer.js';
+import { draftApplication } from './apply/draft.js';
 import { askProfile } from './askProfile.js';
-import { draftApplication } from './draftApplication.js';
-import { extractCv } from './extractCv.js';
-import { generateEvidenceSummary } from './generateEvidenceSummary.js';
-import { verifyRecipient } from './verifyRecipient.js';
-import { translateCv } from './translateCv.js';
-import type { CapabilityMap } from '../core/router.js';
+import { generateEvidenceSummary } from './cv/evidence.js';
+import { extractCv } from './cv/extract.js';
+import { translateCv } from './cv/translate.js';
+import { verifyRecipient } from './recipient/verify.js';
 
-export const defaultCapabilities: CapabilityMap = {
-  [extractCv.name]: extractCv,
-  [translateCv.name]: translateCv,
-  [analyzeOffer.name]: analyzeOffer,
-  [draftApplication.name]: draftApplication,
-  [generateEvidenceSummary.name]: generateEvidenceSummary,
-  [verifyRecipient.name]: verifyRecipient,
-  [askProfile.name]: askProfile
+export const capabilities: CapabilityMap = {
+  [analyzeOffer.name]: analyzeOffer as CapabilityMap[string],
+  [askProfile.name]: askProfile as CapabilityMap[string],
+  [draftApplication.name]: draftApplication as CapabilityMap[string],
+  [extractCv.name]: extractCv as CapabilityMap[string],
+  [generateEvidenceSummary.name]: generateEvidenceSummary as CapabilityMap[string],
+  [translateCv.name]: translateCv as CapabilityMap[string],
+  [verifyRecipient.name]: verifyRecipient as CapabilityMap[string]
 };
 
 export {

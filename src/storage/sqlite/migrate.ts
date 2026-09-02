@@ -1,0 +1,59 @@
+/**
+ * Schema versioning on `PRAGMA user_version`.
+ *
+ * No migration table, no filenames scanned at runtime, no checksums. The
+ * version is an integer SQLite already stores in the file header, and the
+ * migrations are an array in this file. That is the whole mechanism, and it is
+ * enough for a database that ships inside one application and is never
+ * administered by anyone else.
+ */
+
+import type { Db } from './open.js';
+import { init0001 } from './migrations/0001-init.js';
+import { stepStopped0002 } from './migrations/0002-step-stopped.js';
+
+export type Migration = { readonly version: number; readonly sql: string };
+
+export const migrations: readonly Migration[] = [
+  { version: 1, sql: init0001 },
+  { version: 2, sql: stepStopped0002 }
+];
+
+export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.version), 0);
+
+/**
+ * Applies every migration newer than the file's version, each in its own
+ * transaction, and returns the version reached.
+ *
+ * `steps` is a parameter only so a test can hand in a failing migration and
+ * check that the rollback claim is true. Every caller uses the default.
+ *
+ * Per-migration transactions rather than one around all of them: a failure part
+ * way through a series should leave the file at the last version that fully
+ * applied, not roll back work that succeeded. Either way the file is at a
+ * version that some code in this repo was written against.
+ */
+export const migrate = (db: Db, steps: readonly Migration[] = migrations): number => {
+  let current = db.pragma('user_version', { simple: true }) as number;
+
+  for (const step of steps) {
+    if (step.version <= current) continue;
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(step.sql);
+      // PRAGMA takes no bound parameters, so this is string interpolation by
+      // necessity. The value is a number literal from the static array above
+      // and never anything a caller supplied.
+      db.pragma(`user_version = ${step.version}`);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+
+    current = step.version;
+  }
+
+  return current;
+};
