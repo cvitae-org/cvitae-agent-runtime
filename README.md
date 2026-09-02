@@ -222,10 +222,11 @@ hand-corrected job title to a hallucinated one is the worst thing an importer ca
 do, and it is silent. The cost: correcting a value means editing `cv.json`, because
 re-importing will not do it. Delete the file to start over.
 
-No URLs. A link becomes a `text` source with the URL as its label, because
-cvitae-scrapper already settled this question for LinkedIn — it refuses to crawl
-and takes text you copied from your own browser instead. Adding a fetcher here
-would work around that decision for the one site most likely to ban the account.
+No URLs. A link becomes a `text` source with the URL as its label, because the
+offer-acquisition side already settled this question for LinkedIn — it refuses
+to crawl and takes text you copied from your own browser instead. Adding a
+fetcher here would work around that decision for the one site most likely to ban
+the account.
 
 ### One step does not use the model
 
@@ -360,8 +361,9 @@ board, and the difference between a bad draft and a bad send is who else sees it
 
 `mail/` is a client for [cvitae-mail](https://github.com/cvitae-org/cvitae-mail), a sibling service that
 holds the Gmail credential so this process does not. It runs as its own process
-for the same reason cvitae-scrapper does, with a sharper motive: an API key can
-be rotated after a leak and the cost is a bill, while a mailbox token is read
+for the same reason this one is not part of cvitae, with a sharper motive: an
+API key can be rotated after a leak and the cost is a bill, while a mailbox
+token is read
 access to everything the user was ever sent plus the ability to write as them.
 
 ```ts
@@ -383,7 +385,7 @@ omission.** `tools/index.ts` states the invariant — no tool fetches a URL the
 model names, so a confused or injected model returns something unhelpful rather
 than exfiltrating the CV. A draft function is exactly the primitive that
 excludes: arbitrary recipient, arbitrary body, and the body can be the CV. It is
-not hypothetical, because this runtime puts scraped offer text — written by
+not hypothetical, because this runtime puts collected offer text — written by
 whoever posted the offer — into model context. Drafting is called from a route
 or a `transform`, with a recipient a human confirmed.
 
@@ -835,7 +837,7 @@ something to measure against.
 | `CVITAE_HOME`                                   | `~/.cvitae`                   |                                          |
 | `AI_LOG_MODE`                                   | `metadata`                    | `metadata` or `off`; never stores content |
 | `AI_LOG_DIR`                                    | `<CVITAE_HOME>/ai-logs`       | daily `ai-YYYY-MM-DD.jsonl` files         |
-| `SCRAPER_URL`                                   | `http://127.0.0.1:8787`       | cvitae-scrapper, fetching and board discovery; empty disables both |
+| `SCRAPER_URL`                                   | `http://127.0.0.1:8787`       | the offer fetcher *and* board discovery; empty disables both |
 | `BRAVE_API_KEY`                                 | unset                         | the web tier of `verify_recipient`; keyless fallback without it. Board discovery needs none |
 | `WEB_SEARCH`                                    | `auto`                        | `auto`, `brave`, `duckduckgo`, `off`      |
 | `WEB_SEARCH_COUNTRY`                            | `pl`                          | which market to search                    |
@@ -1096,9 +1098,10 @@ spent, and the process says so at startup if it finds one.
   `WEB_SEARCH=off` reports "the search did not run" honestly rather than
   pretending the web held nothing; set `BRAVE_API_KEY` and remove the line to
   turn the tier back on.
-- **The scraper is absent**, so the boards that render client-side cannot be
-  read at all. That is the largest functional gap between the two deployments,
-  and the remedy is a scraper of your own on a public host in `SCRAPER_URL`.
+- **No offer fetcher is reachable**, so the boards that render client-side
+  cannot be read at all. That is the largest functional gap between the two
+  deployments, and the remedy is to run one of your own on a public host and
+  point `SCRAPER_URL` at it.
 - **Function minutes are still spendable** by anyone who finds the URL. Set
   `RUNTIME_TOKEN` and the caller must present it; it is off by default because
   the money is already safe without it.
@@ -1379,7 +1382,7 @@ path threw away all three and fell back to guessing the employer's domain from
 their name. The condition is now about what is still *unknown* rather than what
 was supplied.
 
-**The scraper answered and nobody was listening.** Working out a domain probes
+**The fetch answered and nobody was listening.** Working out a domain probes
 up to ten hosts at the project's 15s ceiling; measured at 31s, against a 30s
 client timeout sized for one offer fetch. An identical `curl` returned 200 while
 the capability's own request never completed. Probing now uses a 6s per-host
