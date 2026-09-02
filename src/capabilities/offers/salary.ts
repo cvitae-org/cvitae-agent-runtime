@@ -35,7 +35,7 @@
  * PLN against a salary in EUR is `unknown`, which is the truthful answer.
  */
 
-import type { SalaryPeriod } from '../store/offerRecord.js';
+import type { SalaryPeriod } from '../../contracts/index.js';
 
 export type ParsedSalary = {
   /** `null` on an open lower bound, and when nothing was found. */

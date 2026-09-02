@@ -30,7 +30,7 @@
  * offer, and the symptom would be a discovery round that finds one job.
  */
 
-import { fingerprint } from '../core/fingerprint.js';
+import { fingerprint } from '../../hash.js';
 
 /**
  * Parameters that never identify a posting.

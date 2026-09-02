@@ -44,8 +44,8 @@
  * they are trying to leave.
  */
 
-import type { CvDocument } from '../store/cvDocument.js';
-import type { Preferences } from '../store/preferences.js';
+import type { CvDocument } from '../cv/document.js';
+import type { Preferences } from './preferences.js';
 import { searchableBoards } from './boards.js';
 
 /**

@@ -14,14 +14,29 @@ means the consolidation stopped halfway.
 
 | here | goes to | why |
 | --- | --- | --- |
-| `offers/` (17 files, 4,372 lines) | `effects/` + `capabilities/` | The whole discovery round — board search, criteria, scoring, salary parsing, shortlist, rescore. The spine has none of it; `effects/offers.ts` is only fetch and text extraction. This is the largest single asset in the merge. |
+| `offers/` (10 files left of 17) | `effects/` + `capabilities/` | What remains is the part that does I/O or holds state: `round`, `boardSearch`, `rescore`, `shortlist`, `resolve`, `fetch`, `scraper`, `page`, `webSearch`, `index`. The pure judgment is ported. |
 | `sources/` | `effects/sources.ts` | PDF and image reading. The spine's version covers less. |
-| `store/preferences.ts` | a capability + a table | The hunt criteria the user edits. |
+| ~~`store/preferences.ts`~~ | ~~`capabilities/offers/preferences.ts`~~ | **Done.** A `documents` row rather than a JSON file — it is read whole, written whole and never queried by field. `PreferencesStore` is replaced by `DocumentStore`. |
 | ~~`store/offerRecord.ts`~~ | ~~`contracts/offer.ts` + `storage/sqlite/`~~ | **Done.** The vocabulary and the schema. Its `OfferRecordStore` is replaced by `OfferStore`, whose `needingRating` is a WHERE clause where this was a full scan. |
 | `ai/logging.ts` | `effects/ai.ts` | Metadata-only audit log of every model call. The spine logs nothing. |
 | `prompt/builder.ts` | `context/` | Compare against `context/render.ts` before porting; they overlap. |
 | `capabilities/*.ts` (flat) | reconcile with `src/capabilities/` | Nine of these have a counterpart on the spine. One version survives each. |
 | `scripts/*.test.ts` | `scripts/` | The tests that cover the above, rewritten against the ported shape. |
+
+### Ported so far
+
+`boards`, `identity`, `salary`, `criteria`, `queries`, `verify` and `boardFacts`
+(now `facts.ts`) live in `src/capabilities/offers/`, beside `preferences.ts`.
+They are pure — no I/O, no storage — which is why they went first: they needed
+only the vocabulary, not the engine.
+
+`core/fingerprint.ts` became `src/hash.ts`, and `retrieval/chunk.ts` now uses it
+instead of its own identical copy of the same eight lines.
+
+A ported file is deleted from here as it lands, so the files left behind now
+import modules that no longer exist beside them. That is intended: nothing in
+`port/` is compiled, and a second editable copy of a module already on the spine
+is a trap. Read the ported version in `src/`, or `git show` the original.
 
 ## What is already decided against
 

@@ -19,6 +19,8 @@
  * would cut across two of them and retrieve half of each.
  */
 
+import { fingerprint } from '../hash.js';
+
 /**
  * A candidate unit, as the caller sees it.
  *
@@ -54,29 +56,6 @@ export type Chunk = {
  */
 export const MIN_LENGTH = 25;
 
-/**
- * A short deterministic hash of the source text.
- *
- * Keying by index alone would reassign every id below an edit when a piece is
- * inserted, so the whole tail re-embeds for nothing. Keying by content means
- * only what changed is recomputed, which is the difference between a re-index
- * measured in milliseconds and one measured in seconds against a local server.
- *
- * FNV-1a: not cryptographic, and does not need to be. A collision would reuse
- * one embedding for two different strings, and the inputs are a user's own
- * documents rather than anything adversarial.
- */
-const hash = (value: string): string => {
-  let digest = 0x811c9dc5;
-
-  for (let index = 0; index < value.length; index += 1) {
-    digest ^= value.charCodeAt(index);
-    digest = Math.imul(digest, 0x01000193) >>> 0;
-  }
-
-  return digest.toString(36);
-};
-
 const clean = (value: string): string => value.replace(/\s+/g, ' ').trim();
 
 /**
@@ -104,7 +83,7 @@ export const chunkPieces = (pieces: readonly Piece[]): Chunk[] => {
     // The id is derived from everything that goes into the vector, so two
     // bullets identical in wording but attached to different employers are
     // different chunks — which they are, and which the vectors reflect.
-    const id = `${piece.kind}:${hash(embedded)}`;
+    const id = `${piece.kind}:${fingerprint(embedded)}`;
 
     if (seen.has(id)) continue;
 

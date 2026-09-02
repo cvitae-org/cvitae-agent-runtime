@@ -21,7 +21,7 @@
  *     table, not to this wiring.
  */
 
-import { workModes } from '../capabilities/analyzeOffer.js';
+import { workModes } from '../../contracts/index.js';
 
 /**
  * The keys this may write. Named here rather than imported from cvitae's

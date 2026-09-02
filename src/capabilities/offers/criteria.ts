@@ -42,8 +42,8 @@
  * visibly a guess — instead of borrowing a perfect score from its own silence.
  */
 
-import type { OfferRecord, Eligibility, SalaryPeriod } from '../store/offerRecord.js';
-import type { Preferences, ContractType, Strength } from '../store/preferences.js';
+import type { Eligibility, OfferRecord, SalaryPeriod } from '../../contracts/index.js';
+import type { ContractType, Preferences, Strength } from './preferences.js';
 
 /**
  * Bumped when a rule changes, so a stale score is recognisable as stale.
@@ -91,12 +91,12 @@ export type Evaluation = {
  * no text was never read at all.
  */
 export const COUNTED_FACTS = [
-  'title',
+  'position',
   'company',
   'location',
-  'work_mode',
+  'workMode',
   'seniority',
-  'contract_type',
+  'contractType',
   'salary'
 ] as const;
 
@@ -232,6 +232,12 @@ const round = (value: number): number => Math.round(value * 100) / 100;
  */
 const compareSalary = (record: OfferRecord, preferences: Preferences): CriterionVerdict => {
   const { strength, floor, currency, period, basis } = preferences.salary;
+
+  // An offer with no reading at all and one parsed off a page that stated no
+  // period reach every branch below identically — both are "nothing to compare
+  // against" rather than zero. Flattening them here keeps that from having to
+  // be restated at each of the six checks.
+  const salary = record.salaryReading ?? { min: null, max: null, currency: '', period: '' };
   const base: Omit<CriterionVerdict, 'verdict' | 'because'> = {
     criterion: 'salary',
     strength
@@ -243,20 +249,20 @@ const compareSalary = (record: OfferRecord, preferences: Preferences): Criterion
     because
   });
 
-  if (record.salary_min === null && record.salary_max === null) {
+  if (salary.min === null && salary.max === null) {
     return undecided('the posting states no figure');
   }
 
-  if (!record.salary_currency) return undecided('the posting states no currency');
+  if (!salary.currency) return undecided('the posting states no currency');
 
-  if (record.salary_currency !== currency) {
+  if (salary.currency !== currency) {
     return undecided(
-      `quoted in ${record.salary_currency} against a floor in ${currency}; no exchange rate is applied`
+      `quoted in ${salary.currency} against a floor in ${currency}; no exchange rate is applied`
     );
   }
 
   if (basis !== 'any') {
-    const offered = readContractTypes(record.contract_type);
+    const offered = readContractTypes((record.contractType ?? ''));
 
     if (offered.length === 0) {
       return undecided(
@@ -271,16 +277,16 @@ const compareSalary = (record: OfferRecord, preferences: Preferences): Criterion
     }
   }
 
-  if (!record.salary_period) return undecided('the posting states no period');
+  if (!salary.period) return undecided('the posting states no period');
 
   const bottom =
-    record.salary_min === null
+    salary.min === null
       ? 0
-      : toMonthly(record.salary_min, record.salary_period, preferences.assumptions);
+      : toMonthly(salary.min, salary.period, preferences.assumptions);
   const top =
-    record.salary_max === null
+    salary.max === null
       ? Number.POSITIVE_INFINITY
-      : toMonthly(record.salary_max, record.salary_period, preferences.assumptions);
+      : toMonthly(salary.max, salary.period, preferences.assumptions);
   const wanted = toMonthly(floor as number, period, preferences.assumptions);
 
   if (bottom === null || top === null || wanted === null) {
@@ -291,12 +297,12 @@ const compareSalary = (record: OfferRecord, preferences: Preferences): Criterion
   // conversion the user did not expect is the likeliest reason for a verdict
   // they disagree with.
   const converted =
-    record.salary_period === period
+    salary.period === period
       ? ''
-      : ` (converted from ${record.salary_period} at ${
-          record.salary_period === 'hour'
+      : ` (converted from ${salary.period} at ${
+          salary.period === 'hour'
             ? `${preferences.assumptions.hours_per_month} h/month`
-            : record.salary_period === 'day'
+            : salary.period === 'day'
               ? `${preferences.assumptions.days_per_month} days/month`
               : '12 months/year'
         })`;
@@ -327,7 +333,7 @@ const compareWorkMode = (
 
   const wanted = accept.join('/');
 
-  if (!record.work_mode || record.work_mode === 'unknown') {
+  if (!(record.workMode ?? '') || (record.workMode ?? '') === 'unknown') {
     return {
       criterion: 'work_mode',
       strength,
@@ -336,13 +342,13 @@ const compareWorkMode = (
     };
   }
 
-  const matched = (accept as readonly string[]).includes(record.work_mode);
+  const matched = (accept as readonly string[]).includes((record.workMode ?? ''));
 
   return {
     criterion: 'work_mode',
     strength,
     verdict: matched ? 'pass' : 'fail',
-    because: `the posting is ${record.work_mode}; ${wanted} wanted`
+    because: `the posting is ${(record.workMode ?? '')}; ${wanted} wanted`
   };
 };
 
@@ -353,7 +359,7 @@ const compareContract = (
   const { strength, accept } = preferences.contract_type;
   if (accept.length === 0) return null;
 
-  const offered = readContractTypes(record.contract_type);
+  const offered = readContractTypes((record.contractType ?? ''));
   const wanted = accept.join('/');
 
   if (offered.length === 0) {
@@ -361,8 +367,8 @@ const compareContract = (
       criterion: 'contract_type',
       strength,
       verdict: 'unknown',
-      because: record.contract_type
-        ? `"${record.contract_type}" names no contract form this build knows; ${wanted} wanted`
+      because: (record.contractType ?? '')
+        ? `"${(record.contractType ?? '')}" names no contract form this build knows; ${wanted} wanted`
         : `the posting does not say; ${wanted} wanted`
     };
   }
@@ -412,7 +418,7 @@ const compareSkills = (record: OfferRecord, preferences: Preferences): Criterion
   const { strength, require } = preferences.skills;
   if (require.length === 0) return [];
 
-  const offered = record.skills.filter((entry) => entry.trim().length > 0);
+  const offered = (record.skills ?? []).filter((entry) => entry.trim().length > 0);
 
   return require.map((skill) => {
     const criterion = `skill:${skillKey(skill)}`;

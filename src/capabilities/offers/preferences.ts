@@ -1,11 +1,11 @@
 /**
  * What the user wants out of a job, in a form deterministic code can check.
  *
- * The third authored file, and the smallest. `cv.json` says what the user has
- * done and `offers.jsonl` says what the runtime has seen; this says what would
+ * The smallest of the authored documents. The CV says what the user has done
+ * and the offers table says what the runtime has seen; this says what would
  * make one of those offers worth reading. It is the other half of every score:
  * a rating is only meaningful relative to a CV *and* a set of requirements,
- * which is why `OfferRecord` fingerprints both.
+ * which is why `OfferRating` fingerprints both.
  *
  * ## Why the slots are closed and few
  *
@@ -40,15 +40,12 @@
  * runtime quietly inventing a working month.
  *
  * No such number exists for B2B against a permanent contract, which is exactly
- * why `basis` is a separate field — see `compareSalary` in `offers/criteria.ts`.
+ * why `basis` is a separate field — see `compareSalary` in `criteria.ts`.
  */
 
-import { readFile, writeFile, rename } from 'node:fs/promises';
 import { z } from 'zod';
-import { fingerprintValue } from '../core/fingerprint.js';
-import { ensureHome, preferencesPath } from './paths.js';
-import { workModes } from '../capabilities/analyzeOffer.js';
-import { salaryPeriods } from './offerRecord.js';
+import { salaryPeriods, workModes } from '../../contracts/index.js';
+import { fingerprintValue } from '../../hash.js';
 
 /**
  * Forms of employment, as the Polish market names them.
@@ -160,65 +157,44 @@ export const fingerprintPreferences = (preferences: Preferences): string => {
   return fingerprintValue(content);
 };
 
-export class PreferencesStore {
-  constructor(private readonly path: string = preferencesPath()) {}
+/**
+ * The document id and kind.
+ *
+ * One set of preferences per runtime, so the id is a constant for the same
+ * reason `CV_ID` is: a second one would need a way for a caller to say which,
+ * and no capability has anything to say about requirements that are not the
+ * user's own.
+ *
+ * Stored as a document beside the CV rather than in a table of its own. It is
+ * one authored blob that is read whole, written whole and never queried by
+ * field — which is the shape `documents` already exists for.
+ */
+export const PREFERENCES_ID = 'preferences';
+export const PREFERENCES_KIND = 'preferences';
 
-  /**
-   * Reads the preferences, or the empty ones on first run.
-   *
-   * Same split as `CvDocumentStore.read`: absent is a normal state and parses
-   * to defaults, but present-and-malformed throws. A hand edit that breaks the
-   * shape must not silently become "no requirements", because the visible
-   * symptom would be a search that suddenly likes everything.
-   */
-  async read(): Promise<Preferences> {
-    let raw: string;
+/**
+ * Reads a stored body back as preferences.
+ *
+ * A body that does not parse throws rather than falling back to the defaults.
+ * The defaults state nothing and therefore filter nothing, so swallowing the
+ * error would turn "your requirements file is corrupt" into "you appear to have
+ * no requirements" — and the user would find out by being shown every offer on
+ * the board.
+ */
+export const asPreferences = (
+  body: Readonly<Record<string, unknown>> | undefined
+): Preferences => {
+  if (!body) return emptyPreferences();
 
-    try {
-      raw = await readFile(this.path, 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return emptyPreferences();
-      }
-      throw error;
-    }
+  const parsed = preferencesSchema.safeParse(body);
 
-    let value: unknown;
-
-    try {
-      value = JSON.parse(raw);
-    } catch (error) {
-      throw new Error(`${this.path} is not valid JSON: ${(error as Error).message}`, {
-        cause: error
-      });
-    }
-
-    const parsed = preferencesSchema.safeParse(value);
-
-    if (!parsed.success) {
-      throw new Error(
-        `${this.path} does not match the preferences schema: ${parsed.error.issues
-          .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-          .join('; ')}`
-      );
-    }
-
-    return parsed.data;
+  if (!parsed.success) {
+    throw new Error(
+      `The stored preferences do not match the schema: ${parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; ')}`
+    );
   }
 
-  /** Temp file plus rename, for the reason `CvDocumentStore.write` gives. */
-  async write(preferences: Preferences): Promise<Preferences> {
-    await ensureHome();
-
-    const next = preferencesSchema.parse({
-      ...preferences,
-      updated_at: new Date().toISOString()
-    });
-
-    const temporary = `${this.path}.${process.pid}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
-    await rename(temporary, this.path);
-
-    return next;
-  }
-}
+  return parsed.data;
+};
