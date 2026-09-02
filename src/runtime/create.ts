@@ -42,6 +42,7 @@ import { createChunkIndex } from '../storage/sqlite/chunk-index.js';
 import { createOfferStore } from '../storage/sqlite/offers.js';
 import { createAiLog } from '../storage/sqlite/ai-log.js';
 import { createSettingsStore } from '../storage/sqlite/settings.js';
+import { createConversationStore } from '../storage/sqlite/conversations.js';
 import { createAttemptLog } from '../storage/sqlite/attempts.js';
 import { createModelResolver } from '../providers/resolve.js';
 import { createEnvironment, validateSettings } from '../providers/environment.js';
@@ -67,6 +68,7 @@ import type {
   ApprovalStore,
   CapabilityMap,
   ChunkIndex,
+  ConversationStore,
   DocumentBody,
   DocumentRecord,
   DocumentStore,
@@ -190,6 +192,13 @@ export type Harness = {
   readonly chunks: ChunkIndex;
   readonly offers: OfferStore;
   /**
+   * The durable transcript, one per subject.
+   *
+   * Not derived from runs and not derivable from them: what a person asked is
+   * theirs, and a run is only the machinery that answered one of the questions.
+   */
+  readonly conversations: ConversationStore;
+  /**
    * What every model call cost, read back. The gateway holds only the write
    * half — see `AiLog` — so a step can add a line and nothing else.
    */
@@ -251,6 +260,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   const attempts = createAttemptLog(db);
   const aiLog = createAiLog(db);
   const settings = createSettingsStore(db, options.now);
+  const conversations = createConversationStore(db, options.now);
 
   // The user's choices over the inherited environment, applied before anything
   // can resolve a model. A stored setting that has since become invalid — a
@@ -337,6 +347,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     },
     chunks,
     offers,
+    conversations,
     aiCalls: aiLog,
     approvals,
     mail: createMailSender({

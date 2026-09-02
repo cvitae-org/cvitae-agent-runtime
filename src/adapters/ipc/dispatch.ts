@@ -365,7 +365,42 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
       return ok({ providerId, configured: false });
     },
 
-    'providers.status': async () => ok(await harness.settings.status())
+    'providers.status': async () => ok(await harness.settings.status()),
+
+    'conversations.list': () => ok({ conversations: harness.conversations.list() }),
+
+    'conversations.open': ({ subject }) =>
+      ok({ conversation: harness.conversations.open(subject) }),
+
+    'conversations.get': ({ conversationId }) => {
+      const found = harness.conversations.read(conversationId);
+
+      if (!found) return failed('not_found', `No such conversation: ${conversationId}`);
+
+      return ok(found);
+    },
+
+    'conversations.append': ({ conversationId, message }) => {
+      // Checked here rather than left to the foreign key, which would answer a
+      // client appending to a conversation it has just deleted with a
+      // constraint name instead of a reason.
+      if (!harness.conversations.read(conversationId)) {
+        return failed('not_found', `No such conversation: ${conversationId}`);
+      }
+
+      return ok({ message: harness.conversations.append(conversationId, message) });
+    },
+
+    'conversations.rename': ({ conversationId, title }) => {
+      const renamed = harness.conversations.rename(conversationId, title);
+
+      if (!renamed) return failed('not_found', `No such conversation: ${conversationId}`);
+
+      return ok({ conversation: renamed });
+    },
+
+    'conversations.delete': ({ conversationId }) =>
+      ok({ deleted: harness.conversations.delete(conversationId) })
   };
 
   const handle = async (channel: Channel, payload: unknown): Promise<Response> => {

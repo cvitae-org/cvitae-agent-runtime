@@ -49,6 +49,27 @@ const runId = z.string().min(1);
  */
 const setting = z.string().max(200).nullish();
 
+const conversationId = z.string().min(1);
+
+/**
+ * What a conversation is about.
+ *
+ * Mirrors the client's sealed `ChatSubject` exactly, including the rule that
+ * makes the pair a key: the profile is one conversation and carries no id, and
+ * an offer conversation is meaningless without one. A profile subject that
+ * arrived with an id would open a second profile conversation the client has no
+ * way to navigate to, so it is refused rather than trimmed.
+ */
+const subject = z
+  .object({
+    kind: z.enum(['profile', 'offer']),
+    id: z.string().max(200).default('')
+  })
+  .refine(
+    (value) => (value.kind === 'offer' ? value.id !== '' : value.id === ''),
+    'A profile conversation carries no id, and an offer conversation needs one.'
+  );
+
 const settings = z.object({
   providerId: setting,
   modelId: setting,
@@ -170,7 +191,42 @@ export const payloads = {
    * connection" button: a person part-way through configuring the app should
    * not be billed for finding out that they are not finished.
    */
-  'providers.status': z.object({})
+  'providers.status': z.object({}),
+
+  'conversations.list': z.object({}),
+
+  /**
+   * The conversation about a subject, created on first use.
+   *
+   * `open` rather than `create`, because there is exactly one per subject and a
+   * caller asking for it does not know or care whether this is the first
+   * question. A `create` that usually returns something it did not create is
+   * the same function with a name that lies about half its outcomes.
+   */
+  'conversations.open': z.object({ subject }),
+
+  'conversations.get': z.object({ conversationId }),
+
+  /**
+   * `text` is capped generously rather than tightly. A pasted job description
+   * is a legitimate question and is routinely tens of thousands of characters;
+   * the limit is here to bound a row, not to have an opinion about length.
+   */
+  'conversations.append': z.object({
+    conversationId,
+    message: z.object({
+      role: z.enum(['user', 'assistant']),
+      text: z.string().max(200_000),
+      /** The run this message belongs to. It must already exist. */
+      runId: z.string().min(1).optional(),
+      /** The client's id for a message it has already drawn. */
+      id: z.string().min(1).max(200).optional()
+    })
+  }),
+
+  'conversations.rename': z.object({ conversationId, title: z.string().max(200) }),
+
+  'conversations.delete': z.object({ conversationId })
 } as const;
 
 export type Channel = keyof typeof payloads;

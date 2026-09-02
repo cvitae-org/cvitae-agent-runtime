@@ -9,6 +9,7 @@
 export * from './ai-log.js';
 export * from './capability.js';
 export * from './chunk-index.js';
+export * from './conversation.js';
 export * from './document-store.js';
 export * from './effects.js';
 export * from './event.js';
