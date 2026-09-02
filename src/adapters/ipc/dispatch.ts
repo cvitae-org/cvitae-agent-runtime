@@ -381,11 +381,16 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     },
 
     'conversations.append': ({ conversationId, message }) => {
-      // Checked here rather than left to the foreign key, which would answer a
-      // client appending to a conversation it has just deleted with a
-      // constraint name instead of a reason.
+      // Both checked here rather than left to the foreign keys, which answer a
+      // client appending to a conversation it has just deleted — or naming a
+      // run from a database that has since been replaced — with
+      // "FOREIGN KEY constraint failed" and no hint as to which one.
       if (!harness.conversations.read(conversationId)) {
         return failed('not_found', `No such conversation: ${conversationId}`);
+      }
+
+      if (message.runId !== undefined && !harness.runs.get(message.runId)) {
+        return failed('not_found', `No such run: ${message.runId}`);
       }
 
       return ok({ message: harness.conversations.append(conversationId, message) });

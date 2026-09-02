@@ -377,6 +377,19 @@ test('an answer points back at the run that produced it', async () => {
 
     assert.deepEqual(read.messages.map((message) => message.runId), [undefined, runId]);
     assert.equal(read.messages[1]?.text, 'Distributed systems.');
+
+    // And a link to a run that is not there is refused by name. The column has
+    // a foreign key behind it, which on its own answers "FOREIGN KEY constraint
+    // failed" — true, and no help at all to a client holding two ids and no way
+    // to tell which one the database did not recognise.
+    const orphan = error(
+      await it.dispatch('conversations.append', {
+        conversationId: conversation.id,
+        message: { role: 'assistant', text: 'From nowhere.', runId: 'never-ran' }
+      })
+    );
+    assert.equal(orphan.code, 'not_found');
+    assert.match(orphan.message, /never-ran/);
   } finally {
     it.dispose();
   }
