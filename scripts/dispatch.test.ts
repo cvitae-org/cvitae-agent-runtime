@@ -62,7 +62,12 @@ const harnessFor = (capabilities: CapabilityMap): { harness: Harness; dispose():
   const harness = createHarness({
     databasePath: join(dir, 'harness.db'),
     capabilities,
-    logger: silentLogger
+    logger: silentLogger,
+    // Nothing inherited and nothing dialled. These tests are about the
+    // envelope, and a channel sweep that opens a socket would pass or fail
+    // depending on what is running on the machine.
+    env: {},
+    probe: () => Promise.reject(new Error('no local server in these tests'))
   });
 
   return {

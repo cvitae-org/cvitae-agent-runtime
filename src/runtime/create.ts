@@ -41,8 +41,11 @@ import { createDocumentStore } from '../storage/sqlite/document-store.js';
 import { createChunkIndex } from '../storage/sqlite/chunk-index.js';
 import { createOfferStore } from '../storage/sqlite/offers.js';
 import { createAiLog } from '../storage/sqlite/ai-log.js';
+import { createSettingsStore } from '../storage/sqlite/settings.js';
 import { createAttemptLog } from '../storage/sqlite/attempts.js';
 import { createModelResolver } from '../providers/resolve.js';
+import { createEnvironment, validateSettings } from '../providers/environment.js';
+import { providerStatus, type ProviderStatus } from '../providers/status.js';
 import { createAiGateway } from '../effects/ai.js';
 import { createWebReader } from '../effects/offers.js';
 import { createWebSearch } from '../effects/search.js';
@@ -73,6 +76,7 @@ import type {
   RunRecord,
   RunResult,
   RunStore,
+  Settings,
   StepDelta
 } from '../contracts/index.js';
 
@@ -135,6 +139,20 @@ export type CreateOptions = {
    * with a window attached supplies one and routes by `runId`.
    */
   readonly deltas?: (delta: StepDelta & { readonly runId: string }) => void;
+  /**
+   * The environment the stored settings are laid over. Defaults to this
+   * process's, and exists so a test can build a runtime that inherits nothing.
+   */
+  readonly env?: Readonly<Partial<Record<string, string>>>;
+  /**
+   * How `providers.status` reaches a local server.
+   *
+   * Injected only so a test need not depend on whether something happens to be
+   * listening on this machine — a status check that passes on the laptop with
+   * Ollama running and fails in CI is a test about the machine. Nothing else in
+   * the runtime uses it; the web effects take their own.
+   */
+  readonly probe?: typeof globalThis.fetch;
   readonly newRunId?: () => string;
   readonly now?: () => number;
 };
@@ -185,6 +203,24 @@ export type Harness = {
   /** Not an effect and not on any context. See the note at the top. */
   readonly mail: MailSender;
   readonly capabilities: CapabilityMap;
+  /**
+   * What model this runtime talks to, changeable while it is running.
+   *
+   * A settings change must not restart the process: a person editing a model id
+   * while a run is going should not have that run killed by the edit. The
+   * resolver reads a record this object owns, so a write here is visible to the
+   * next call and to nothing that already started.
+   *
+   * `secret` is the half that never touches the database. See
+   * `providers/environment.ts` — the keychain on the host's side is the store of
+   * record, and this process holds a copy for as long as it is alive.
+   */
+  readonly settings: {
+    read(): Settings;
+    write(next: Settings): Settings;
+    secret(providerId: string, apiKey: string | undefined): void;
+    status(): Promise<ProviderStatus>;
+  };
   /** Settles work left running by a previous process. It never replays an effect. */
   recoverInterrupted(): readonly RunRecord[];
   close(): void;
@@ -214,6 +250,19 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   const offers = createOfferStore(db);
   const attempts = createAttemptLog(db);
   const aiLog = createAiLog(db);
+  const settings = createSettingsStore(db, options.now);
+
+  // The user's choices over the inherited environment, applied before anything
+  // can resolve a model. A stored setting that has since become invalid — a
+  // provider removed between releases — must not stop the runtime from opening,
+  // because the settings page that would fix it lives in the application this
+  // runtime is serving.
+  const environment = createEnvironment(options.env);
+  try {
+    environment.apply(settings.read());
+  } catch {
+    environment.apply({});
+  }
 
   const replaceProfile = db.transaction((document: DocumentBody) => {
     const record = documents.update(CV_ID, CV_KIND, () => document);
@@ -227,8 +276,10 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   // credential still opens, still lists runs, and still fails at the point of
   // use with a message naming the variable rather than at import time with a
   // stack.
+  const resolver = createModelResolver({ env: environment.env });
+
   const ai = createAiGateway({
-    resolver: createModelResolver(),
+    resolver,
     logger,
     ...(options.now ? { now: options.now } : {})
   });
@@ -293,6 +344,23 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
       ...(options.mailUrl === undefined ? {} : { url: options.mailUrl })
     }),
     capabilities: deps.capabilities,
+    settings: {
+      read: settings.read,
+      // Validated, then stored, then applied — in that order, so a value that
+      // cannot work never reaches the file and a value that reached the file is
+      // already in force.
+      write: (next) => {
+        const checked = validateSettings(next);
+        const stored = settings.replace(checked);
+        environment.apply(stored);
+        return stored;
+      },
+      secret: (providerId, apiKey) => environment.secret(providerId, apiKey),
+      status: () =>
+        providerStatus(resolver, environment, {
+          ...(options.probe ? { fetch: options.probe } : {})
+        })
+    },
     recoverInterrupted: () => recoverInterruptedRuns(runs, options.now),
     close: () => db.close()
   };

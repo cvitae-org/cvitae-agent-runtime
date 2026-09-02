@@ -16,4 +16,5 @@ export * from './event-log.js';
 export * from './offer.js';
 export * from './run.js';
 export * from './run-store.js';
+export * from './settings.js';
 export * from './tools.js';

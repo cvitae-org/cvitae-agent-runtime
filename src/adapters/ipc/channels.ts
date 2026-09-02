@@ -43,6 +43,20 @@ import { runStatuses } from '../../contracts/index.js';
 
 const runId = z.string().min(1);
 
+/**
+ * One model setting. Capped because a provider or model id is short, and an
+ * unbounded string on a channel is a row someone can make arbitrarily large.
+ */
+const setting = z.string().max(200).nullish();
+
+const settings = z.object({
+  providerId: setting,
+  modelId: setting,
+  localBaseUrl: setting,
+  embeddingProviderId: setting,
+  embeddingModelId: setting
+});
+
 export const payloads = {
   'capabilities.list': z.object({}),
 
@@ -118,7 +132,45 @@ export const payloads = {
     approvalId: z.string().min(1),
     status: z.enum(['granted', 'denied']),
     decision: z.record(z.string(), z.unknown()).optional()
-  })
+  }),
+
+  'settings.get': z.object({}),
+
+  /**
+   * Replaces every model setting at once.
+   *
+   * Which values are legal is decided by `providers/environment.ts`, not here.
+   * A `z.enum(providerIds)` in this file would be a second copy of the provider
+   * list, kept in step by hand, and the copy is what goes stale — the message a
+   * person reads on a bad value already names the supported providers.
+   *
+   * `nullish` rather than `optional`: a settings form that clears a field sends
+   * `null` at least as often as it omits the key, and both mean the same thing.
+   */
+  'settings.set': z.object({ settings: settings }),
+
+  /**
+   * A credential, for the life of this process.
+   *
+   * It reaches the mutable environment and stops there — no column can hold it,
+   * and the reply carries the provider back but never the key. The store of
+   * record is the host's keychain; this is the copy the resolver reads.
+   */
+  'secrets.set': z.object({
+    providerId: z.string().min(1).max(64),
+    apiKey: z.string().min(1).max(4096)
+  }),
+
+  'secrets.clear': z.object({ providerId: z.string().min(1).max(64) }),
+
+  /**
+   * What the next run would resolve to, and whether it could.
+   *
+   * Answerable without a model call, which is what makes it usable as a "test
+   * connection" button: a person part-way through configuring the app should
+   * not be billed for finding out that they are not finished.
+   */
+  'providers.status': z.object({})
 } as const;
 
 export type Channel = keyof typeof payloads;

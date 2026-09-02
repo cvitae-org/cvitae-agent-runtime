@@ -327,7 +327,45 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
       });
 
       return ok({ approvalId, status });
-    }
+    },
+
+    'settings.get': () => ok({ settings: harness.settings.read() }),
+
+    /**
+     * `null` and absent both mean "not configured", and the runtime's type says
+     * `undefined`. Collapsing them here keeps one meaning of "unset" past the
+     * boundary instead of two that behave the same until someone compares them.
+     */
+    'settings.set': ({ settings }) =>
+      ok({
+        settings: harness.settings.write({
+          providerId: settings.providerId ?? undefined,
+          modelId: settings.modelId ?? undefined,
+          localBaseUrl: settings.localBaseUrl ?? undefined,
+          embeddingProviderId: settings.embeddingProviderId ?? undefined,
+          embeddingModelId: settings.embeddingModelId ?? undefined
+        })
+      }),
+
+    /**
+     * The reply names the provider and never the key.
+     *
+     * Not squeamishness: this envelope is bound for somewhere else, may be
+     * logged by whatever is holding it, and the caller already knows what it
+     * sent. Echoing a credential adds a copy of it to somebody's transcript in
+     * exchange for nothing.
+     */
+    'secrets.set': ({ providerId, apiKey }) => {
+      harness.settings.secret(providerId, apiKey);
+      return ok({ providerId, configured: true });
+    },
+
+    'secrets.clear': ({ providerId }) => {
+      harness.settings.secret(providerId, undefined);
+      return ok({ providerId, configured: false });
+    },
+
+    'providers.status': async () => ok(await harness.settings.status())
   };
 
   const handle = async (channel: Channel, payload: unknown): Promise<Response> => {

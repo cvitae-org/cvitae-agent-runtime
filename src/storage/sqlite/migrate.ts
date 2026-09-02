@@ -13,6 +13,7 @@ import { init0001 } from './migrations/0001-init.js';
 import { stepStopped0002 } from './migrations/0002-step-stopped.js';
 import { offerDiscovery0003 } from './migrations/0003-offer-discovery.js';
 import { aiCalls0004 } from './migrations/0004-ai-calls.js';
+import { settings0005 } from './migrations/0005-settings.js';
 
 export type Migration = { readonly version: number; readonly sql: string };
 
@@ -20,7 +21,8 @@ export const migrations: readonly Migration[] = [
   { version: 1, sql: init0001 },
   { version: 2, sql: stepStopped0002 },
   { version: 3, sql: offerDiscovery0003 },
-  { version: 4, sql: aiCalls0004 }
+  { version: 4, sql: aiCalls0004 },
+  { version: 5, sql: settings0005 }
 ];
 
 export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.version), 0);
