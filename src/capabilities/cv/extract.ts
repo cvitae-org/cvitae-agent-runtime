@@ -616,7 +616,20 @@ export const extractCv: Capability<ExtractCvInput> = {
                           };
 
                     const read = await context.effects.sources.read(payload, call);
-                    parts.push(read.text);
+
+                    // Labelled when there is more than one, because the label
+                    // is a boundary and one source has none. A model reading
+                    // "=== SOURCE: linkedin profile ===" between two documents
+                    // is measurably less likely to merge two employers across
+                    // the join than one reading a wall of concatenated text,
+                    // and it costs a line per source to say so. With a single
+                    // source it would cost a line and mark nothing — including
+                    // one of the forty lines `findSummary` scans.
+                    parts.push(
+                      input.sources.length > 1
+                        ? `=== SOURCE: ${reference} ===\n${read.text}`
+                        : read.text
+                    );
                     // `via` rather than the input kind: a screenshot read by a
                     // vision model is an `ocr` record, and knowing that a field
                     // came from a reading rather than a copy is the whole point

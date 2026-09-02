@@ -73,7 +73,14 @@ import { CV_ID, asCvDocument } from '../src/capabilities/cv/document.js';
 import { RuntimeError } from '../src/contracts/index.js';
 import { startRun } from '../src/runtime/run.js';
 import { objectsFrom, spine, type Spine } from './support/spine.js';
-import type { AiGateway, EffectSet, SourceInput, SourceText } from '../src/contracts/index.js';
+import type {
+  AiGateway,
+  EffectSet,
+  ObjectRequest,
+  ObjectResult,
+  SourceInput,
+  SourceText
+} from '../src/contracts/index.js';
 
 /* ---------------------------------------------------------------- fixtures */
 
@@ -585,4 +592,63 @@ test('a CV with no prose in it is indexed as nothing, not as a failure', async (
     assert.equal(result.data.indexed, 0);
     assert.deepEqual([...result.degraded], []);
   });
+});
+
+/* --------------------------------------------------------- the corpus seam */
+
+/** Captures what each extraction step was actually asked to read. */
+const promptCapture = (): { prompts: string[]; generateObject: AiGateway['generateObject'] } => {
+  const prompts: string[] = [];
+  const answer = objectsFrom((step) => ANSWERS[step] ?? {});
+  return {
+    prompts,
+    generateObject: async <T>(request: ObjectRequest<T>): Promise<ObjectResult<T>> => {
+      prompts.push(request.prompt);
+      return answer(request);
+    }
+  };
+};
+
+test('two sources are labelled where they meet, one is not', async () => {
+  const capture = promptCapture();
+  const s = spine(capabilities, {
+    ai: { generateObject: capture.generateObject, embed: embedder() },
+    effects: { sources: reader().sources }
+  });
+
+  try {
+    await startRun(s.deps, {
+      capability: 'extract_cv',
+      input: {
+        sources: [
+          textSource,
+          { kind: 'text', label: 'linkedin profile', text: 'Ada Lovelace — Analytical Engines' }
+        ]
+      }
+    });
+
+    const corpus = capture.prompts[0] ?? '';
+    // The label is a boundary. A model reading a wall of concatenated text
+    // merges employers across the join; one reading the marker does not.
+    assert.ok(corpus.includes('=== SOURCE: cv.txt ==='), corpus.slice(0, 200));
+    assert.ok(corpus.includes('=== SOURCE: linkedin profile ==='));
+  } finally {
+    s.dispose();
+  }
+
+  const single = promptCapture();
+  const one = spine(capabilities, {
+    ai: { generateObject: single.generateObject, embed: embedder() },
+    effects: { sources: reader().sources }
+  });
+
+  try {
+    await startRun(one.deps, { capability: 'extract_cv', input: { sources: [textSource] } });
+
+    // One source has no boundary to mark, and the line would cost one of the
+    // forty `findSummary` reads before giving up.
+    assert.ok(!(single.prompts[0] ?? '').includes('=== SOURCE:'));
+  } finally {
+    one.dispose();
+  }
 });
