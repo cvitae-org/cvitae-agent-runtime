@@ -91,6 +91,117 @@ export type StatedKey =
   | 'work_mode'
   | 'required_skills';
 
+/* ------------------------------------------------------------- discovery -- */
+
+/**
+ * How far the round got with an offer.
+ *
+ * Written by the search round and by nobody else. It is deliberately not a
+ * judgment about the offer — `'rated'` says a score exists, not that it was
+ * good — because the two questions have different owners and different
+ * lifetimes. A score is recomputed whenever the CV or the criteria change; how
+ * far the machinery got is a fact about one attempt.
+ *
+ * `'unreadable'` earns its place by stopping a retry loop. A board that renders
+ * client-side, one that blocks us, one robots.txt forbids: without a state for
+ * it the round re-fetches the same dead URL every morning forever. It is the
+ * same distinction `RuntimeError` draws with `unreadable_source`.
+ */
+export const processingStates = ['candidate', 'fetched', 'rated', 'unreadable'] as const;
+
+export type ProcessingState = (typeof processingStates)[number];
+
+/**
+ * What a person decided about an offer.
+ *
+ * Kept apart from `ProcessingState` because a machine writes one and a human
+ * writes the other, and conflating them is how a re-scrape silently un-dismisses
+ * something. `'expired'` is the exception, set when a re-fetch 404s.
+ *
+ * Nothing here is a delete. An offer that was applied to is a record of an
+ * application, and the day it stops being retrievable is the day the user
+ * cannot answer "what did I send them, and when?".
+ */
+export const dispositions = ['active', 'dismissed', 'applied', 'expired'] as const;
+
+export type Disposition = (typeof dispositions)[number];
+
+/**
+ * Whether the offer clears the user's requirements.
+ *
+ * Three outcomes and not two. `'provisional'` — nothing failed, but something
+ * could not be decided — is the state that stops silence being read as
+ * agreement. A posting that never mentions salary is not thereby paying enough,
+ * and a scorer that has to answer yes or no will say one of those two things
+ * about it.
+ */
+export const eligibilities = ['unrated', 'eligible', 'provisional', 'ineligible'] as const;
+
+export type Eligibility = (typeof eligibilities)[number];
+
+/**
+ * The basis a salary is quoted on.
+ *
+ * Not optional, and not a detail. In the market this runtime targets, `20000
+ * PLN` is a normal monthly permanent salary and an absurd annual one, and a B2B
+ * rate is often quoted per day. Storing the number without the period makes a
+ * salary floor a coin flip.
+ *
+ * `''` is "the posting did not say", which is different from every other member
+ * and must stay expressible for the same reason `'unknown'` is a `WorkMode`.
+ */
+export const salaryPeriods = ['', 'hour', 'day', 'month', 'year'] as const;
+
+export type SalaryPeriod = (typeof salaryPeriods)[number];
+
+/**
+ * A salary as a machine can compare it, parsed once at write time.
+ *
+ * `null` is unstated, and unstated is not zero. The raw string the posting
+ * printed is kept beside this on the record, because a range parsed wrong is
+ * only discoverable against what it was parsed from.
+ */
+export type SalaryReading = {
+  readonly min: number | null;
+  readonly max: number | null;
+  readonly currency: string;
+  readonly period: SalaryPeriod;
+};
+
+/**
+ * The outcome of scoring one offer against one CV and one set of criteria.
+ *
+ * The two fingerprints are what make "which offers need rescoring?" an equality
+ * check rather than a rescan — the same trick that lets reindexing skip
+ * unchanged chunks. A rating is only meaningful relative to its inputs, so the
+ * inputs are stored with it.
+ *
+ * `fit` and `completeness` are separate numbers on purpose. `fit` is match
+ * quality over *decided* facts — matched / (matched + unmet), with unknowns
+ * excluded from the denominator rather than counted as misses. `completeness`
+ * is how much of the offer was extracted and verified at all. Folding them into
+ * one score makes a posting that states a single requirement read as a perfect
+ * match, which is exactly backwards.
+ */
+export type OfferRating = {
+  readonly eligibility: Eligibility;
+  readonly fit: number | null;
+  readonly completeness: number | null;
+  /**
+   * The per-requirement verdicts behind the two numbers.
+   *
+   * Never indexed and never filtered on: the only question it answers — "why is
+   * this provisional?" — is asked about one offer at a time. Without it the
+   * tri-state is unexplainable, which would defeat the point of having it.
+   */
+  readonly detail?: Readonly<Record<string, unknown>>;
+  readonly ratedAt: number;
+  /** The scoring rules. Bumped when they change, so old scores are recognisable. */
+  readonly scorerVersion: string;
+  readonly cvFingerprint: string;
+  readonly prefsFingerprint: string;
+};
+
 /** An offer as it is stored: canonical text plus whatever the board stated. */
 export type OfferRecord = {
   readonly id: string;
@@ -101,11 +212,52 @@ export type OfferRecord = {
   readonly position?: string;
   readonly location?: string;
   readonly workMode?: WorkMode;
+  readonly seniority?: string;
+  readonly contractType?: string;
+  /** The salary exactly as the posting stated it, for display and for checking. */
+  readonly salary?: string;
+  readonly salaryReading?: SalaryReading;
+  readonly skills?: readonly string[];
   readonly text: string;
   readonly stated?: StatedFacts;
   readonly analysis?: Readonly<Record<string, unknown>>;
   readonly runId?: string;
-  readonly importedAt: number;
+  /**
+   * Two timestamps, because one could not answer the question a standing search
+   * asks. A single `importedAt` restamped on every upsert made an offer seen
+   * daily for a month look new every morning; never restamping it — which is
+   * what the upsert did instead — made "is this still posted?" unanswerable.
+   */
+  readonly firstSeenAt: number;
+  readonly lastSeenAt: number;
+  readonly processing: ProcessingState;
+  readonly disposition: Disposition;
+  readonly rating?: OfferRating;
+};
+
+/**
+ * An offer as the round has just seen it: enough to recognise, not necessarily
+ * enough to store.
+ *
+ * A sighting carries no timestamps and no state. Which of those to write is the
+ * store's decision, and it is the whole reason `sight` exists as an operation
+ * rather than as a `save` the caller prepares — a caller that computed
+ * `firstSeenAt` itself would have to read the row first, and two callers doing
+ * that concurrently is precisely the lost update the JSONL store used to have.
+ */
+export type OfferSighting = Omit<
+  OfferRecord,
+  'firstSeenAt' | 'lastSeenAt' | 'processing' | 'disposition' | 'rating' | 'text'
+> & {
+  readonly text?: string;
+  readonly processing?: ProcessingState;
+};
+
+/** What `sight` did, per offer, so the round can report it without re-reading. */
+export type SightingResult = {
+  readonly id: string;
+  /** First time this machine has seen it. The only offers worth announcing. */
+  readonly isNew: boolean;
 };
 
 /**
@@ -129,4 +281,40 @@ export interface OfferStore {
   /** Insert or replace by id. Returns what was stored. */
   save(offer: OfferRecord): OfferRecord;
   search(text: string, limit: number): OfferRecord[];
+
+  /**
+   * Record a batch of offers the round just saw, in one transaction.
+   *
+   * Preserves `firstSeenAt` and every disposition a person set, advances
+   * `lastSeenAt`, and reports which were new. Batched rather than per-offer
+   * because a round sights tens of offers at once and each one is a read and a
+   * write that must not interleave with another round's.
+   */
+  sight(sightings: readonly OfferSighting[], at: number): SightingResult[];
+
+  /** Attach a score. Separate from `save` because scoring re-runs on its own. */
+  rate(id: string, rating: OfferRating): void;
+
+  /** Record what a person decided. The one write a machine never makes. */
+  setDisposition(id: string, disposition: Disposition): void;
+
+  /**
+   * Offers whose score was computed against different inputs than the current
+   * ones, oldest rating first.
+   *
+   * A WHERE clause rather than a scan the caller filters. The predecessor read
+   * every offer into memory to find the stale ones, which is affordable at a
+   * hundred offers and is the shape that stops being affordable first.
+   */
+  needingRating(
+    cvFingerprint: string,
+    prefsFingerprint: string,
+    limit: number
+  ): OfferRecord[];
+
+  /**
+   * Offers matching a company and position, for recognising the same job posted
+   * twice under two URLs. Folded and diacritic-insensitive, like `search`.
+   */
+  byIdentity(company: string, position: string): OfferRecord[];
 }

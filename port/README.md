@@ -17,6 +17,7 @@ means the consolidation stopped halfway.
 | `offers/` (17 files, 4,372 lines) | `effects/` + `capabilities/` | The whole discovery round — board search, criteria, scoring, salary parsing, shortlist, rescore. The spine has none of it; `effects/offers.ts` is only fetch and text extraction. This is the largest single asset in the merge. |
 | `sources/` | `effects/sources.ts` | PDF and image reading. The spine's version covers less. |
 | `store/preferences.ts` | a capability + a table | The hunt criteria the user edits. |
+| ~~`store/offerRecord.ts`~~ | ~~`contracts/offer.ts` + `storage/sqlite/`~~ | **Done.** The vocabulary and the schema. Its `OfferRecordStore` is replaced by `OfferStore`, whose `needingRating` is a WHERE clause where this was a full scan. |
 | `ai/logging.ts` | `effects/ai.ts` | Metadata-only audit log of every model call. The spine logs nothing. |
 | `prompt/builder.ts` | `context/` | Compare against `context/render.ts` before porting; they overlap. |
 | `capabilities/*.ts` (flat) | reconcile with `src/capabilities/` | Nine of these have a counterpart on the spine. One version survives each. |

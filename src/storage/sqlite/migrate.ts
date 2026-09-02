@@ -11,12 +11,14 @@
 import type { Db } from './open.js';
 import { init0001 } from './migrations/0001-init.js';
 import { stepStopped0002 } from './migrations/0002-step-stopped.js';
+import { offerDiscovery0003 } from './migrations/0003-offer-discovery.js';
 
 export type Migration = { readonly version: number; readonly sql: string };
 
 export const migrations: readonly Migration[] = [
   { version: 1, sql: init0001 },
-  { version: 2, sql: stepStopped0002 }
+  { version: 2, sql: stepStopped0002 },
+  { version: 3, sql: offerDiscovery0003 }
 ];
 
 export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.version), 0);
