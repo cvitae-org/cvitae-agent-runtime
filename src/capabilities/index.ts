@@ -16,6 +16,7 @@ import { analyzeOffer } from './analyzeOffer.js';
 import { draftApplication } from './apply/draft.js';
 import { askProfile } from './askProfile.js';
 import { generateEvidenceSummary } from './cv/evidence.js';
+import { editCv } from './cv/edit.js';
 import { extractCv } from './cv/extract.js';
 import { translateCv } from './cv/translate.js';
 import { verifyRecipient } from './recipient/verify.js';
@@ -24,6 +25,7 @@ export const capabilities: CapabilityMap = {
   [analyzeOffer.name]: analyzeOffer as CapabilityMap[string],
   [askProfile.name]: askProfile as CapabilityMap[string],
   [draftApplication.name]: draftApplication as CapabilityMap[string],
+  [editCv.name]: editCv as CapabilityMap[string],
   [extractCv.name]: extractCv as CapabilityMap[string],
   [generateEvidenceSummary.name]: generateEvidenceSummary as CapabilityMap[string],
   [translateCv.name]: translateCv as CapabilityMap[string],
@@ -34,6 +36,7 @@ export {
   analyzeOffer,
   askProfile,
   draftApplication,
+  editCv,
   extractCv,
   generateEvidenceSummary,
   translateCv,

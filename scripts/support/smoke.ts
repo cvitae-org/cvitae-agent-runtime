@@ -477,6 +477,20 @@ export const smokes: Readonly<Record<string, Smoke>> = {
     input: { question: 'What have I worked on that involved payment systems?' },
     plansWithTheModel: true
   },
+  edit_cv: {
+    /**
+     * No document, which walks the branch that needs no fixture: the spine
+     * opens an empty database, so the read step proposes over an empty CV —
+     * which is what dictating the first line of one does.
+     *
+     * The section is not named either, so the routing call runs. `sampleOf`
+     * answers it from the enum, which is the reason that schema is an enum: a
+     * bare string would sample as the placeholder, fail `isSection`, and this
+     * fixture would prove only that a refusal works.
+     */
+    input: { instruction: 'My name is Ada Lovelace and I am in Warszawa.' },
+    plansWithTheModel: true
+  },
   generate_evidence_summary: {
     input: {
       offer: {
