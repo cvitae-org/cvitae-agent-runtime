@@ -15,6 +15,7 @@ import { offerDiscovery0003 } from './migrations/0003-offer-discovery.js';
 import { aiCalls0004 } from './migrations/0004-ai-calls.js';
 import { settings0005 } from './migrations/0005-settings.js';
 import { conversations0006 } from './migrations/0006-conversations.js';
+import { manyConversations0007 } from './migrations/0007-many-conversations.js';
 
 export type Migration = { readonly version: number; readonly sql: string };
 
@@ -24,7 +25,8 @@ export const migrations: readonly Migration[] = [
   { version: 3, sql: offerDiscovery0003 },
   { version: 4, sql: aiCalls0004 },
   { version: 5, sql: settings0005 },
-  { version: 6, sql: conversations0006 }
+  { version: 6, sql: conversations0006 },
+  { version: 7, sql: manyConversations0007 }
 ];
 
 export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.version), 0);

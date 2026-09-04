@@ -3,10 +3,17 @@
  *
  * The shape follows the client's own model rather than generalising past it.
  * Chat there is keyed by a sealed subject — the profile, or one offer — so a
- * conversation is identified by what it is *about*, and the store's front door
- * is `open`, which returns the one for a subject and creates it if this is the
- * first question. A `create` that sometimes does not create would be the same
- * function with a name that lies about half its outcomes.
+ * conversation is *about* something, and there can be several about the same
+ * thing: rewriting a summary and working out what to say about a two-year gap
+ * are different conversations even though both are about one CV.
+ *
+ * Two front doors, and the difference between them is the whole of the model.
+ * [open] resumes — the most recently active conversation about a subject, or a
+ * first one when there are none — and is what a window restores to. [create]
+ * always creates, and is the New chat button. Neither is the other's default
+ * argument: a `create` that sometimes returns something it did not create is a
+ * name that lies about half its outcomes, and an `open` that always started a
+ * fresh page would lose the transcript every time the app was launched.
  *
  * Two roles and no others. A run's timeline, a failure notice and a streaming
  * caret are all renderings of state that lives elsewhere — in `events`, in the
@@ -21,10 +28,10 @@ export type ConversationSubjectKind = 'profile' | 'offer';
 /**
  * What a conversation is about.
  *
- * The profile's id is the empty string. Not `undefined`: the uniqueness
- * constraint that makes one subject mean one conversation does not apply to
- * NULLs in SQLite, so the one conversation guaranteed to exist would be the one
- * the constraint did not cover.
+ * The profile's id is the empty string rather than `undefined`, so that a
+ * subject is always a pair and the index over it never has to reason about
+ * NULLs — which in SQLite compare unequal to each other and would put every
+ * profile conversation in a bucket of its own.
  */
 export type ConversationSubject = {
   readonly kind: ConversationSubjectKind;
@@ -71,10 +78,15 @@ export type NewMessage = {
 };
 
 export interface ConversationStore {
-  /** Most recently active first. */
-  list(): readonly Conversation[];
-  /** The conversation about this subject, created on first use. */
+  /** Most recently active first; every subject's when given none. */
+  list(subject?: ConversationSubject): readonly Conversation[];
+  /**
+   * The most recently active conversation about this subject, or a new one when
+   * there are none. Resuming, not starting.
+   */
   open(subject: ConversationSubject): Conversation;
+  /** A further conversation about this subject, always a new one. */
+  create(subject: ConversationSubject): Conversation;
   read(id: string): { readonly conversation: Conversation; readonly messages: readonly Message[] } | undefined;
   /** Appends and bumps the conversation's `updatedAt`, in one transaction. */
   append(conversationId: string, message: NewMessage): Message;

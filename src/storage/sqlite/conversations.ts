@@ -5,11 +5,14 @@
  * same reason the event log's `seq` is assigned inside one: a number read and
  * then written is only correct while nothing else can write in between.
  *
- * `open` is a select-then-insert, and the insert can lose a race with another
- * connection opening the same subject. Rather than a lock held across the
- * whole thing, the insert is `ON CONFLICT DO NOTHING` followed by a re-read —
- * so the loser of the race gets the winner's row instead of an error about a
- * constraint the caller has no way to interpret.
+ * `open` is a select-then-insert. Since 0007 there is no unique index to catch
+ * a lost race, so the transaction is what stops two callers resuming the same
+ * subject from creating two conversations and each seeing only its own. It is
+ * `immediate` for that reason: a deferred transaction takes its read lock
+ * first and would let both callers past the select.
+ *
+ * `create` is a bare insert and needs none of that. Two people pressing New
+ * chat at once should get two conversations; that is the outcome, not the race.
  *
  * `append` assigns `seq` from `max(seq) + 1` and bumps the conversation, and
  * those two writes must not be separable: a message with no bump would sit in a
@@ -85,16 +88,23 @@ export const createConversationStore = (
   now: () => number = Date.now,
   newId: () => string = randomUUID
 ): ConversationStore => {
-  const list = db.prepare<[]>(`${SELECT} ORDER BY c.updated_at DESC`);
+  const listAll = db.prepare<[]>(`${SELECT} ORDER BY c.updated_at DESC`);
   const byId = db.prepare<[string]>(`${SELECT} WHERE c.id = ?`);
-  const bySubject = db.prepare<[string, string]>(
-    `${SELECT} WHERE c.subject_kind = ? AND c.subject_id = ?`
+
+  // Both orderings are the index's own: (subject_kind, subject_id,
+  // updated_at DESC) answers the filter and the sort in one seek, which is why
+  // 0007 kept a column it no longer needs for uniqueness.
+  const listOfSubject = db.prepare<[string, string]>(
+    `${SELECT} WHERE c.subject_kind = ? AND c.subject_id = ? ORDER BY c.updated_at DESC`
+  );
+  const latestOfSubject = db.prepare<[string, string]>(
+    `${SELECT} WHERE c.subject_kind = ? AND c.subject_id = ?
+      ORDER BY c.updated_at DESC LIMIT 1`
   );
 
   const insert = db.prepare<[string, string, string, number, number]>(
     `INSERT INTO conversations (id, subject_kind, subject_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT (subject_kind, subject_id) DO NOTHING`
+     VALUES (?, ?, ?, ?, ?)`
   );
 
   const messagesOf = db.prepare<[string]>(
@@ -122,13 +132,21 @@ export const createConversationStore = (
 
   const remove = db.prepare<[string]>('DELETE FROM conversations WHERE id = ?');
 
-  const openSubject = db.transaction((subject: ConversationSubject): Conversation => {
+  // Built from what was written rather than read back. Every field of a row
+  // this new is known here, and a select would only be asking SQLite to confirm
+  // the insert that just succeeded.
+  const start = (subject: ConversationSubject): Conversation => {
     const at = now();
-    // Insert first, ignore a conflict, then read. The read is what answers, so
-    // the caller that lost the race and the caller that won it are told the
-    // same thing about the same row.
-    insert.run(newId(), subject.kind, subject.id, at, at);
-    return toConversation(bySubject.get(subject.kind, subject.id) as ConversationRow);
+    const id = newId();
+    insert.run(id, subject.kind, subject.id, at, at);
+    return { id, subject, createdAt: at, updatedAt: at, messageCount: 0 };
+  };
+
+  const openSubject = db.transaction((subject: ConversationSubject): Conversation => {
+    const found = latestOfSubject.get(subject.kind, subject.id) as
+      | ConversationRow
+      | undefined;
+    return found ? toConversation(found) : start(subject);
   }).immediate;
 
   const appendMessage = db.transaction(
@@ -164,9 +182,16 @@ export const createConversationStore = (
   ).immediate;
 
   return {
-    list: () => (list.all() as ConversationRow[]).map(toConversation),
+    list: (subject) =>
+      (
+        (subject
+          ? listOfSubject.all(subject.kind, subject.id)
+          : listAll.all()) as ConversationRow[]
+      ).map(toConversation),
 
     open: (subject) => openSubject(subject),
+
+    create: (subject) => start(subject),
 
     read(id) {
       const row = byId.get(id) as ConversationRow | undefined;

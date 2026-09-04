@@ -54,11 +54,13 @@ const conversationId = z.string().min(1);
 /**
  * What a conversation is about.
  *
- * Mirrors the client's sealed `ChatSubject` exactly, including the rule that
- * makes the pair a key: the profile is one conversation and carries no id, and
- * an offer conversation is meaningless without one. A profile subject that
- * arrived with an id would open a second profile conversation the client has no
- * way to navigate to, so it is refused rather than trimmed.
+ * Mirrors the client's sealed `ChatSubject` exactly, including which half of
+ * the pair carries an id: the profile is one thing and there is only ever one
+ * of it, and an offer conversation is meaningless without saying which offer.
+ * There can be many conversations about either — that is what the subject is
+ * for — but a profile subject arriving with an id is a subject the client
+ * cannot express, and it is refused rather than trimmed into one that looks
+ * fine and lists somewhere nobody looks.
  */
 const subject = z
   .object({
@@ -193,17 +195,21 @@ export const payloads = {
    */
   'providers.status': z.object({}),
 
-  'conversations.list': z.object({}),
+  /** Every conversation, or one subject's. Most recently active first. */
+  'conversations.list': z.object({ subject: subject.optional() }),
 
   /**
-   * The conversation about a subject, created on first use.
+   * Where a window comes back to: the most recently active conversation about a
+   * subject, or a first one when there are none.
    *
-   * `open` rather than `create`, because there is exactly one per subject and a
-   * caller asking for it does not know or care whether this is the first
-   * question. A `create` that usually returns something it did not create is
-   * the same function with a name that lies about half its outcomes.
+   * Resuming rather than starting, which is why it is not `create`. A caller
+   * restoring a window does not know whether this is the first question, and
+   * should not have to ask before it can show anything.
    */
   'conversations.open': z.object({ subject }),
+
+  /** New chat. Always another one, never the one that is already open. */
+  'conversations.create': z.object({ subject }),
 
   'conversations.get': z.object({ conversationId }),
 

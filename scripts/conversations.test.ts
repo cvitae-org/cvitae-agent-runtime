@@ -13,9 +13,12 @@
  *
  * Confirmed by breaking things, each mutation run and reverted:
  *
- *   `open` inserts without the conflict clause — the second call for a subject
- *     dies on the unique index, so opening a conversation works exactly once
- *     per install.
+ *   `open` creates unconditionally — reopening the app starts a blank page
+ *     every time and the transcript from yesterday is somewhere with no way in.
+ *   `create` resumes instead of creating — New chat hands back the conversation
+ *     that is already on screen, so the second subject can never be started.
+ *   `list` ignores the subject it was given — the profile's list shows every
+ *     offer conversation in the database.
  *   `append` numbers from the whole table instead of per conversation — the
  *     two-subject test finds an offer's first message numbered 3, and a client
  *     that asked for "everything after 2" would silently skip it.
@@ -110,6 +113,16 @@ const opened = async (it: Bench, subject: unknown): Promise<Conversation> =>
   data<{ conversation: Conversation }>(await it.dispatch('conversations.open', { subject }))
     .conversation;
 
+const started = async (it: Bench, subject: unknown): Promise<Conversation> =>
+  data<{ conversation: Conversation }>(
+    await it.dispatch('conversations.create', { subject })
+  ).conversation;
+
+const listed = async (it: Bench, subject?: unknown): Promise<Conversation[]> =>
+  data<{ conversations: Conversation[] }>(
+    await it.dispatch('conversations.list', subject ? { subject } : {})
+  ).conversations;
+
 const said = async (
   it: Bench,
   conversationId: string,
@@ -126,21 +139,30 @@ const said = async (
 
 /* ------------------------------------------------------------------- tests */
 
-test('one subject means one conversation, however often it is opened', async () => {
+test('opening a subject resumes; starting one is a separate ask', async () => {
   const it = bench();
 
   try {
     const first = await opened(it, profile);
     const again = await opened(it, { kind: 'profile' });
 
-    // Idempotent, and the id proves it: a second row would be a split
-    // transcript, half of which the client has no way to navigate to.
+    // Resuming, which is what a window restoring itself needs. An `open` that
+    // started a fresh page would lose yesterday's transcript on every launch.
     assert.equal(again.id, first.id);
     assert.equal(again.subject.kind, 'profile');
     assert.equal(again.subject.id, '');
 
-    // An offer's conversation is a different one, and the empty id is not a
-    // wildcard that collides with the profile's.
+    // And starting one is the other button. Rewriting a summary and working out
+    // what to say about a gap are both about this CV and are not one thread.
+    const second = await started(it, profile);
+    assert.notEqual(second.id, first.id);
+    assert.equal(second.messageCount, 0);
+
+    // Which the next open resumes, because it is the most recent.
+    assert.equal((await opened(it, profile)).id, second.id);
+
+    // An offer's conversations are its own, and the empty id is not a wildcard
+    // that collides with the profile's.
     const offer = await opened(it, { kind: 'offer', id: 'offer-1' });
     assert.notEqual(offer.id, first.id);
 
@@ -157,13 +179,54 @@ test('one subject means one conversation, however often it is opened', async () 
       error(await it.dispatch('conversations.open', { subject: { kind: 'offer' } })).code,
       'invalid_input'
     );
-
     assert.equal(
-      data<{ conversations: Conversation[] }>(
-        await it.dispatch('conversations.list', {})
-      ).conversations.length,
-      2
+      error(await it.dispatch('conversations.create', {
+        subject: { kind: 'profile', id: 'sneaky' }
+      })).code,
+      'invalid_input'
     );
+
+    assert.equal((await listed(it)).length, 3);
+  } finally {
+    it.dispose();
+  }
+});
+
+test('a list can be narrowed to the subject someone is looking at', async () => {
+  const it = bench();
+
+  try {
+    const mine = await opened(it, profile);
+    const alsoMine = await started(it, profile);
+    const theirs = await opened(it, { kind: 'offer', id: 'offer-1' });
+    await started(it, { kind: 'offer', id: 'offer-2' });
+
+    // The panel showing the profile's chats is asking about the profile. An
+    // unfiltered list would put every offer someone has ever looked at in it,
+    // and the filter is the reason 0007 kept an index it stopped using for
+    // uniqueness.
+    assert.deepEqual(
+      (await listed(it, profile)).map((conversation) => conversation.id),
+      [alsoMine.id, mine.id]
+    );
+
+    // One offer's conversations are not another's, even though both are offers.
+    assert.deepEqual(
+      (await listed(it, { kind: 'offer', id: 'offer-1' })).map(
+        (conversation) => conversation.id
+      ),
+      [theirs.id]
+    );
+
+    // Still ordered by activity within the subject: a message on the older one
+    // brings it back to the top of its own list.
+    await said(it, mine.id, 'user', 'Back to me.');
+    assert.deepEqual(
+      (await listed(it, profile)).map((conversation) => conversation.id),
+      [mine.id, alsoMine.id]
+    );
+
+    assert.equal((await listed(it)).length, 4);
   } finally {
     it.dispose();
   }
@@ -242,20 +305,16 @@ test('the list is ordered by what someone is actually doing', async () => {
     // the top — a conversation someone is in the middle of should not sink
     // below one they abandoned.
     assert.deepEqual(
-      data<{ conversations: Conversation[] }>(
-        await it.dispatch('conversations.list', {})
-      ).conversations.map((conversation) => conversation.id),
+      (await listed(it)).map((conversation) => conversation.id),
       [second.id, first.id]
     );
 
     await said(it, first.id, 'user', 'Back to me.');
 
-    const listed = data<{ conversations: Conversation[] }>(
-      await it.dispatch('conversations.list', {})
-    ).conversations;
+    const now = await listed(it);
 
-    assert.deepEqual(listed.map((conversation) => conversation.id), [first.id, second.id]);
-    assert.deepEqual(listed.map((conversation) => conversation.messageCount), [1, 0]);
+    assert.deepEqual(now.map((conversation) => conversation.id), [first.id, second.id]);
+    assert.deepEqual(now.map((conversation) => conversation.messageCount), [1, 0]);
   } finally {
     it.dispose();
   }

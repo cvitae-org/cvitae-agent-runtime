@@ -367,10 +367,14 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
 
     'providers.status': async () => ok(await harness.settings.status()),
 
-    'conversations.list': () => ok({ conversations: harness.conversations.list() }),
+    'conversations.list': ({ subject }) =>
+      ok({ conversations: harness.conversations.list(subject) }),
 
     'conversations.open': ({ subject }) =>
       ok({ conversation: harness.conversations.open(subject) }),
+
+    'conversations.create': ({ subject }) =>
+      ok({ conversation: harness.conversations.create(subject) }),
 
     'conversations.get': ({ conversationId }) => {
       const found = harness.conversations.read(conversationId);
