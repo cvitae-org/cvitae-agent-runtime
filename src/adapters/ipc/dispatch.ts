@@ -408,6 +408,14 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
       return ok({ conversation: renamed });
     },
 
+    'conversations.summarise': ({ conversationId, summary, through }) => {
+      const noted = harness.conversations.summarise(conversationId, summary, through);
+
+      if (!noted) return failed('not_found', `No such conversation: ${conversationId}`);
+
+      return ok({ conversation: noted });
+    },
+
     'conversations.delete': ({ conversationId }) =>
       ok({ deleted: harness.conversations.delete(conversationId) })
   };

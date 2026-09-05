@@ -18,6 +18,7 @@ import { askProfile } from './askProfile.js';
 import { generateEvidenceSummary } from './cv/evidence.js';
 import { editCv } from './cv/edit.js';
 import { extractCv } from './cv/extract.js';
+import { summarizeConversation } from './summarizeConversation.js';
 import { translateCv } from './cv/translate.js';
 import { verifyRecipient } from './recipient/verify.js';
 
@@ -28,6 +29,7 @@ export const capabilities: CapabilityMap = {
   [editCv.name]: editCv as CapabilityMap[string],
   [extractCv.name]: extractCv as CapabilityMap[string],
   [generateEvidenceSummary.name]: generateEvidenceSummary as CapabilityMap[string],
+  [summarizeConversation.name]: summarizeConversation as CapabilityMap[string],
   [translateCv.name]: translateCv as CapabilityMap[string],
   [verifyRecipient.name]: verifyRecipient as CapabilityMap[string]
 };
@@ -39,6 +41,7 @@ export {
   editCv,
   extractCv,
   generateEvidenceSummary,
+  summarizeConversation,
   translateCv,
   verifyRecipient
 };

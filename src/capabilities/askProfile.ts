@@ -25,9 +25,11 @@
  */
 
 import { z } from 'zod';
+import { compose, labelled } from '../context/render.js';
 import { selectTools } from '../context/tools.js';
 import type { Capability, Plan, RunContext } from '../contracts/index.js';
 import { READ_CV_TOOL } from './cv/tools.js';
+import { SUMMARY_BUDGET } from './summarizeConversation.js';
 
 /**
  * How much of the conversation may ride along, in characters.
@@ -85,6 +87,15 @@ export const inputSchema = z.object({
     )
     .default([]),
   /**
+   * What the turns before those came to, written by `summarize_conversation`.
+   *
+   * Separate from `history` and not the first entry in it, because it is not
+   * something anybody said. Sent as a turn it would be a turn the model can
+   * answer, contradict or apologise for; sent as standing context it is what it
+   * is — the state the conversation has reached.
+   */
+  summary: z.string().max(SUMMARY_BUDGET).default(''),
+  /**
    * Caps model turns. Each turn is a provider request against a quota, and the
    * ceiling is what stops a loop that cannot find an answer from spending the
    * afternoon looking for one.
@@ -130,6 +141,20 @@ const SYSTEM = [
  * used to answer the previous one; two is far enough back to carry a subject
  * forward without turning the goal into a topic list.
  */
+/**
+ * The instruction, plus whatever the conversation has already established.
+ *
+ * A labelled block after the rules rather than a sentence woven into them, and
+ * nothing is added to `SYSTEM` to explain it. The temptation is a line saying
+ * the note is context and not fact, and the measurements in `context/tools.ts`
+ * and `cv/evidence.ts` both point the other way: on a small local model an
+ * extra instruction costs reasoning time on every call and is followed
+ * unreliably, while `SYSTEM`'s last line already requires every statement to
+ * come from a tool. The label carries the rest.
+ */
+const systemFor = (summary: string): string =>
+  compose(SYSTEM, labelled('EARLIER IN THIS CONVERSATION', summary, SUMMARY_BUDGET));
+
 const SELECTION_CONTEXT_TURNS = 2;
 
 const goalOf = (input: AskProfileInput): string =>
@@ -176,7 +201,7 @@ export const askProfile: Capability<AskProfileInput> = {
             {
               kind: 'tool_loop',
               name: 'investigate',
-              system: SYSTEM,
+              system: systemFor(input.summary),
               prompt: input.question,
               history: input.history,
               // Always include the canonical read. The search index is a

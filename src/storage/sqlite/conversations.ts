@@ -39,6 +39,8 @@ type ConversationRow = {
   created_at: number;
   updated_at: number;
   message_count: number;
+  summary: string | null;
+  summarised_through: number;
 };
 
 type MessageRow = {
@@ -57,7 +59,9 @@ const toConversation = (row: ConversationRow): Conversation => ({
   title: row.title ?? undefined,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
-  messageCount: row.message_count
+  messageCount: row.message_count,
+  summary: row.summary ?? undefined,
+  summarisedThrough: row.summarised_through
 });
 
 const toMessage = (row: MessageRow): Message => ({
@@ -132,6 +136,15 @@ export const createConversationStore = (
 
   const remove = db.prepare<[string]>('DELETE FROM conversations WHERE id = ?');
 
+  // `max(summarised_through, ?)` in the statement rather than a read followed by
+  // a compare, so the marker cannot go backwards even between two writers — and
+  // so the guarantee lives in the one place that does the writing.
+  const note = db.prepare<[string | null, number, string]>(
+    `UPDATE conversations
+        SET summary = ?, summarised_through = max(summarised_through, ?)
+      WHERE id = ?`
+  );
+
   // Built from what was written rather than read back. Every field of a row
   // this new is known here, and a select would only be asking SQLite to confirm
   // the insert that just succeeded.
@@ -139,7 +152,14 @@ export const createConversationStore = (
     const at = now();
     const id = newId();
     insert.run(id, subject.kind, subject.id, at, at);
-    return { id, subject, createdAt: at, updatedAt: at, messageCount: 0 };
+    return {
+      id,
+      subject,
+      createdAt: at,
+      updatedAt: at,
+      messageCount: 0,
+      summarisedThrough: 0
+    };
   };
 
   const openSubject = db.transaction((subject: ConversationSubject): Conversation => {
@@ -210,6 +230,15 @@ export const createConversationStore = (
       // was erased falls back to the client's placeholder instead of showing
       // an empty line where a title goes.
       retitle.run(title.trim() || null, id);
+      const row = byId.get(id) as ConversationRow | undefined;
+      return row ? toConversation(row) : undefined;
+    },
+
+    summarise(id, summary, through) {
+      // Blank clears it, matching `rename`: a note trimmed to nothing is a
+      // conversation with nothing carried, not one carrying an empty string
+      // that a prompt would go on labelling and sending.
+      note.run(summary.trim() || null, Math.max(0, Math.trunc(through)), id);
       const row = byId.get(id) as ConversationRow | undefined;
       return row ? toConversation(row) : undefined;
     },

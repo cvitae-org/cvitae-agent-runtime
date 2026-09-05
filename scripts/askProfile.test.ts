@@ -46,6 +46,13 @@
  *   the selector sees the question alone  1  the tool selector is told what …
  *   the selector is given the replies too 1  the tool selector is told what …
  *
+ * And once a conversation outgrows the window, what stands in for the turns
+ * that fell out of it:
+ *
+ *   the note is sent as a turn            1  what a conversation came to is …
+ *   the note replaces the rules           1  what a conversation came to is …
+ *   an empty note is labelled anyway      1  a conversation with nothing …
+ *
  * Two of these also broke the smoke suite, which is the first time that has
  * happened in this tree and worth understanding rather than celebrating. An
  * empty tool grant fails "the plan is well formed" because that test asserts a
@@ -408,6 +415,43 @@ test('the tool selector is told what the follow-up is about', async () => {
     assert.ok(
       !goal.includes('rewrote the billing pipeline'),
       `the assistant's reply reached the selector: ${goal}`
+    );
+  });
+});
+
+test('what a conversation came to is context, not a turn in it', async () => {
+  await harness({ picks: ['read_cv'] }, async (s, loop) => {
+    await ask(s, {
+      question: 'And the second one?',
+      history: EARLIER,
+      summary: 'GOAL: position for a backend role.\nREJECTED: the Web3-first framing.'
+    });
+
+    const request = loop.requests[0];
+
+    // Standing context, so it goes where the rules go. As a turn it would be
+    // something the model can answer, contradict or apologise for — and the
+    // note is written *about* the conversation rather than said in it, so a
+    // model treating it as a turn is a model responding to itself.
+    assert.match(request?.system ?? '', /the Web3-first framing/);
+    assert.deepEqual(request?.history, EARLIER);
+
+    // The rules survive it. Appending to the wrong side of a compose is how the
+    // instruction that requires every claim to come from a tool goes missing.
+    assert.match(request?.system ?? '', /If the tools return nothing, say so plainly/);
+  });
+});
+
+test('a conversation with nothing carried forward is labelled nothing', async () => {
+  await harness({ picks: ['read_cv'] }, async (s, loop) => {
+    await ask(s, { question: 'What did I do at Acme?' });
+
+    // An empty note must not leave an empty heading behind it. A label with
+    // nothing under it reads to a model as a section it should fill, which is
+    // how a first question acquires a history it never had.
+    assert.ok(
+      !(loop.requests[0]?.system ?? '').includes('EARLIER'),
+      `an empty note was labelled anyway: ${loop.requests[0]?.system}`
     );
   });
 });

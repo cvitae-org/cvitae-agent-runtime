@@ -47,6 +47,21 @@ export type Conversation = {
   /** Bumped by an append, so a list ordered by it is ordered by activity. */
   readonly updatedAt: number;
   readonly messageCount: number;
+  /**
+   * What the turns that no longer fit came to, or absent while they all still
+   * do. Written by whoever produced it; this store only keeps it.
+   */
+  readonly summary?: string | undefined;
+  /**
+   * How far [summary] reaches: the `seq` of the last message folded into it,
+   * and `0` for a conversation nothing has folded yet.
+   *
+   * `seq` is gapless and starts at 1, so this is equally "how many messages
+   * have been folded in" — which is why a client can maintain it from an
+   * ordered read without ever handling a `seq`, and why the two readings can
+   * never drift apart.
+   */
+  readonly summarisedThrough: number;
 };
 
 export type MessageRole = 'user' | 'assistant';
@@ -92,6 +107,20 @@ export interface ConversationStore {
   append(conversationId: string, message: NewMessage): Message;
   /** `undefined` when there is no such conversation. Blank clears the title. */
   rename(id: string, title: string): Conversation | undefined;
+  /**
+   * Records a note about the turns up to `through`, and how far it reaches.
+   *
+   * A write and only a write — nothing here produces a summary, the same way
+   * [rename] does not invent a title. What makes one is a model call, and a
+   * store that made model calls would be a store that can fail for reasons
+   * nothing about storage explains.
+   *
+   * `through` only ever moves forward. A caller that has just summarised turns
+   * 1–4 and one that raced it with 1–2 must not leave the marker at 2 with a
+   * note covering four turns, because the two turns in between would then be
+   * folded in twice and read as having been said twice.
+   */
+  summarise(id: string, summary: string, through: number): Conversation | undefined;
   /** Whether there was one. Its messages go with it. */
   delete(id: string): boolean;
 }

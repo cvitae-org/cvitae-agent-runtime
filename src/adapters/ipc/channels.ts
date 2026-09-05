@@ -232,6 +232,26 @@ export const payloads = {
 
   'conversations.rename': z.object({ conversationId, title: z.string().max(200) }),
 
+  /**
+   * Records the note carrying the turns that no longer fit, and how far it
+   * reaches.
+   *
+   * A write, like `rename`: nothing behind this channel produces a summary. The
+   * thing that does is the `summarize_conversation` capability, which is a run
+   * like any other — so it is cancellable, it has an `ai_calls` row, and it
+   * degrades where a channel doing a model call inside a store write could do
+   * none of the three.
+   *
+   * `through` is the `seq` of the last message folded in, and never moves
+   * backwards; the store clamps rather than trusting the caller, because two
+   * clients summarising at once is a race that has one correct outcome.
+   */
+  'conversations.summarise': z.object({
+    conversationId,
+    summary: z.string().max(20_000),
+    through: z.number().int().min(0)
+  }),
+
   'conversations.delete': z.object({ conversationId })
 } as const;
 

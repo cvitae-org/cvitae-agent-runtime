@@ -31,6 +31,14 @@
  *   `rename` stores a blank title rather than clearing it — a conversation
  *     whose name was erased shows an empty line where the client's placeholder
  *     should be.
+ *   the marker is trusted rather than clamped — two clients summarising at once
+ *     leave it behind the note, and the turns in between are folded in twice
+ *     and read as having been said twice.
+ *   a blank note is stored as an empty string — a prompt goes on labelling and
+ *     sending a heading with nothing under it.
+ *   the marker is not read back from the row — every restart starts folding
+ *     from turn one again, and the note is rewritten from turns it already
+ *     covers.
  */
 
 import assert from 'node:assert/strict';
@@ -449,6 +457,110 @@ test('an answer points back at the run that produced it', async () => {
     );
     assert.equal(orphan.code, 'not_found');
     assert.match(orphan.message, /never-ran/);
+  } finally {
+    it.dispose();
+  }
+});
+
+/* --------------------------------------------------------------- the note */
+
+const noted = async (
+  it: Bench,
+  conversationId: string,
+  summary: string,
+  through: number
+): Promise<Conversation> =>
+  data<{ conversation: Conversation }>(
+    await it.dispatch('conversations.summarise', { conversationId, summary, through })
+  ).conversation;
+
+test('a conversation nothing has folded carries no note and no marker', async () => {
+  const it = bench();
+
+  try {
+    const conversation = await opened(it, profile);
+
+    // Not NULL and not absent: every use of the marker is a comparison against
+    // a message's `seq`, and NULL compares false to all of them.
+    assert.equal(conversation.summarisedThrough, 0);
+    assert.equal(conversation.summary, undefined);
+  } finally {
+    it.dispose();
+  }
+});
+
+test('a note outlives the process that wrote it', async () => {
+  let it = bench();
+
+  try {
+    const conversation = await opened(it, profile);
+    await said(it, conversation.id, 'user', 'What did I do at Acme?');
+    await said(it, conversation.id, 'assistant', 'You rewrote the billing pipeline.');
+    await noted(it, conversation.id, 'GOAL: position for a backend role.', 2);
+
+    it = it.restart();
+
+    // The whole reason it is a column. A note held in a client is a note that
+    // is gone at the next launch, which is exactly when the transcript it
+    // stands in for is longest.
+    const [back] = await listed(it, profile);
+    assert.equal(back?.summary, 'GOAL: position for a backend role.');
+    assert.equal(back?.summarisedThrough, 2);
+  } finally {
+    it.dispose();
+  }
+});
+
+test('the marker never moves backwards', async () => {
+  const it = bench();
+
+  try {
+    const conversation = await opened(it, profile);
+    await noted(it, conversation.id, 'GOAL: a backend role.', 6);
+
+    // Two clients summarising at once, the slower one having read the marker
+    // before the faster one moved it. Left at 2, the four turns in between
+    // would be folded in a second time and read as having been said twice.
+    const raced = await noted(it, conversation.id, 'GOAL: a backend role.', 2);
+
+    assert.equal(raced.summarisedThrough, 6);
+  } finally {
+    it.dispose();
+  }
+});
+
+test('a note trimmed to nothing is no note, not an empty one', async () => {
+  const it = bench();
+
+  try {
+    const conversation = await opened(it, profile);
+    await noted(it, conversation.id, 'GOAL: a backend role.', 2);
+
+    // Same rule as `rename`, for the same reason one layer on: an empty string
+    // is something a prompt would go on labelling and sending, and a heading
+    // with nothing under it is worse than no heading.
+    const cleared = await noted(it, conversation.id, '   ', 2);
+
+    assert.equal(cleared.summary, undefined);
+  } finally {
+    it.dispose();
+  }
+});
+
+test('a note for a conversation that is not there is a miss, not a write', async () => {
+  const it = bench();
+
+  try {
+    assert.equal(
+      error(
+        await it.dispatch('conversations.summarise', {
+          conversationId: 'no-such-conversation',
+          summary: 'GOAL: something.',
+          through: 2
+        })
+      ).code,
+      'not_found'
+    );
   } finally {
     it.dispose();
   }

@@ -474,8 +474,30 @@ export const smokes: Readonly<Record<string, Smoke>> = {
     }
   },
   ask_profile: {
-    input: { question: 'What have I worked on that involved payment systems?' },
+    /**
+     * A follow-up rather than a first question, so the walk carries a window
+     * and a note through the plan and into the loop. A fixture with neither
+     * would leave the only fields on this capability that grow with use
+     * unwalked, and they are the ones a refactor of the prompt would break.
+     */
+    input: {
+      question: 'And the second one?',
+      history: [
+        { role: 'user', text: 'What have I worked on that involved payment systems?' },
+        { role: 'assistant', text: 'The billing pipeline at Acme.' }
+      ],
+      summary: 'GOAL: position for a backend role.'
+    },
     plansWithTheModel: true
+  },
+  summarize_conversation: {
+    input: {
+      summary: '',
+      turns: [
+        { role: 'user', text: 'What have I worked on that involved payment systems?' },
+        { role: 'assistant', text: 'The billing pipeline at Acme.' }
+      ]
+    }
   },
   edit_cv: {
     /**
