@@ -49,12 +49,19 @@
  * are about where the conversation goes and where it must not:
  *
  *   routing sees only the instruction         a follow-up is routed from …
- *   the revision sees only the instruction    the section being revised is …
- *   the conversation follows the instruction  the conversation is context …
- *   the background line is always added       a first instruction is sent …
+ *   the revision is handed it as well         the section being revised is …
  *   the conversation is always assembled      a first instruction is sent …
  *   the history ceiling is dropped            more conversation than the …
  *   routing asks for less room than the floor routing is given room to answer
+ *
+ * The second of those is the one that reads backwards. The revision had the
+ * conversation and it was taken away: it is a transcript of somebody thinking
+ * out loud, it can contradict the instruction, and `gemma4:12b` given an
+ * assistant turn calling the summary "a single condensed narrative" and then
+ * told to shorten it did not stop — `finish: length` at 3,200 output tokens,
+ * again at 4,000 and at 6,000, where the same call without it answered in 38.
+ * So the mutation that has to be caught is a well-meant one: handing the step
+ * context it does not need.
  */
 
 import assert from 'node:assert/strict';
@@ -529,31 +536,43 @@ test('a follow-up is routed from what came before it, not from the sentence alon
   assert.match(route.prompt, /INSTRUCTION:\nMake it shorter\./);
 });
 
-test('the section being revised is told what came before it, as context and not as the task', async () => {
+test('the section being revised is never told the conversation, only routing is', async () => {
   const seen = await recorded(
     { instruction: 'Make it shorter.', ...EARLIER },
     { route: { section: 'role_description', reason: 'The summary is what is long.' } }
   );
 
+  const routing = seen.find((entry) => entry.step === 'route');
   const revise = seen.find((entry) => entry.step === 'role_description');
+  assert.ok(routing, 'the routing step never ran');
   assert.ok(revise, 'the revise step never ran');
 
-  const earlier = revise.prompt.indexOf('Three paragraphs, about 90 words.');
+  // The split is the claim, so both halves are asserted against the same run.
+  // Routing is what "make it shorter" is unreadable without.
+  assert.ok(
+    routing.prompt.includes('Three paragraphs, about 90 words.'),
+    'the conversation never reached routing'
+  );
+  assert.ok(routing.prompt.includes('GOAL: a CV that fits one page.'), 'the note never reached routing');
+
+  // The revision is not. By here the section is chosen and its contents are in
+  // the prompt, so the conversation adds nothing it lacks — and it can argue
+  // with the instruction, which is measured to stop the model terminating.
+  assert.ok(
+    !revise.prompt.includes('Three paragraphs, about 90 words.'),
+    'the conversation reached the revision'
+  );
+  assert.ok(!revise.prompt.includes('GOAL: a CV that fits one page.'), 'the note reached the revision');
+  assert.ok(
+    !revise.prompt.includes('THE CONVERSATION SO FAR'),
+    'the revision was given a conversation heading'
+  );
+
+  // What it does get is unchanged: one section, then the sentence about it.
   const current = revise.prompt.indexOf('CURRENT SUMMARY');
   const instruction = revise.prompt.indexOf('INSTRUCTION:');
-
-  // Ordered, not merely present. The instruction is the task and sits last,
-  // next to where the answer starts, with the section it applies to
-  // immediately before it; what was said earlier is context and sits ahead of
-  // both.
-  assert.ok(earlier >= 0, 'the conversation never reached the revision');
-  assert.ok(earlier < current, 'the conversation came after the section');
+  assert.ok(current >= 0, 'the revision was not shown the section');
   assert.ok(current < instruction, 'the instruction came before the section');
-
-  // And it is named as background. The conversation of an editing chat is a
-  // list of instructions that have already been applied, and a model reading
-  // them as outstanding applies them a second time.
-  assert.match(revise.system, /The conversation is background\. Apply only the instruction\./);
 });
 
 test('a first instruction is sent exactly what it was sent before this existed', async () => {
@@ -571,10 +590,6 @@ test('a first instruction is sent exactly what it was sent before this existed',
     assert.ok(
       !entry.prompt.includes('EARLIER IN THIS CONVERSATION'),
       `${entry.step} was given an empty note to read`
-    );
-    assert.ok(
-      !entry.system.includes('The conversation is background'),
-      `${entry.step} was told to ignore a conversation it was never given`
     );
   }
 
