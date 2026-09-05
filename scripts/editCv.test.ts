@@ -54,6 +54,7 @@
  *   the background line is always added       a first instruction is sent …
  *   the conversation is always assembled      a first instruction is sent …
  *   the history ceiling is dropped            more conversation than the …
+ *   routing asks for less room than the floor routing is given room to answer
  */
 
 import assert from 'node:assert/strict';
@@ -198,7 +199,12 @@ const documentOf = (data: Readonly<Record<string, unknown>>): CvDocument =>
   data.document as CvDocument;
 
 /** Every request the run made, in order, with what the model was actually told. */
-type Seen = { readonly step: string; readonly system: string; readonly prompt: string };
+type Seen = {
+  readonly step: string;
+  readonly system: string;
+  readonly prompt: string;
+  readonly maxOutputTokens?: number;
+};
 
 const recorded = async (
   input: Record<string, unknown>,
@@ -213,7 +219,8 @@ const recorded = async (
         seen.push({
           step: request.step ?? '',
           system: request.system,
-          prompt: request.prompt
+          prompt: request.prompt,
+          maxOutputTokens: request.maxOutputTokens
         });
         return { object: (answers[request.step ?? ''] ?? {}) as T, finishReason: 'stop', usage: {} };
       }
@@ -572,6 +579,29 @@ test('a first instruction is sent exactly what it was sent before this existed',
   }
 
   assert.ok(seen[0]?.prompt.startsWith('INSTRUCTION:'), 'the routing prompt gained a preamble');
+});
+
+/**
+ * The floor, not the number.
+ *
+ * Asserting 600 exactly would fail on a change that raises it, which is the one
+ * direction that is always safe: a routed answer is thirty to fifty tokens and
+ * stays there however much room it is given, so the ceiling only ever bites
+ * from below. 400 is where structured output was measured to start working on
+ * `gemma4:12b`; the reasoning is at the call site.
+ */
+const ROUTING_FLOOR = 400;
+
+test('routing is given room to answer', async () => {
+  const seen = await recorded({ instruction: 'Make it shorter.' });
+  const routing = seen.find((each) => each.step === 'route');
+
+  assert.ok(routing, 'no routing call was made');
+  assert.ok(
+    (routing.maxOutputTokens ?? 0) >= ROUTING_FLOOR,
+    `routing asked for ${routing.maxOutputTokens} tokens, under the ${ROUTING_FLOOR} `
+      + 'the model needs before it will produce an object at all'
+  );
 });
 
 test('more conversation than the ceiling is refused, not quietly trimmed', async () => {

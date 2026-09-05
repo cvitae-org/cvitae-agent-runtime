@@ -250,7 +250,36 @@ const route = async (input: EditCvInput, context: RunContext): Promise<Section> 
         `INSTRUCTION:\n${input.instruction}`,
         `SECTIONS:\n${sectionNames.map((name) => `- ${name}: ${describes[name]}`).join('\n')}`
       ),
-      maxOutputTokens: 300,
+      /**
+       * A truncation guard, not a budget, and it must clear the floor under
+       * which structured output stops working at all.
+       *
+       * A routed answer is 29 to 49 output tokens and that number does not move
+       * when this one is raised — the model stops on its own, so a generous
+       * ceiling costs nothing. What it is guarding against is the other end.
+       * Measured on `gemma4:12b` through Ollama's OpenAI-compatible endpoint,
+       * three trials at each ceiling, with the JSON-schema grammar in force:
+       *
+       * ```
+       * ceiling   no conversation        with a conversation
+       * 200       length, at 200 tokens  length, at 200 tokens
+       * 300       length, at 300 tokens  ok, 44-49 tokens
+       * 400+      ok, 29-32 tokens       ok, 44 tokens
+       * ```
+       *
+       * Below the floor the model does not run out of room part-way through a
+       * long answer — the answer is thirty tokens. It emits filler to the limit
+       * and never opens the object, which arrives as `AI_NoObjectGeneratedError`
+       * and, here, as a refusal telling the person to name the section. The
+       * floor is higher when the instruction is more ambiguous, which is the
+       * wrong way round: the case that most needs routing was the one that
+       * could not get it.
+       *
+       * 600 is half again the worst floor measured, and twelve times what an
+       * answer actually costs. The previous 300 sat under the floor for exactly
+       * the instructions this capability exists to handle.
+       */
+      maxOutputTokens: 600,
       temperature: 0
     });
 
