@@ -36,6 +36,16 @@
  *   the ceiling is off by one (`>`)      1  a loop that spends every turn …
  *   the finish reason is ignored         1  a loop that answers early …
  *
+ * And the same again for the conversation the loop is given:
+ *
+ *   the step's history is not passed on   1  a follow-up carries what was said …
+ *   history is passed even when absent    1  a first question carries no …
+ *   the plan drops the conversation       1  a follow-up carries what was said …
+ *   the turn ceiling is not enforced      1  more conversation than the ceiling …
+ *   the character budget is not enforced  1  more conversation than the ceiling …
+ *   the selector sees the question alone  1  the tool selector is told what …
+ *   the selector is given the replies too 1  the tool selector is told what …
+ *
  * Two of these also broke the smoke suite, which is the first time that has
  * happened in this tree and worth understanding rather than celebrating. An
  * empty tool grant fails "the plan is well formed" because that test asserts a
@@ -111,6 +121,8 @@ const embed: AiGateway['embed'] = async (request) => ({
 type Loop = {
   readonly requests: ToolLoopRequest[];
   readonly granted: () => string[];
+  /** What the tool selector was asked about, in order. */
+  readonly goals: string[];
 };
 
 const harness = async <T>(
@@ -123,6 +135,7 @@ const harness = async <T>(
   body: (s: Spine, loop: Loop) => Promise<T>
 ): Promise<T> => {
   const requests: ToolLoopRequest[] = [];
+  const goals: string[] = [];
 
   const ai: Partial<AiGateway> = {
     embed,
@@ -130,6 +143,7 @@ const harness = async <T>(
       // The planner's tool selection is the only object call this capability
       // makes. Anything else asking is a change worth noticing.
       assert.equal(request.step, 'plan');
+      goals.push(request.prompt);
       if (!options.picks) throw new Error('the planner is unavailable');
       return { object: { tools: options.picks } as never, finishReason: 'stop', usage: {} };
     },
@@ -152,7 +166,10 @@ const harness = async <T>(
   const deps = { ...s.deps, retrieval };
 
   try {
-    return await body({ ...s, deps }, { requests, granted: () => requests[0]?.tools.map((tool) => tool.name) ?? [] });
+    return await body(
+      { ...s, deps },
+      { requests, goals, granted: () => requests[0]?.tools.map((tool) => tool.name) ?? [] }
+    );
   } finally {
     s.dispose();
   }
@@ -311,4 +328,86 @@ test('an empty profile is reported as empty, not as no match', async () => {
       assert.equal((await ask(s)).data.answer, 'Nothing has been imported yet.');
     }
   );
+});
+
+/* ------------------------------------------------------- the conversation */
+
+const EARLIER = [
+  { role: 'user' as const, text: 'What did I do at Acme?' },
+  { role: 'assistant' as const, text: 'You rewrote the billing pipeline there.' }
+];
+
+test('a follow-up carries what was said before it', async () => {
+  await harness({ picks: ['read_cv'] }, async (s, loop) => {
+    await ask(s, { question: 'And before that?', history: EARLIER });
+
+    // Handed on as turns. The gateway decides what a turn becomes; what this
+    // capability owes is that it arrives at all, unedited and in order.
+    assert.deepEqual(loop.requests[0]?.history, EARLIER);
+    assert.equal(loop.requests[0]?.prompt, 'And before that?');
+  });
+});
+
+test('a first question carries no conversation at all', async () => {
+  await harness({ picks: ['read_cv'] }, async (s, loop) => {
+    await ask(s);
+
+    // Not an empty array. Absent and empty mean the same thing to a model, but
+    // only one of them says so to a reader of the request, and a gateway that
+    // switches on presence should see the honest shape.
+    assert.ok(!('history' in (loop.requests[0] ?? {})));
+  });
+});
+
+test('more conversation than the ceiling is refused, not quietly trimmed', async () => {
+  await harness({ picks: ['read_cv'] }, async (s, loop) => {
+    // One turn past the ceiling, which is the shape a caller that forgot to
+    // window would produce — not a caller sending something absurd.
+    const many = Array.from({ length: 13 }, (_, index) => ({
+      role: (index % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+      text: `turn ${index}`
+    }));
+
+    await assert.rejects(
+      () => ask(s, { history: many }),
+      /At most 12 earlier turns/
+    );
+
+    // And the size, which is the one that protects the context window: twelve
+    // turns is within the count and still far past what may ride along.
+    await assert.rejects(
+      () => ask(s, {
+        history: Array.from({ length: 12 }, () => ({
+          role: 'user' as const,
+          text: 'x'.repeat(600)
+        }))
+      }),
+      /at most 6000 characters/
+    );
+
+    // Refused before anything ran. Trimming would have answered a different
+    // question than the caller believes it asked, and silently.
+    assert.equal(loop.requests.length, 0);
+  });
+});
+
+test('the tool selector is told what the follow-up is about', async () => {
+  await harness({ picks: ['read_cv'] }, async (s, loop) => {
+    await ask(s, { question: 'And the second one?', history: EARLIER });
+
+    const goal = loop.goals[0] ?? '';
+
+    // On its own the question names nothing, and a selector picking tools for
+    // nothing falls back to offering all of them — the run still answers, with
+    // a longer tool list than the turn needed.
+    assert.match(goal, /What did I do at Acme\?/);
+    assert.match(goal, /And the second one\?/);
+
+    // The reply is not part of it. It is prose about a CV, and it would bury
+    // the request under the words used to answer the previous one.
+    assert.ok(
+      !goal.includes('rewrote the billing pipeline'),
+      `the assistant's reply reached the selector: ${goal}`
+    );
+  });
 });

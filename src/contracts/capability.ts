@@ -16,6 +16,7 @@
  */
 
 import type { z } from 'zod';
+import type { ConversationTurn } from './effects.js';
 import type { RunContext, StepContext, StepKind } from './run.js';
 
 type StepBase = {
@@ -93,6 +94,16 @@ export type ToolLoopStep = StepBase & {
   readonly kind: 'tool_loop';
   readonly system: string;
   readonly prompt: string | ((context: StepContext) => string);
+  /**
+   * The conversation this step continues, oldest first, without `prompt`.
+   *
+   * A plain array rather than a function of the context, because unlike
+   * `prompt` it never depends on what an earlier step produced — it comes from
+   * the run's input, which `plan()` already has. A capability that declares
+   * none is a capability whose every run is a first turn, which is what all but
+   * one of them are.
+   */
+  readonly history?: readonly ConversationTurn[];
   /** Registry names. The model can call nothing else. */
   readonly tools: readonly string[];
   /** Hard ceiling on model turns; nothing here ever runs unbounded. */

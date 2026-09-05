@@ -29,8 +29,61 @@ import { selectTools } from '../context/tools.js';
 import type { Capability, Plan, RunContext } from '../contracts/index.js';
 import { READ_CV_TOOL } from './cv/tools.js';
 
+/**
+ * How much of the conversation may ride along, in characters.
+ *
+ * The sibling of `CONTENT_BUDGET` in `cv/tools.ts`, and deliberately the same
+ * kind of number: a conservative character ceiling declared by the one
+ * contributor it bounds, not a share of a global token budget. There is no
+ * tokenizer in this tree and adding one to divide a context window between
+ * contributors would be a scheme, where this is an amount.
+ *
+ * Sized against what it competes with. A single `read_cv` result may be 5,200
+ * characters and `maxSteps` defaults to six, so tool output alone can reach
+ * ~31,000 characters in one run — history at this ceiling is roughly one extra
+ * tool read, which is proportionate to the thing it makes possible and is not
+ * what breaks a context window.
+ *
+ * Refused rather than trimmed. Trimming here would silently answer a different
+ * question than the one the caller believes it asked, and the caller is the one
+ * holding the transcript: it knows which turns are droppable and this does not.
+ */
+const HISTORY_BUDGET = 6_000;
+
+/**
+ * How many turns may ride along, whatever their size.
+ *
+ * The character budget is the one that protects the context window; this one
+ * protects against a caller that has confused "the conversation" with "every
+ * conversation". Twelve is six exchanges, which is well past where a follow-up
+ * still refers back.
+ */
+const HISTORY_TURNS = 12;
+
+const turn = z.object({
+  role: z.enum(['user', 'assistant']),
+  text: z.string().min(1)
+});
+
 export const inputSchema = z.object({
   question: z.string().min(1, 'A question is required.'),
+  /**
+   * What was said before, oldest first, without `question`.
+   *
+   * Absent is a first turn, which is what every caller was until this existed.
+   * The window is the caller's to compute — it is holding the transcript, and
+   * it knows which of what it holds is a settled exchange rather than a notice,
+   * a timeline card or an answer still being written. What is enforced here is
+   * only the size of what arrives.
+   */
+  history: z
+    .array(turn)
+    .max(HISTORY_TURNS, `At most ${HISTORY_TURNS} earlier turns may be sent.`)
+    .refine(
+      (turns) => turns.reduce((total, each) => total + each.text.length, 0) <= HISTORY_BUDGET,
+      `Earlier turns must total at most ${HISTORY_BUDGET} characters.`
+    )
+    .default([]),
   /**
    * Caps model turns. Each turn is a provider request against a quota, and the
    * ceiling is what stops a loop that cannot find an answer from spending the
@@ -64,6 +117,30 @@ const SYSTEM = [
   'Base every statement on what a tool returned. If the tools return nothing, say so plainly and stop.'
 ].join('\n');
 
+/**
+ * What the tool selector is asked about.
+ *
+ * The question alone stops being a goal the moment there is a conversation:
+ * "and the second one?" names no subject, and a selector handed it picks tools
+ * for nothing and falls back to offering everything — which still answers, just
+ * with a longer tool list than the turn needed.
+ *
+ * Only the user's own turns, and only the last two of them. The assistant's
+ * replies are prose about a CV and would drown the actual request in the words
+ * used to answer the previous one; two is far enough back to carry a subject
+ * forward without turning the goal into a topic list.
+ */
+const SELECTION_CONTEXT_TURNS = 2;
+
+const goalOf = (input: AskProfileInput): string =>
+  [
+    ...input.history
+      .filter((turn) => turn.role === 'user')
+      .slice(-SELECTION_CONTEXT_TURNS)
+      .map((turn) => turn.text),
+    input.question
+  ].join('\n');
+
 export const askProfile: Capability<AskProfileInput> = {
   name: 'ask_profile',
   describe:
@@ -82,7 +159,7 @@ export const askProfile: Capability<AskProfileInput> = {
    * knowing that the exception exists.
    */
   plan: async (input, context: RunContext): Promise<Plan> => {
-    const selected = await selectTools({ goal: input.question, context });
+    const selected = await selectTools({ goal: goalOf(input), context });
     const tools = [
       ...selected.filter((name) => name !== READ_CV_TOOL),
       READ_CV_TOOL
@@ -101,6 +178,7 @@ export const askProfile: Capability<AskProfileInput> = {
               name: 'investigate',
               system: SYSTEM,
               prompt: input.question,
+              history: input.history,
               // Always include the canonical read. The search index is a
               // derived view and is deliberately cleared after a manual edit.
               tools,

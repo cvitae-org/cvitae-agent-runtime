@@ -11,6 +11,12 @@
  * so a single `console.warn(error)` prints the whole prompt. The previous
  * runtime had several of those, two lines away from a logger that was
  * scrupulously recording nothing but counts.
+ *
+ * The conversation test is the same kind of claim about the same boundary, and
+ * both of its mutations were run and killed it:
+ *
+ *   the gateway concatenates the turns     what was said before arrives …
+ *   promptChars ignores the conversation   what was said before arrives …
  */
 
 import assert from 'node:assert/strict';
@@ -261,4 +267,89 @@ test('a tool that calls the model does not wait for the slot its caller holds', 
 
   assert.equal(result.finishReason, 'stop');
   assert.match(result.text, /400 million rows/);
+});
+
+/**
+ * A conversation is a list of turns, not a prompt with a transcript in it.
+ *
+ * The distinction is invisible from the caller's side — both produce an answer
+ * that reads like it remembers — and it is the whole of the feature. A model
+ * handed a transcript inside one user message answers *about* the transcript
+ * about as often as it continues it, and every provider's prompt cache keys on
+ * the message prefix, which a re-concatenated blob invalidates on every turn.
+ *
+ * Asserted at the model boundary rather than on the settings object, because
+ * `prompt` and `messages` are alternatives the SDK normalises into the same
+ * shape, and the only place the difference is real is what the model receives.
+ */
+test('what was said before arrives as its own turns', async () => {
+  const seen: { role: string; text: string }[] = [];
+
+  const language = new MockLanguageModelV2({
+    doGenerate: async ({ prompt }) => {
+      for (const message of prompt) {
+        const content = message.content;
+        seen.push({
+          role: message.role,
+          text:
+            typeof content === 'string'
+              ? content
+              : content
+                  .map((part) => ('text' in part ? part.text : ''))
+                  .join('')
+        });
+      }
+
+      return {
+        content: [{ type: 'text' as const, text: 'At Globex, the design system.' }],
+        finishReason: 'stop' as const,
+        usage: { inputTokens: 11, outputTokens: 7, totalTokens: 18 },
+        warnings: []
+      };
+    }
+  });
+
+  const fake = fakeResolver({ providerId: 'local' });
+  const log = recorder();
+  const ai = createAiGateway({
+    resolver: { ...fake.resolver, language: async () => language },
+    logger: log
+  });
+
+  await ai.runToolLoop({
+    ...callFor(),
+    system: 'Answer about the CV.',
+    prompt: 'And before that?',
+    history: [
+      { role: 'user', text: 'What did I do at Acme?' },
+      { role: 'assistant', text: 'You rewrote the billing pipeline.' }
+    ],
+    maxSteps: 4,
+    tools: []
+  });
+
+  assert.deepEqual(
+    seen.map((message) => message.role),
+    ['system', 'user', 'assistant', 'user'],
+    'the reply is the model\'s own turn, not more of what the user said'
+  );
+
+  // The question is the last message and nothing has been appended to it. A
+  // gateway that pasted the transcript in front of it would still produce four
+  // entries — this is the assertion that separates the two.
+  assert.equal(seen[3]?.text, 'And before that?');
+  assert.equal(seen[1]?.text, 'What did I do at Acme?');
+
+  // Metadata-only, and it has to count what was actually sent: history is the
+  // one contributor that grows without the prompt changing, so a `promptChars`
+  // blind to it reports a flat line while the real cost climbs.
+  const entry = log.entries.at(-1);
+  assert.equal(entry?.operation, 'tool_loop');
+  assert.equal(
+    entry?.promptChars,
+    'Answer about the CV.'.length
+      + 'And before that?'.length
+      + 'What did I do at Acme?'.length
+      + 'You rewrote the billing pipeline.'.length
+  );
 });

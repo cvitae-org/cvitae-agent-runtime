@@ -135,6 +135,11 @@ export const runStep = async (
         ...call,
         system: step.system,
         prompt: renderPrompt(step.prompt, context),
+        // Spread rather than passed as `undefined`, so a step that declares no
+        // conversation produces a request with no `history` key at all — which
+        // is what makes "absent and empty mean the same thing" true of the
+        // object a gateway actually receives, not only of the type.
+        ...(step.history && step.history.length > 0 ? { history: step.history } : {}),
         tools: handles,
         maxSteps: step.maxSteps,
         onDelta

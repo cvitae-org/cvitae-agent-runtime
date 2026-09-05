@@ -114,9 +114,40 @@ export type ToolHandle = {
   readonly invoke: (input: unknown) => Promise<unknown>;
 };
 
+/**
+ * One settled turn of the conversation a request continues.
+ *
+ * Deliberately not `Message` from `contracts/conversation.ts`. That is a row —
+ * an id, a `seq`, the run it came from — and none of it is anything the model
+ * is told. What the model is told is who spoke and what they said, and keeping
+ * the two apart is what lets the transcript grow columns without changing what
+ * a request means. The two roles match that file's because they are the two
+ * roles a conversation has, not because one type is derived from the other.
+ */
+export type ConversationTurn = {
+  readonly role: 'user' | 'assistant';
+  readonly text: string;
+};
+
 export type ToolLoopRequest = EffectCall & {
   readonly system: string;
   readonly prompt: string;
+  /**
+   * What was said before `prompt`, oldest first, excluding `prompt` itself.
+   *
+   * Passed to the model as message turns rather than pasted into the prompt,
+   * which is the difference between a conversation and a prompt that contains
+   * a transcript. A model handed the second answers *about* the transcript as
+   * often as it continues it, and the provider's own caching keys on the
+   * message prefix — a concatenated blob changes on every turn and caches
+   * nothing.
+   *
+   * Absent and empty mean the same thing, and both are the first turn. Windowed
+   * by the caller: this contract carries what it is given and never decides
+   * what to forget, because what is safe to drop is a property of the
+   * conversation, not of the gateway.
+   */
+  readonly history?: readonly ConversationTurn[];
   /** The model can call nothing outside this list. */
   readonly tools: readonly ToolHandle[];
   /** Hard ceiling on model turns. Nothing here ever runs unbounded. */

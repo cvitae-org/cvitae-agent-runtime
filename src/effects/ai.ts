@@ -537,17 +537,30 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
 
     async runToolLoop(request: ToolLoopRequest): Promise<ToolLoopResult> {
       const choice = resolver.describe(override);
+      const history = request.history ?? [];
 
       return call(
         'tool_loop',
         request,
         choice,
-        request.system.length + request.prompt.length,
+        request.system.length
+          + request.prompt.length
+          + history.reduce((total, turn) => total + turn.text.length, 0),
         async () => {
           const settings = {
             model: await language(),
             system: request.system,
-            prompt: request.prompt,
+            // `prompt` and `messages` are alternatives, not a pair — the SDK
+            // refuses both — so the question is the last message once there is
+            // a conversation to put it at the end of.
+            ...(history.length > 0
+              ? {
+                  messages: [
+                    ...history.map((turn) => ({ role: turn.role, content: turn.text })),
+                    { role: 'user' as const, content: request.prompt }
+                  ]
+                }
+              : { prompt: request.prompt }),
             tools: handlesToTools(request.tools),
             // A hard ceiling on turns. Nothing here ever runs unbounded, and a
             // loop that hits the ceiling is reported rather than retried — the
