@@ -44,6 +44,16 @@
  * answer that is not there. The difference is the message — "the provider is
  * down" against "the edit produced nothing" — and only the first sends anybody
  * to the right place. That test pins the message for the same reason.
+ *
+ * An instruction is a follow-up rather than a first one, and those mutations
+ * are about where the conversation goes and where it must not:
+ *
+ *   routing sees only the instruction         a follow-up is routed from …
+ *   the revision sees only the instruction    the section being revised is …
+ *   the conversation follows the instruction  the conversation is context …
+ *   the background line is always added       a first instruction is sent …
+ *   the conversation is always assembled      a first instruction is sent …
+ *   the history ceiling is dropped            more conversation than the …
  */
 
 import assert from 'node:assert/strict';
@@ -186,6 +196,47 @@ const edit = (s: Spine, input: Record<string, unknown>) =>
 
 const documentOf = (data: Readonly<Record<string, unknown>>): CvDocument =>
   data.document as CvDocument;
+
+/** Every request the run made, in order, with what the model was actually told. */
+type Seen = { readonly step: string; readonly system: string; readonly prompt: string };
+
+const recorded = async (
+  input: Record<string, unknown>,
+  over: Readonly<Record<string, Record<string, unknown>>> = {}
+): Promise<Seen[]> => {
+  const answers = { ...ANSWERS, ...over };
+  const seen: Seen[] = [];
+
+  const s = spine(capabilities, {
+    ai: {
+      generateObject: async <T,>(request: ObjectRequest<T>): Promise<ObjectResult<T>> => {
+        seen.push({
+          step: request.step ?? '',
+          system: request.system,
+          prompt: request.prompt
+        });
+        return { object: (answers[request.step ?? ''] ?? {}) as T, finishReason: 'stop', usage: {} };
+      }
+    }
+  });
+
+  try {
+    await edit(s, input);
+  } finally {
+    s.dispose();
+  }
+
+  return seen;
+};
+
+/** A conversation an instruction like "make it shorter" is unreadable without. */
+const EARLIER = {
+  history: [
+    { role: 'user', text: 'How long is my summary?' },
+    { role: 'assistant', text: 'Three paragraphs, about 90 words.' }
+  ],
+  summary: 'GOAL: a CV that fits one page.'
+};
 
 /* -------------------------------------------------- what reaches the model */
 
@@ -449,4 +500,95 @@ test('with nothing stored, the edit is proposed over an empty document', async (
     },
     { route: { section: 'personal', reason: 'It names a person and a city.' } }
   );
+});
+
+
+/* ---------------------------------------------------------- what came before */
+
+test('a follow-up is routed from what came before it, not from the sentence alone', async () => {
+  const seen = await recorded(
+    { instruction: 'Make it shorter.', ...EARLIER },
+    { route: { section: 'role_description', reason: 'The summary is what is long.' } }
+  );
+
+  const route = seen.find((entry) => entry.step === 'route');
+  assert.ok(route, 'the routing step never ran');
+
+  // "Make it shorter" names no section. Routed from that sentence alone this is
+  // a choice between seven made from an instruction with no subject, and
+  // whichever it lands on is then rewritten from the same sentence.
+  assert.match(route.prompt, /Three paragraphs, about 90 words\./);
+  assert.match(route.prompt, /GOAL: a CV that fits one page\./);
+  assert.match(route.prompt, /INSTRUCTION:\nMake it shorter\./);
+});
+
+test('the section being revised is told what came before it, as context and not as the task', async () => {
+  const seen = await recorded(
+    { instruction: 'Make it shorter.', ...EARLIER },
+    { route: { section: 'role_description', reason: 'The summary is what is long.' } }
+  );
+
+  const revise = seen.find((entry) => entry.step === 'role_description');
+  assert.ok(revise, 'the revise step never ran');
+
+  const earlier = revise.prompt.indexOf('Three paragraphs, about 90 words.');
+  const current = revise.prompt.indexOf('CURRENT SUMMARY');
+  const instruction = revise.prompt.indexOf('INSTRUCTION:');
+
+  // Ordered, not merely present. The instruction is the task and sits last,
+  // next to where the answer starts, with the section it applies to
+  // immediately before it; what was said earlier is context and sits ahead of
+  // both.
+  assert.ok(earlier >= 0, 'the conversation never reached the revision');
+  assert.ok(earlier < current, 'the conversation came after the section');
+  assert.ok(current < instruction, 'the instruction came before the section');
+
+  // And it is named as background. The conversation of an editing chat is a
+  // list of instructions that have already been applied, and a model reading
+  // them as outstanding applies them a second time.
+  assert.match(revise.system, /The conversation is background\. Apply only the instruction\./);
+});
+
+test('a first instruction is sent exactly what it was sent before this existed', async () => {
+  const seen = await recorded({ instruction: 'Add Ruby to my programming languages.' });
+
+  // The routing prompt was measured 6 of 6 on a local model and the note above
+  // it says to leave the wording alone. This is how it stays left alone: with
+  // nothing to say, `labelled` returns nothing and `compose` drops it, so the
+  // first instruction of a conversation is the prompt that was measured.
+  for (const entry of seen) {
+    assert.ok(
+      !entry.prompt.includes('THE CONVERSATION SO FAR'),
+      `${entry.step} was given an empty conversation to read`
+    );
+    assert.ok(
+      !entry.prompt.includes('EARLIER IN THIS CONVERSATION'),
+      `${entry.step} was given an empty note to read`
+    );
+    assert.ok(
+      !entry.system.includes('The conversation is background'),
+      `${entry.step} was told to ignore a conversation it was never given`
+    );
+  }
+
+  assert.ok(seen[0]?.prompt.startsWith('INSTRUCTION:'), 'the routing prompt gained a preamble');
+});
+
+test('more conversation than the ceiling is refused, not quietly trimmed', async () => {
+  await harness(async (s) => {
+    await assert.rejects(
+      edit(s, {
+        instruction: 'Make it shorter.',
+        // Two turns, well inside the count and far outside the size. Trimmed
+        // here this would answer a different question than the caller believes
+        // it asked — and the caller is the one holding the transcript, so it is
+        // the only party that knows which turns are droppable.
+        history: [
+          { role: 'user', text: 'x'.repeat(4_000) },
+          { role: 'assistant', text: 'y'.repeat(4_000) }
+        ]
+      }),
+      /at most 6000 characters/i
+    );
+  });
 });

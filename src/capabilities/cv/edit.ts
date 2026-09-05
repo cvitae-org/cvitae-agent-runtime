@@ -38,9 +38,25 @@
  * Berlin and left Acme" edits the location and not the job. The caller is told
  * which section was changed, so the honest answer is to say it again for the
  * other one, and that is better than a schema wide enough to lose something.
+ *
+ * **An instruction arrives in a conversation.** "Make it shorter" is not an
+ * instruction until you know what *it* is, and this was blind to that for as
+ * long as `ask_profile` was: the section was routed from a sentence with no
+ * subject, and whichever section that landed on was then rewritten from the
+ * same sentence. Both calls now take what was said before. Where this differs
+ * from `ask_profile` is the shape — see `conversation` below, which is the one
+ * decision in this file that is not obvious.
  */
 
 import { z } from 'zod';
+import {
+  HISTORY_BUDGET,
+  SUMMARY_BUDGET,
+  historySchema,
+  renderTurns,
+  summarySchema
+} from '../../context/conversation.js';
+import { compose, labelled } from '../../context/render.js';
 import {
   RuntimeError,
   type Capability,
@@ -117,7 +133,19 @@ export const inputSchema = z.object({
    * runtime holds the document, and a caller working on something it has not
    * saved has nowhere else to put it.
    */
-  document: cvDocumentSchema.optional()
+  document: cvDocumentSchema.optional(),
+  /**
+   * What was said before, oldest first, without `instruction`.
+   *
+   * "Make it shorter" is not an instruction until you know what *it* is, and
+   * before this the answer was nothing: the section was routed from a sentence
+   * with no subject, and whichever section it landed on was then rewritten from
+   * the same sentence. `ask_profile` gained this first; the blindness was
+   * always shared and the fix is the same fix.
+   */
+  history: historySchema,
+  /** What the turns before those came to. Standing context, not a turn. */
+  summary: summarySchema
 });
 
 export type EditCvInput = z.infer<typeof inputSchema>;
@@ -129,6 +157,34 @@ export type EditCvResult = {
   /** False when the model handed back what it was given. */
   readonly changed: boolean;
 };
+
+/* -------------------------------------------------------------- conversation */
+
+/**
+ * The conversation as prompt context, or nothing when there is none.
+ *
+ * **Context, not messages, and this is where `edit_cv` parts company with
+ * `ask_profile`.** There the turns go to the provider as messages, because the
+ * model is having the conversation and the next thing it says is the next turn
+ * of it. Here it is not: it is handed a section of JSON and asked to return
+ * revised JSON, and prior assistant turns are prose. Sent as messages they
+ * invite a reply in kind — which is the one thing a structured-output step
+ * cannot use — and the run is spent on a paragraph where a document was due.
+ *
+ * The note keeps the label `ask_profile` gives it. Same content and same name,
+ * so a person reading two prompts side by side is not asked to work out whether
+ * they are the same thing.
+ *
+ * Empty when the conversation is empty, which is the property that matters:
+ * `labelled` returns nothing for an empty body and `compose` drops it, so a
+ * first instruction produces the prompt this capability was measured on, byte
+ * for byte. Nothing here changes what already worked.
+ */
+const conversation = (input: EditCvInput): string =>
+  compose(
+    labelled('EARLIER IN THIS CONVERSATION', input.summary, SUMMARY_BUDGET),
+    labelled('THE CONVERSATION SO FAR', renderTurns(input.history), HISTORY_BUDGET)
+  );
 
 /* ------------------------------------------------------------------- routing */
 
@@ -185,10 +241,15 @@ const route = async (input: EditCvInput, context: RunContext): Promise<Section> 
       signal: context.signal,
       schema: routing,
       system: 'Choose the CV section the instruction changes. Use only a name from the list.',
-      prompt: [
+      // The conversation first, then the wording that was measured, unchanged
+      // and in the order it was measured in. This is the call that most needs
+      // it: "make it shorter" names no section, and without what came before it
+      // this is a choice between seven made from a sentence with no subject.
+      prompt: compose(
+        conversation(input),
         `INSTRUCTION:\n${input.instruction}`,
         `SECTIONS:\n${sectionNames.map((name) => `- ${name}: ${describes[name]}`).join('\n')}`
-      ].join('\n\n'),
+      ),
       maxOutputTokens: 300,
       temperature: 0
     });
@@ -349,31 +410,50 @@ const shapes: Readonly<Record<Section, Shape>> = {
  * leaves it blank, because nobody rereading their own CV notices a detail they
  * would have written anyway.
  */
-const rules = (section: Section, extra?: string): string =>
+const rules = (section: Section, extra?: string, continuing?: boolean): string =>
   [
     "You edit one section of the user's CV.",
     'Apply the instruction and change nothing else.',
     'Return the whole section, with the parts the instruction does not mention exactly as they are.',
     'Do not invent facts, dates, employers or numbers. Leave unknown values empty.',
     `The section is ${section}: ${describes[section]}.`,
+    /**
+     * Added only when there is a conversation, so a first instruction gets the
+     * system prompt this capability was measured on and nothing else.
+     *
+     * `context/tools.ts` and `cv/evidence.ts` both measured that an extra
+     * instruction costs reasoning time and is followed unreliably, which is why
+     * `ask_profile` adds no sentence for its own note. This one earns its place
+     * on a specific hazard those do not have: the conversation of an editing
+     * chat is a list of instructions, every one of which has already been
+     * applied, and a model that reads them as still outstanding will apply them
+     * again on top of a document that already has them.
+     */
+    ...(continuing ? ['The conversation is background. Apply only the instruction.'] : []),
     ...(extra ? [extra] : [])
   ].join('\n');
 
 const source = (context: StepContext): CvDocument =>
   context.completed.source?.document as CvDocument;
 
-const reviseStep = (section: Section, instruction: string): Step => {
+const reviseStep = (section: Section, input: EditCvInput): Step => {
   const shape = shapes[section];
+  const earlier = conversation(input);
 
   return {
     kind: 'extract',
     name: section,
     schema: shape.schema,
-    system: rules(section, shape.extra),
+    system: rules(section, shape.extra, earlier.length > 0),
+    // The instruction last, next to where the answer starts, and the section it
+    // applies to immediately before it. What came before is context and sits
+    // ahead of both.
     prompt: (context) => {
       const [label, value] = shape.show(source(context));
-      return [`${label}:\n${JSON.stringify(value, null, 2)}`, `INSTRUCTION:\n${instruction}`].join(
-        '\n\n'
+      return compose(
+        earlier,
+        `${label}:\n${JSON.stringify(value, null, 2)}`,
+        `INSTRUCTION:\n${input.instruction}`
       );
     },
     // See `THINKING_ALLOWANCE`: the first number is what the JSON needs, which
@@ -548,7 +628,7 @@ export const editCv: Capability<EditCvInput> = {
           ]
         },
 
-        { name: 'revise', concurrency: 1, steps: [reviseStep(section, input.instruction)] },
+        { name: 'revise', concurrency: 1, steps: [reviseStep(section, input)] },
 
         {
           name: 'assemble',

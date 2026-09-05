@@ -34,23 +34,9 @@
  */
 
 import { z } from 'zod';
+import { SUMMARY_BUDGET, renderTurns, turnSchema } from '../context/conversation.js';
 import { compose, labelled } from '../context/render.js';
 import type { Capability, Plan } from '../contracts/index.js';
-
-/**
- * How long the note may be, in characters.
- *
- * The sibling of `HISTORY_BUDGET` in `askProfile.ts` and of the `CONTENT_BUDGET`
- * that one is modelled on: a conservative character ceiling declared by the
- * contributor it bounds. Smaller than the window it stands in for by a factor
- * of four, which is the point — a note the size of the conversation would buy
- * nothing over sending the conversation.
- *
- * Enough for five headings with a line or two under each. A note that wants
- * more than this is a note that has started retelling the conversation instead
- * of carrying it.
- */
-export const SUMMARY_BUDGET = 1_500;
 
 /**
  * How much conversation may be folded in at once.
@@ -81,11 +67,6 @@ const CHARS_PER_TOKEN = 3;
  */
 const THINKING_ALLOWANCE = 6_000;
 
-const turn = z.object({
-  role: z.enum(['user', 'assistant']),
-  text: z.string().min(1)
-});
-
 export const inputSchema = z.object({
   /**
    * The note as it stands, or empty the first time.
@@ -97,7 +78,7 @@ export const inputSchema = z.object({
   summary: z.string().max(SUMMARY_BUDGET * 2).default(''),
   /** The turns that have fallen out of the window, oldest first. */
   turns: z
-    .array(turn)
+    .array(turnSchema)
     .min(1, 'There is nothing to fold in.')
     .max(MAX_TURNS, `At most ${MAX_TURNS} turns may be folded in at once.`)
 });
@@ -130,9 +111,6 @@ const SYSTEM = [
   'Write nothing that is not in the note or the turns.',
   `Write at most ${SUMMARY_BUDGET} characters, and nothing but the note.`
 ].join('\n');
-
-const render = (turns: SummarizeConversationInput['turns']): string =>
-  turns.map((each) => `${each.role}: ${each.text}`).join('\n\n');
 
 /**
  * Cuts a note back to the ceiling at a line boundary.
@@ -183,7 +161,7 @@ export const summarizeConversation: Capability<SummarizeConversationInput> = {
             system: SYSTEM,
             prompt: compose(
               labelled('NOTE', input.summary, SUMMARY_BUDGET * 2),
-              labelled('NEW TURNS', render(input.turns), SUMMARY_BUDGET * 6)
+              labelled('NEW TURNS', renderTurns(input.turns), SUMMARY_BUDGET * 6)
             ),
             maxOutputTokens:
               Math.ceil(SUMMARY_BUDGET / CHARS_PER_TOKEN) + THINKING_ALLOWANCE

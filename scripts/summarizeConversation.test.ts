@@ -32,7 +32,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { capabilities } from '../src/capabilities/index.js';
-import { SUMMARY_BUDGET, trimNote } from '../src/capabilities/summarizeConversation.js';
+import { SUMMARY_BUDGET } from '../src/context/conversation.js';
+import { trimNote } from '../src/capabilities/summarizeConversation.js';
 import { startRun } from '../src/runtime/run.js';
 import { spine } from './support/spine.js';
 import type { AiGateway, TextRequest } from '../src/contracts/index.js';

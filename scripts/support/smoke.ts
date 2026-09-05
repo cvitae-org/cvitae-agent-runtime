@@ -509,8 +509,20 @@ export const smokes: Readonly<Record<string, Smoke>> = {
      * answers it from the enum, which is the reason that schema is an enum: a
      * bare string would sample as the placeholder, fail `isSection`, and this
      * fixture would prove only that a refusal works.
+     *
+     * A conversation rides along for the same reason `ask_profile`'s fixture
+     * carries one: it reaches both model calls here — the routing one and the
+     * revising one — and a fixture without it would leave the branch that
+     * assembles it unwalked.
      */
-    input: { instruction: 'My name is Ada Lovelace and I am in Warszawa.' },
+    input: {
+      instruction: 'My name is Ada Lovelace and I am in Warszawa.',
+      history: [
+        { role: 'user', text: 'Where does it say I live?' },
+        { role: 'assistant', text: 'Your CV gives no location.' }
+      ],
+      summary: 'GOAL: a CV that says where they are.'
+    },
     plansWithTheModel: true
   },
   generate_evidence_summary: {
