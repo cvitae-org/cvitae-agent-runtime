@@ -32,6 +32,11 @@
  *   `apply` skips a field with nothing behind it — clearing the model leaves
  *     the old one in force, so the settings page has a field that can be typed
  *     into and never emptied.
+ *   the probe folds every non-2xx into "nothing answered" — a server returning
+ *     401 is reported as absent, which is the bug that put "start the server"
+ *     in front of somebody whose server was running.
+ *   the probe sends no `Authorization` header — a local server that requires a
+ *     key stays unreachable no matter what is typed into the field for it.
  */
 
 import assert from 'node:assert/strict';
@@ -59,6 +64,23 @@ const serving = (...models: string[]): typeof globalThis.fetch =>
     })) as unknown) as typeof globalThis.fetch;
 
 const refusing: typeof globalThis.fetch = () => Promise.reject(new Error('connection refused'));
+
+/** oMLX with no key configured: running, listening, and answering 401. */
+const guarded = (expected: string, ...models: string[]): typeof globalThis.fetch =>
+  ((async (_url: string, init?: { headers?: Record<string, string> }) =>
+    init?.headers?.authorization === `Bearer ${expected}`
+      ? new Response(JSON.stringify({ data: models.map((id) => ({ id })) }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      : new Response(JSON.stringify({ error: { message: 'API key required' } }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' }
+        })) as unknown) as typeof globalThis.fetch;
+
+/** Something on the port, speaking something else. */
+const wrongDoor: typeof globalThis.fetch = ((async () =>
+  new Response('<html>not me</html>', { status: 404 })) as unknown) as typeof globalThis.fetch;
 
 type Bench = {
   readonly harness: Harness;
@@ -290,19 +312,60 @@ test('a key sent over the channel is usable and is never written to disk', async
   }
 });
 
-test('a provider that needs no key refuses one rather than silently keeping it', async () => {
-  const it = bench();
+test('a local server that wants a key can be given one, and it is not written down', async () => {
+  // Not every local server is Ollama. oMLX answers `401 API key required` to
+  // the placeholder bearer token every OpenAI-compatible client sends, so a
+  // local provider that could not carry a key was a local provider that could
+  // not reach that server at all.
+  const it = bench({ probe: guarded('mlx-key', 'gemma4:12b') });
 
   try {
-    const refused = error(
-      await it.dispatch('secrets.set', { providerId: 'local', apiKey: 'not-needed' })
-    );
+    await it.dispatch('settings.set', { settings: { providerId: 'local' } });
+    data(await it.dispatch('secrets.set', { providerId: 'local', apiKey: 'mlx-key' }));
 
-    // Someone typing a key into a field for a server on their own machine has
-    // misunderstood something, and a form that accepts it teaches them the
-    // misunderstanding.
-    assert.equal(refused.code, 'misconfigured');
-    assert.match(refused.message, /no credential/);
+    const status = data<ProviderStatus>(await it.dispatch('providers.status', {}));
+
+    assert.equal(status.localState, 'ok');
+    assert.deepEqual(status.localModels, ['gemma4:12b']);
+
+    // The same claim the hosted providers get: the key lives in this process
+    // and the settings table has no column that could hold it.
+    assert.ok(!it.files().includes('mlx-key'), 'the key reached the disk');
+  } finally {
+    it.dispose();
+  }
+});
+
+test('a local server that answers 401 is running, and is not reported as absent', async () => {
+  // The bug this file exists to keep fixed. Every non-2xx used to become
+  // "nothing is listening", which puts "start the server" on screen in front of
+  // somebody whose server is already up — the one instruction that cannot help.
+  const it = bench({ probe: guarded('mlx-key') });
+
+  try {
+    await it.dispatch('settings.set', { settings: { providerId: 'local' } });
+
+    const status = data<ProviderStatus>(await it.dispatch('providers.status', {}));
+
+    assert.equal(status.localState, 'unauthorized');
+    assert.equal(status.localStatusCode, 401);
+  } finally {
+    it.dispose();
+  }
+});
+
+test('a server that answers something else is a wrong address, not a missing one', async () => {
+  const it = bench({ probe: wrongDoor });
+
+  try {
+    await it.dispatch('settings.set', { settings: { providerId: 'local' } });
+
+    const status = data<ProviderStatus>(await it.dispatch('providers.status', {}));
+
+    // A port with something on it that is not an OpenAI-compatible API. The fix
+    // is the base URL, and neither "start it" nor "add a key" is the fix.
+    assert.equal(status.localState, 'refused');
+    assert.equal(status.localStatusCode, 404);
   } finally {
     it.dispose();
   }
@@ -318,8 +381,12 @@ test('a status names what is missing without making a model call', async () => {
 
     const status = data<ProviderStatus>(await it.dispatch('providers.status', {}));
 
-    assert.equal(status.localReachable, true);
-    assert.equal(status.credentialConfigured, true, 'a local server needs no key');
+    assert.equal(status.localState, 'ok');
+    assert.equal(
+      status.providers.find((provider) => provider.id === 'local')?.credential,
+      'optional',
+      'a local server takes a key without demanding one'
+    );
     // Pulled as `gemma4:12b:latest`, configured as `gemma4:12b`. The same model.
     assert.deepEqual(status.missingLocalModels, ['nomic-embed-text']);
     assert.deepEqual(
@@ -344,7 +411,7 @@ test('an unreachable local server reports nothing missing, because nothing answe
 
     const status = data<ProviderStatus>(await it.dispatch('providers.status', {}));
 
-    assert.equal(status.localReachable, false);
+    assert.equal(status.localState, 'absent');
     // Not "every configured model is missing". The fix is to start the server,
     // and a list of models to pull puts the wrong instruction on the screen.
     assert.deepEqual(status.missingLocalModels, []);

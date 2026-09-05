@@ -32,7 +32,7 @@ import type { EmbeddingModel, LanguageModel } from 'ai';
 import type * as OpenAi from '@ai-sdk/openai';
 import type * as OpenAiCompatible from '@ai-sdk/openai-compatible';
 import { RuntimeError } from '../contracts/index.js';
-import { credentialFor, type Env } from '../secrets/env.js';
+import { credentialFor, type CredentialRequest, type Env } from '../secrets/env.js';
 
 export const providerIds = ['openrouter', 'huggingface', 'openai', 'local'] as const;
 export type ProviderId = (typeof providerIds)[number];
@@ -41,8 +41,19 @@ type ProviderDefinition = {
   readonly label: string;
   /** Absent for OpenAI proper, which uses its own provider package. */
   readonly baseURL?: string;
-  /** Empty for a provider that needs no credential. */
+  /** Empty for a provider with no credential at all to read. */
   readonly apiKeyEnvVar: string;
+  /**
+   * Whether a call fails without one.
+   *
+   * Separate from having a variable to read, because a local server is neither
+   * of the two things this used to be able to say. Ollama and llama.cpp want no
+   * key; oMLX and a vLLM started with `--api-key` require one; and which of
+   * those is behind `LOCAL_BASE_URL` is not something this table can know. So
+   * the local provider *accepts* a key and does not *demand* one, and the
+   * settings page renders that as an optional field rather than as a warning.
+   */
+  readonly credentialRequired: boolean;
   readonly defaultModel: string;
   /**
    * Whether the default model honours `response_format: json_schema`. When it
@@ -60,6 +71,7 @@ export const providers = {
     label: 'OpenRouter',
     baseURL: 'https://openrouter.ai/api/v1',
     apiKeyEnvVar: 'OPENROUTER_API_KEY',
+    credentialRequired: true,
     defaultModel: 'google/gemma-4-26b-a4b-it:free',
     supportsStructuredOutputs: true,
     embeds: false
@@ -68,6 +80,7 @@ export const providers = {
     label: 'Hugging Face',
     baseURL: 'https://router.huggingface.co/v1',
     apiKeyEnvVar: 'HF_TOKEN',
+    credentialRequired: true,
     defaultModel: 'speakleash/Bielik-11B-v3.0-Instruct',
     supportsStructuredOutputs: true,
     embeds: true,
@@ -77,6 +90,7 @@ export const providers = {
     label: 'OpenAI',
     baseURL: undefined,
     apiKeyEnvVar: 'OPENAI_API_KEY',
+    credentialRequired: true,
     defaultModel: 'gpt-4o',
     supportsStructuredOutputs: true,
     embeds: true,
@@ -87,7 +101,11 @@ export const providers = {
     // Ollama's OpenAI-compatible endpoint. LM Studio uses :1234/v1, llama.cpp
     // and vLLM :8080/v1 — all overridable through LOCAL_BASE_URL.
     baseURL: 'http://localhost:11434/v1',
-    apiKeyEnvVar: '',
+    // Read only when something set it. See `credentialRequired` above: the
+    // server on the other end of the base URL may want a key or may not, and
+    // the one that does answers 401 to every request until it gets one.
+    apiKeyEnvVar: 'LOCAL_API_KEY',
+    credentialRequired: false,
     defaultModel: 'gemma4:12b',
     supportsStructuredOutputs: true,
     embeds: true,
@@ -112,6 +130,25 @@ export const defaultProviderId: ProviderId = 'local';
 
 export const isProviderId = (value: unknown): value is ProviderId =>
   typeof value === 'string' && (providerIds as readonly string[]).includes(value);
+
+/**
+ * What reading this provider's key amounts to, stated from the table.
+ *
+ * Exported so the status probe can authenticate the same way a run would
+ * without restating any of it — and, more to the point, without naming a
+ * variable. Only `secrets/` may name one; everything else reads the name off
+ * this table, which is what keeps the credential surface auditable in one file.
+ */
+export const credentialRequest = (
+  providerId: ProviderId,
+  supplied?: string
+): CredentialRequest => ({
+  providerId,
+  label: providers[providerId].label,
+  envVar: providers[providerId].apiKeyEnvVar,
+  optional: !providers[providerId].credentialRequired,
+  ...(supplied ? { supplied } : {})
+});
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
@@ -203,15 +240,7 @@ export const createModelResolver = (
   };
 
   const keyFor = (providerId: ProviderId, supplied: string | undefined): string =>
-    credentialFor(
-      {
-        providerId,
-        label: providers[providerId].label,
-        envVar: providers[providerId].apiKeyEnvVar,
-        ...(supplied ? { supplied } : {})
-      },
-      env
-    );
+    credentialFor(credentialRequest(providerId, supplied), env);
 
   const describe = (override: ModelOverride = {}): ModelChoice => {
     const providerId = pick(
@@ -239,7 +268,7 @@ export const createModelResolver = (
     if (!provider.embeds) {
       throw new RuntimeError(
         `${provider.label} serves no embeddings endpoint. Set EMBEDDING_PROVIDER to one `
-          + 'that does — "local" needs no credential.',
+          + 'that does — "local" runs on this machine.',
         'misconfigured'
       );
     }

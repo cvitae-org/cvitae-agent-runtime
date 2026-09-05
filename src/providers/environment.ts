@@ -82,7 +82,7 @@ export const validateSettings = (settings: Settings): Settings => {
     if (!provider.embeds) {
       throw new RuntimeError(
         `${provider.label} serves no embeddings endpoint. Choose one that does — `
-          + '"local" needs no credential.',
+          + '"local" runs on this machine.',
         'misconfigured'
       );
     }
@@ -133,12 +133,13 @@ export const createEnvironment = (base: Env = process.env): Environment => {
     secret(providerId, apiKey) {
       const provider = providers[knownProvider(providerId, 'provider')];
 
-      // Not silently ignored. Someone typing a key into a field for a local
-      // server has misunderstood something, and a form that accepts it teaches
-      // them the misunderstanding.
+      // Not silently ignored: a form that accepts a key and drops it is worse
+      // than one that refuses. This no longer catches a local server, which was
+      // the case it was written for — oMLX requires a key, so a local key is a
+      // real thing to store and its provider now has a variable to store it in.
       if (provider.apiKeyEnvVar === '') {
         throw new RuntimeError(
-          `${provider.label} needs no credential, so there is nothing to store.`,
+          `${provider.label} takes no credential, so there is nothing to store.`,
           'misconfigured'
         );
       }

@@ -28,16 +28,29 @@ export type CredentialRequest = {
   readonly providerId: string;
   /** For the message a person reads when it is missing. */
   readonly label: string;
-  /** Empty when the provider needs no credential — a local server. */
+  /** Empty when the provider has no credential at all to read. */
   readonly envVar: string;
   /** A key sent with the call. Wins over the environment; never stored. */
   readonly supplied?: string;
+  /**
+   * Whether the call works without one. An optional credential that is not set
+   * falls back to [NO_CREDENTIAL] instead of refusing, which is what lets a
+   * local server be configured with a key on the machines that want one and
+   * left alone on the machines that do not.
+   */
+  readonly optional?: boolean;
 };
 
 /**
- * A local server accepts any bearer token, so there is no secret to manage and
- * nothing to prompt anyone for. The literal is a placeholder the transport
- * requires, not a credential.
+ * What is sent when a provider wants no key. The literal is a placeholder the
+ * transport requires — every OpenAI-compatible client insists on an
+ * `Authorization` header — and not a credential.
+ *
+ * It used to be documented as "a local server accepts any bearer token". Most
+ * do; oMLX does not, and answers `401 API key required` to this exact string.
+ * That is why a local server's credential is now *optional* rather than absent:
+ * this is the fallback when nobody has set one, not a claim that none is
+ * wanted.
  */
 export const NO_CREDENTIAL = 'local';
 
@@ -53,6 +66,8 @@ export const credentialFor = (
   const key = env[request.envVar]?.trim();
 
   if (!key) {
+    if (request.optional === true) return NO_CREDENTIAL;
+
     throw new RuntimeError(
       `Missing ${request.envVar}, which ${request.label} needs. `
         + 'Set it in the environment, or send a key with the request.',
