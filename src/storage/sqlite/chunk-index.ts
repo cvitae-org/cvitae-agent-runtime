@@ -14,12 +14,14 @@ import type {
   ScoredChunk,
   VectorQuery
 } from '../../contracts/index.js';
-import { fingerprintKey } from '../../contracts/index.js';
+import { DocumentConflictError, fingerprintKey } from '../../contracts/index.js';
 import type { Db } from './open.js';
 import { foldForSearch, packVector, unpackVector } from './rows.js';
 
 type ChunkRow = {
   id: string;
+  local_id: string;
+  source_revision: number;
   document_id: string;
   kind: string;
   text: string;
@@ -30,6 +32,8 @@ type ChunkRow = {
 
 type VectorRow = {
   id: string;
+  local_id: string;
+  source_revision: number;
   document_id: string;
   kind: string;
   text: string;
@@ -39,7 +43,8 @@ type VectorRow = {
 };
 
 const toScored = (row: ChunkRow): ScoredChunk => ({
-  id: row.id,
+  id: row.local_id,
+  sourceRevision: row.source_revision,
   documentId: row.document_id,
   kind: row.kind,
   text: row.text,
@@ -78,24 +83,44 @@ export const createChunkIndex = (db: Db, now: () => number = Date.now): ChunkInd
   );
 
   const insertChunk = db.prepare<[
-    string, string, string, string, string, string, number, string, number, Buffer, number
+    string, string, string, string, string, string, number, string, number, Buffer, number, number, string
   ]>(
     `INSERT INTO chunks
        (id, document_id, kind, text, search_text, meta, position,
-        fingerprint, dim, vector, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        fingerprint, dim, vector, created_at, source_revision, local_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
   const selectFingerprint = db.prepare<[string]>(
-    'SELECT fingerprint, dim FROM chunks WHERE document_id = ? LIMIT 1'
+    'SELECT fingerprint, dim FROM chunks WHERE document_id = ? AND source_revision = (SELECT revision FROM documents WHERE id = chunks.document_id) LIMIT 1'
   );
+
+  const revisionOf = (documentId: string, expected?: number): number => {
+    const row = db.prepare('SELECT revision FROM documents WHERE id = ?').get(documentId) as { revision: number } | undefined;
+    const actual = row?.revision ?? 0;
+    if (expected !== undefined && (!Number.isSafeInteger(expected) || expected < 1)) {
+      throw new RangeError('Index expectedRevision must be a positive safe integer.');
+    }
+    if (expected !== undefined && actual !== expected) {
+      throw new DocumentConflictError(documentId, expected, actual);
+    }
+    return actual;
+  };
+  const clear = db.transaction((documentId: string, options?: { readonly expectedRevision: number }) => {
+    revisionOf(documentId, options?.expectedRevision);
+    const removed = deleteForDocument.run(documentId).changes;
+    if (options) db.prepare('DELETE FROM cv_index_jobs WHERE document_id = ? AND revision = ?').run(documentId, options.expectedRevision);
+    return removed;
+  }).immediate;
 
   const replaceAll = db.transaction(
     (
       documentId: string,
       fingerprint: EmbeddingFingerprint,
-      chunks: readonly IndexedChunk[]
+      chunks: readonly IndexedChunk[],
+      options?: { readonly expectedRevision: number }
     ): number => {
+      const revision = revisionOf(documentId, options?.expectedRevision);
       deleteForDocument.run(documentId);
 
       const key = fingerprintKey(fingerprint);
@@ -110,7 +135,7 @@ export const createChunkIndex = (db: Db, now: () => number = Date.now): ChunkInd
         }
 
         insertChunk.run(
-          chunk.id,
+          JSON.stringify([documentId, chunk.id]),
           documentId,
           chunk.kind,
           chunk.text,
@@ -120,18 +145,19 @@ export const createChunkIndex = (db: Db, now: () => number = Date.now): ChunkInd
           key,
           fingerprint.dim,
           packVector(chunk.vector),
-          at
+          at,
+          revision,
+          chunk.id
         );
       }
 
+      db.prepare('DELETE FROM cv_index_jobs WHERE document_id = ? AND revision = ?').run(documentId, revision);
       return chunks.length;
     }
   ).immediate;
 
   return {
-    clear(documentId: string) {
-      return deleteForDocument.run(documentId).changes;
-    },
+    clear,
 
     lexical(query: LexicalQuery) {
       const match = toMatchExpression(query.text);
@@ -144,11 +170,12 @@ export const createChunkIndex = (db: Db, now: () => number = Date.now): ChunkInd
       // scorer.
       const rows = db
         .prepare(
-          `SELECT c.id, c.document_id, c.kind, c.text, c.meta, c.position,
+          `SELECT c.id, c.local_id, c.source_revision, c.document_id, c.kind, c.text, c.meta, c.position,
                   -bm25(chunks_fts) AS score
              FROM chunks_fts
              JOIN chunks c ON c.rowid = chunks_fts.rowid
             WHERE chunks_fts MATCH :match
+              AND c.source_revision = (SELECT revision FROM documents WHERE id = c.document_id)
               AND (:documentId IS NULL OR c.document_id = :documentId)
               AND (:kinds IS NULL OR c.kind IN (SELECT value FROM json_each(:kinds)))
             ORDER BY score DESC
@@ -167,9 +194,10 @@ export const createChunkIndex = (db: Db, now: () => number = Date.now): ChunkInd
     neighbours(query: VectorQuery) {
       const rows = db
         .prepare(
-          `SELECT id, document_id, kind, text, meta, position, vector
+          `SELECT id, local_id, source_revision, document_id, kind, text, meta, position, vector
              FROM chunks
             WHERE fingerprint = :fingerprint
+              AND source_revision = (SELECT revision FROM documents WHERE id = chunks.document_id)
               AND (:documentId IS NULL OR document_id = :documentId)
               AND (:kinds IS NULL OR kind IN (SELECT value FROM json_each(:kinds)))`
         )
@@ -184,7 +212,8 @@ export const createChunkIndex = (db: Db, now: () => number = Date.now): ChunkInd
       // different space, and scoring them against this query would rank noise.
       return rows
         .map((row) => ({
-          id: row.id,
+          id: row.local_id,
+          sourceRevision: row.source_revision,
           documentId: row.document_id,
           kind: row.kind,
           text: row.text,
@@ -214,8 +243,8 @@ export const createChunkIndex = (db: Db, now: () => number = Date.now): ChunkInd
       };
     },
 
-    replace(documentId, fingerprint, chunks) {
-      return replaceAll(documentId, fingerprint, chunks);
+    replace(documentId, fingerprint, chunks, options) {
+      return replaceAll(documentId, fingerprint, chunks, options);
     }
   };
 };

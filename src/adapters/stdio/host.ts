@@ -296,7 +296,7 @@ export const createHost = (options: HostOptions): Host => {
       if (
         frame.kind === 'reply'
         && frame.ok
-        && (request.channel === 'run.start' || request.channel === 'run.resume')
+        && (request.channel === 'run.start' || request.channel === 'run.context.start' || request.channel === 'run.offer.start' || request.channel === 'run.resume')
       ) {
         const runId = (frame.data as { runId?: unknown }).runId;
         if (typeof runId === 'string') watch(runId);

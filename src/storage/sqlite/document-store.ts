@@ -18,8 +18,10 @@
 import type {
   DocumentBody,
   DocumentRecord,
-  DocumentStore
+  DocumentStore,
+  DocumentUpdateOptions
 } from '../../contracts/index.js';
+import { DocumentConflictError } from '../../contracts/index.js';
 import type { Db } from './open.js';
 
 type DocumentRow = {
@@ -61,9 +63,18 @@ export const createDocumentStore = (db: Db, now: () => number = Date.now): Docum
     (
       id: string,
       kind: string,
-      mutate: (current: DocumentBody | undefined) => DocumentBody
+      mutate: (current: DocumentBody | undefined) => DocumentBody,
+      options: DocumentUpdateOptions = {}
     ): DocumentRecord => {
+      const expected = options.expectedRevision;
+      if (expected !== undefined && (!Number.isSafeInteger(expected) || expected < 0)) {
+        throw new RangeError('expectedRevision must be a non-negative safe integer.');
+      }
       const existing = select.get(id) as DocumentRow | undefined;
+      const actual = existing?.revision ?? 0;
+      if (expected !== undefined && expected !== actual) {
+        throw new DocumentConflictError(id, expected, actual);
+      }
       const at = now();
 
       if (!existing) {
@@ -98,8 +109,8 @@ export const createDocumentStore = (db: Db, now: () => number = Date.now): Docum
       return row ? toDocument(row) : undefined;
     },
 
-    update(id, kind, mutate) {
-      return apply(id, kind, mutate);
+    update(id, kind, mutate, options) {
+      return apply(id, kind, mutate, options);
     }
   };
 };

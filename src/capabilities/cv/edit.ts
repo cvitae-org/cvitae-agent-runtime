@@ -61,6 +61,7 @@
  */
 
 import { z } from 'zod';
+import type { CvProposalBase } from '../../contracts/index.js';
 import {
   HISTORY_BUDGET,
   SUMMARY_BUDGET,
@@ -79,12 +80,17 @@ import {
 } from '../../contracts/index.js';
 import {
   CV_ID,
+  asCvDocument,
   certificateSchema,
   cvDocumentSchema,
   educationEntrySchema,
+  emptyDocument,
   experienceEntrySchema,
   languageSchema,
+  normaliseCv,
+  normaliseSkills,
   personalSchema,
+  skillGroupSchema,
   skillsSchema,
   type CvDocument
 } from './document.js';
@@ -120,7 +126,7 @@ const isSection = (value: unknown): value is Section =>
 const describes: Readonly<Record<Section, string>> = {
   personal: 'name, email, phone, location and links',
   role_description: 'the summary paragraph about the person',
-  skills: 'the professional role and the lists of languages, frameworks and tools',
+  skills: 'the professional role and the named rows of skills beneath it',
   experience: 'jobs held: company, title, dates, highlights',
   education: 'degrees: university, degree, dates, thesis, mark',
   certificates: 'certificates and their issuers and dates',
@@ -163,6 +169,8 @@ export const inputSchema = z.object({
 export type EditCvInput = z.infer<typeof inputSchema>;
 
 export type EditCvResult = {
+  /** Present only when the source was read from storage, not inline input. */
+  readonly base?: CvProposalBase;
   /** The whole CV with one section revised. Nothing has been written. */
   readonly document: CvDocument;
   readonly section: Section;
@@ -372,7 +380,28 @@ const summary = z.object({
 });
 
 const personal = z.object({ personal: personalSchema });
-const skills = z.object({ skills: skillsSchema });
+
+/**
+ * The skills strip as the *model* should see it: the role, and the named rows.
+ *
+ * Not `skillsSchema`, which also carries the three derived arrays. Showing a
+ * model four containers where three restate the fourth asks it to keep them in
+ * agreement, and it cannot — the observed failure is a skill moved into a new
+ * row that is still sitting in `frameworks`, which then reads back as a skill
+ * in two places. `normaliseSkills` rebuilds the three afterwards, from rows the
+ * model was made responsible for exactly once.
+ *
+ * The heading being a field is also what makes "put my blockchain work in its
+ * own section" a sayable instruction rather than one the schema silently drops.
+ */
+const skills = z.object({
+  skills: z.object({
+    role: z.string().describe('The current job title, e.g. "Frontend Developer".'),
+    groups: z
+      .array(skillGroupSchema)
+      .describe('Every row of the skills section, each with its own heading.')
+  })
+});
 
 /* --------------------------------------------------------------------- step */
 
@@ -410,7 +439,15 @@ const shapes: Readonly<Record<Section, Shape>> = {
   skills: {
     schema: skills,
     tokens: 600,
-    show: (document) => ['CURRENT SKILLS', document.skills]
+    // The rows and the role, and not the three derived arrays beside them: what
+    // is shown has to be what is asked for, or the model returns the shape it
+    // was shown. See the note on `skills`.
+    show: (document) => [
+      'CURRENT SKILLS',
+      { role: document.skills.role, groups: document.skills.groups }
+    ],
+    extra:
+      'Return every row, including the ones the instruction does not mention. Keep each row’s heading unless the instruction asks to rename it.'
   },
   experience: {
     schema: experience,
@@ -579,7 +616,11 @@ const merge = (context: StepContext, section: Section): EditCvResult => {
       document.role_description = parsed(z.string(), answer.summary, section);
       break;
     case 'skills':
-      document.skills = parsed(skillsSchema, answer.skills, section);
+      // Parsed against the stored shape so the three arrays take their
+      // defaults, then normalised so they state what the rows say. The proposal
+      // a person accepts is then already the document `profile.update` will
+      // store, rather than one the boundary would quietly correct afterwards.
+      document.skills = normaliseSkills(parsed(skillsSchema, answer.skills, section));
       break;
     case 'experience':
       document.experience = parsed(
@@ -610,6 +651,7 @@ const merge = (context: StepContext, section: Section): EditCvResult => {
   return {
     // The whole document, so `version` and `sources` are proven to still be
     // the ones that were read rather than whatever the model had to say.
+    ...(context.completed.source?.base ? { base: context.completed.source.base as CvProposalBase } : {}),
     document: cvDocumentSchema.parse(document),
     section,
     changed: JSON.stringify(document[section]) !== JSON.stringify(from[section])
@@ -645,7 +687,10 @@ export const editCv: Capability<EditCvInput> = {
               name: 'source',
               critical: true,
               run: async (context) => {
-                if (input.document) return { document: input.document };
+                // Normalised even when the caller supplied it: a client that
+                // sent only the three legacy arrays would otherwise be shown a
+                // skills strip with no rows in it, and asked to edit that.
+                if (input.document) return { document: normaliseCv(input.document) };
 
                 const record = context.documents.read(CV_ID);
                 /**
@@ -657,7 +702,8 @@ export const editCv: Capability<EditCvInput> = {
                  * the caller decides whether the proposal becomes a document.
                  */
                 return {
-                  document: record ? cvDocumentSchema.parse(record.body) : cvDocumentSchema.parse({})
+                  document: record ? asCvDocument(record.body) : emptyDocument(),
+                  base: { contextId: context.contextId ?? CV_ID, revision: record?.revision ?? 0, generation: context.contextGeneration ?? 0 }
                 };
               }
             }

@@ -17,7 +17,7 @@ import { plan as makePlan } from '../core/planner.js';
 import { route, validateInput } from '../core/router.js';
 import { createCheckpointer } from '../runs/checkpoint.js';
 import * as emit from '../events/emit.js';
-import { RuntimeError, isRunSuspension } from '../contracts/index.js';
+import { CvContextError, OperationError, RuntimeError, isRunSuspension } from '../contracts/index.js';
 import type {
   AiLogger,
   ApprovalGate,
@@ -42,6 +42,14 @@ import type {
  * filed under, and a gate that did not know it could not find one.
  */
 export type RuntimeDeps = {
+  /** Resolves and validates captured context ownership before creating a run. */
+  readonly scopeLegacy?: () => void;
+  readonly scopeOffer?: (snapshotId: string, conversationId: string) => Pick<RuntimeDeps, 'documents' | 'retrieval' | 'index' | 'effects'> & { readonly contextGeneration: number; readonly contextRevision: number };
+  readonly offerInput?: (snapshotId: string, capability: string, input: unknown) => unknown;
+  readonly scopeCv?: (contextId: string, conversationId?: string, generation?: number, revision?: number) => Pick<RuntimeDeps, 'documents' | 'retrieval' | 'index'> & { readonly contextGeneration: number; readonly contextRevision: number };
+  readonly contextGeneration?: number;
+  readonly contextRevision?: number;
+  readonly finish?: (runId: string, result: RunResult, commit: (result: RunResult) => void) => RunResult;
   readonly capabilities: CapabilityMap;
   readonly runs: RunStore;
   readonly gate: (runId: string, step: string) => ApprovalGate;
@@ -67,6 +75,11 @@ export type RuntimeDeps = {
 };
 
 export type RunRequest = {
+  readonly offerSnapshotId?: string;
+  readonly contextId?: string;
+  readonly contextGeneration?: number;
+  readonly contextRevision?: number;
+  readonly conversationId?: string;
   readonly capability: string;
   readonly input: unknown;
   readonly signal?: AbortSignal;
@@ -76,11 +89,32 @@ export type RunRequest = {
   readonly traceId?: string;
 };
 
+export const scopedDeps = (deps: RuntimeDeps, contextId?: string, conversationId?: string, generation?: number, revision?: number, offerSnapshotId?: string): RuntimeDeps => {
+  if (offerSnapshotId !== undefined) {
+    if (!deps.scopeOffer || !conversationId) throw new CvContextError('invalid_input', 'Snapshot runs require a conversation.');
+    return { ...deps, ...deps.scopeOffer(offerSnapshotId, conversationId) };
+  }
+  if ((conversationId !== undefined || generation !== undefined || revision !== undefined) && contextId === undefined) {
+    throw new CvContextError('invalid_input', 'A conversation-bound run requires a context ID.');
+  }
+  if (contextId === undefined) {
+    deps.scopeLegacy?.();
+    return deps;
+  }
+  if (!deps.scopeCv) throw new CvContextError('invalid_input', 'This runtime does not support CV context binding.');
+  return { ...deps, ...deps.scopeCv(contextId, conversationId, generation, revision) };
+};
+
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
 export const buildRunContext = (
   deps: RuntimeDeps,
   fields: {
+    offerSnapshotId?: string;
+    contextId?: string;
+    contextGeneration?: number;
+    contextRevision?: number;
+    conversationId?: string;
     runId: string;
     traceId: string;
     capability: string;
@@ -122,7 +156,7 @@ export const settleFailure = (
     throw error;
   }
 
-  const code = error instanceof RuntimeError ? error.code : 'step_failed';
+  const code = error instanceof RuntimeError || error instanceof OperationError ? error.code : 'step_failed';
   const message = String((error as Error)?.message ?? error).slice(0, 500);
   checkpoint.failed({ code, message });
   throw error;
@@ -168,7 +202,8 @@ export const beginRun = (deps: RuntimeDeps, request: RunRequest): RunHandle => {
   // cannot accept, never became a run. Recording it as a failed one would fill
   // the history with rows that describe a caller's bug rather than any work.
   const capability = route(deps.capabilities, request.capability);
-  const input = validateInput(capability, request.input);
+  const input = validateInput(capability, request.offerSnapshotId ? deps.offerInput?.(request.offerSnapshotId, request.capability, request.input) : request.input);
+  const bound = scopedDeps(deps, request.contextId, request.conversationId, request.contextGeneration, request.contextRevision, request.offerSnapshotId);
 
   const runId = request.runId ?? deps.newRunId();
   const traceId = request.traceId ?? runId;
@@ -176,14 +211,24 @@ export const beginRun = (deps: RuntimeDeps, request: RunRequest): RunHandle => {
   const createdAt = now();
 
   deps.runs.create(
-    { id: runId, capability: capability.name, input, traceId, deadlineAt, createdAt },
+    { id: runId, capability: capability.name, input, traceId, deadlineAt, createdAt,
+      ...(request.offerSnapshotId === undefined ? {} : { offerSnapshotId: request.offerSnapshotId }),
+      ...(request.contextId === undefined ? {} : { contextId: request.contextId }),
+      ...(bound.contextGeneration === undefined ? {} : { contextGeneration: bound.contextGeneration }),
+      ...(bound.contextRevision === undefined ? {} : { contextRevision: bound.contextRevision }),
+      ...(request.conversationId === undefined ? {} : { conversationId: request.conversationId }) },
     [emit.runQueued(capability.name, createdAt)]
   );
 
   const checkpoint = createCheckpointer(deps.runs, runId, now);
   checkpoint.started(deps.effects.ai.describe());
 
-  const context = buildRunContext(deps, {
+  const context = buildRunContext(bound, {
+    ...(request.offerSnapshotId === undefined ? {} : { offerSnapshotId: request.offerSnapshotId }),
+      ...(request.contextId === undefined ? {} : { contextId: request.contextId }),
+      ...(bound.contextGeneration === undefined ? {} : { contextGeneration: bound.contextGeneration }),
+      ...(bound.contextRevision === undefined ? {} : { contextRevision: bound.contextRevision }),
+    ...(request.conversationId === undefined ? {} : { conversationId: request.conversationId }),
     runId,
     traceId,
     capability: capability.name,
@@ -203,7 +248,9 @@ export const beginRun = (deps: RuntimeDeps, request: RunRequest): RunHandle => {
         now
       });
 
-      checkpoint.succeeded(result.data, result.degraded, result.elapsedMs);
+      const commit = (value: RunResult) => checkpoint.succeeded(value.data, value.degraded, value.elapsedMs);
+      if (deps.finish) return deps.finish(runId, result, commit);
+      commit(result);
       return result;
     } catch (error) {
       return settleFailure(checkpoint, error);

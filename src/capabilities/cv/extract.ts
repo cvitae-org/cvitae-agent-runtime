@@ -737,7 +737,7 @@ export const extractCv: Capability<ExtractCvInput> = {
                   const merged = mergeDocument(asCvDocument(current), extracted);
                   report = merged.report;
                   return merged.document;
-                });
+                }, context.contextRevision === undefined ? undefined : { expectedRevision: context.contextRevision });
 
                 if (!report) {
                   // Unreachable: `update` runs the mutator at least once before
@@ -805,7 +805,7 @@ export const extractCv: Capability<ExtractCvInput> = {
                 // Cleared rather than left alone: a CV whose prose is gone is
                 // not a CV whose old prose is still findable.
                 if (chunks.length === 0) {
-                  context.index.clear(CV_ID);
+                  context.index.clear(CV_ID, { expectedRevision: merged.revision! });
                   return { indexed: 0 };
                 }
 
@@ -819,7 +819,7 @@ export const extractCv: Capability<ExtractCvInput> = {
                 if (!embedded) return { indexed: 0 };
 
                 return {
-                  indexed: context.index.replace(CV_ID, embedded.fingerprint, embedded.chunks)
+                  indexed: context.index.replace(CV_ID, embedded.fingerprint, embedded.chunks, { expectedRevision: merged.revision! })
                 };
               }
             }

@@ -20,6 +20,8 @@
  * reorder a list on the strength of nothing.
  */
 
+import { CvContextError } from '../../contracts/index.js';
+import { requireConversationContext } from './context-ownership.js';
 import { randomUUID } from 'node:crypto';
 import type {
   Conversation,
@@ -32,6 +34,7 @@ import type {
 import type { Db } from './open.js';
 
 type ConversationRow = {
+  offer_snapshot_id?: string | null;
   id: string;
   subject_kind: string;
   subject_id: string;
@@ -55,6 +58,7 @@ type MessageRow = {
 
 const toConversation = (row: ConversationRow): Conversation => ({
   id: row.id,
+  ...(row.offer_snapshot_id ? { offerSnapshotId: row.offer_snapshot_id } : {}),
   subject: { kind: row.subject_kind as ConversationSubjectKind, id: row.subject_id },
   title: row.title ?? undefined,
   createdAt: row.created_at,
@@ -83,7 +87,7 @@ const toMessage = (row: MessageRow): Message => ({
  * handful of rows.
  */
 const SELECT = /* sql */ `
-  SELECT c.*, (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
+  SELECT c.*, (SELECT id FROM offer_snapshots s WHERE s.conversation_id = c.id) AS offer_snapshot_id, (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
     FROM conversations c
 `;
 
@@ -103,6 +107,7 @@ export const createConversationStore = (
   );
   const latestOfSubject = db.prepare<[string, string]>(
     `${SELECT} WHERE c.subject_kind = ? AND c.subject_id = ?
+      AND NOT EXISTS (SELECT 1 FROM offer_snapshots s WHERE s.conversation_id = c.id)
       ORDER BY c.updated_at DESC LIMIT 1`
   );
 
@@ -148,6 +153,14 @@ export const createConversationStore = (
   // Built from what was written rather than read back. Every field of a row
   // this new is known here, and a select would only be asking SQLite to confirm
   // the insert that just succeeded.
+  const checkedSubject = (subject: ConversationSubject): ConversationSubject => {
+    if (subject.kind !== 'profile' || subject.id === '') return subject;
+    if (!db.prepare('SELECT id FROM cv_contexts WHERE id = ?').get(subject.id)) {
+      throw new CvContextError('context_not_found', `No such CV context: ${subject.id}`);
+    }
+    // Keep legacy rows/clients intact. The explicit cv ID addresses their bucket.
+    return subject.id === 'cv' ? { kind: 'profile', id: '' } : subject;
+  };
   const start = (subject: ConversationSubject): Conversation => {
     const at = now();
     const id = newId();
@@ -174,6 +187,23 @@ export const createConversationStore = (
       conversationId: string,
       message: { role: MessageRole; text: string; runId?: string | undefined; id?: string | undefined }
     ): Message => {
+      if (message.runId !== undefined) {
+        const snapshot = db.prepare('SELECT id FROM offer_snapshots WHERE conversation_id = ?').get(conversationId) as { id: string } | undefined;
+        const run = db.prepare('SELECT context_id, conversation_id, offer_snapshot_id FROM runs WHERE id = ?').get(message.runId) as
+          { context_id: string | null; conversation_id: string | null; offer_snapshot_id: string | null } | undefined;
+        if (snapshot && (!run || run.offer_snapshot_id !== snapshot.id)) {
+          throw new CvContextError('context_conflict', 'Run does not belong to this snapshot.');
+        }
+        if (run) {
+          if (run.conversation_id !== null && run.conversation_id !== conversationId) {
+            throw new CvContextError('context_conflict', 'Run belongs to another conversation.');
+          }
+          const conversation = byId.get(conversationId) as ConversationRow | undefined;
+          if (!run.offer_snapshot_id && (run.context_id !== null || conversation?.subject_kind === 'profile')) {
+            requireConversationContext(db, conversationId, run.context_id ?? 'cv');
+          }
+        }
+      }
       const at = now();
       const { seq } = nextSeq.get(conversationId) as { seq: number };
       const id = message.id ?? newId();
@@ -202,16 +232,14 @@ export const createConversationStore = (
   ).immediate;
 
   return {
-    list: (subject) =>
-      (
-        (subject
-          ? listOfSubject.all(subject.kind, subject.id)
-          : listAll.all()) as ConversationRow[]
-      ).map(toConversation),
+    list: (subject) => {
+      const checked = subject ? checkedSubject(subject) : undefined;
+      return ((checked ? listOfSubject.all(checked.kind, checked.id) : listAll.all()) as ConversationRow[]).map(toConversation);
+    },
 
-    open: (subject) => openSubject(subject),
+    open: (subject) => openSubject(checkedSubject(subject)),
 
-    create: (subject) => start(subject),
+    create: db.transaction((subject: ConversationSubject) => start(checkedSubject(subject))).immediate,
 
     read(id) {
       const row = byId.get(id) as ConversationRow | undefined;

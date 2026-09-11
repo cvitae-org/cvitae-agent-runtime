@@ -652,3 +652,31 @@ test('two sources are labelled where they meet, one is not', async () => {
     one.dispose();
   }
 });
+
+
+test('a scoped import refuses to restore content edited after the run began', async () => {
+  await harness({}, async (s) => {
+    const original = s.deps.documents.update(CV_ID, 'cv', () => ({ role_description: 'original' }));
+    let entered!: () => void;
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const deps = {
+      ...s.deps,
+      scopeCv: () => ({ documents: s.deps.documents, retrieval: s.deps.retrieval,
+        index: s.deps.index, contextGeneration: 0, contextRevision: original.revision }),
+      effects: { ...s.deps.effects, sources: { read: async () => {
+        entered(); await gate;
+        return { text: CV_TEXT, via: 'plain' as const };
+      } } }
+    };
+    const result = startRun(deps, { capability: 'extract_cv', contextId: CV_ID,
+      input: { sources: [textSource] } });
+    const refused = assert.rejects(result, { code: 'document_conflict' });
+    await ready;
+    const manual = s.deps.documents.update(CV_ID, 'cv', () => ({ role_description: 'manual replacement' }));
+    release();
+    await refused;
+    assert.deepEqual(s.deps.documents.read(CV_ID), manual);
+  });
+});

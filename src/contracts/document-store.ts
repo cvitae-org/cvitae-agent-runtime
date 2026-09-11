@@ -19,6 +19,8 @@
  * details of one capability's schema.
  */
 
+import { OperationError } from './operation-error.js';
+
 export type DocumentBody = Readonly<Record<string, unknown>>;
 
 export type DocumentRecord = {
@@ -29,6 +31,30 @@ export type DocumentRecord = {
   readonly body: DocumentBody;
   readonly createdAt: number;
   readonly updatedAt: number;
+};
+
+/** A caller's base no longer matches storage. No mutation has been applied. */
+export class DocumentConflictError extends OperationError {
+  readonly code = 'document_conflict';
+
+  constructor(
+    readonly documentId: string,
+    readonly expectedRevision: number,
+    readonly actualRevision: number
+  ) {
+    super('document_conflict', `Document ${documentId} expected revision ${expectedRevision}, found ${actualRevision}.`);
+    this.name = 'DocumentConflictError';
+  }
+}
+
+export type DocumentUpdateOptions = {
+  /**
+   * Check inside the transaction, before invoking the mutator. Zero means the
+   * document must not exist. Positive revisions identify the caller's base.
+   * Omit only for a merge computed entirely from the current stored body.
+   * Editors and generated proposals must supply their original base revision.
+   */
+  readonly expectedRevision?: number;
 };
 
 export interface DocumentStore {
@@ -44,6 +70,7 @@ export interface DocumentStore {
   update(
     id: string,
     kind: string,
-    mutate: (current: DocumentBody | undefined) => DocumentBody
+    mutate: (current: DocumentBody | undefined) => DocumentBody,
+    options?: DocumentUpdateOptions
   ): DocumentRecord;
 }

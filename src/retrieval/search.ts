@@ -80,7 +80,7 @@ const fold = (
 ): void => {
   candidates.forEach((chunk, index) => {
     const contribution = 1 / (K + index + 1);
-    const existing = into.get(chunk.id);
+    const existing = into.get(JSON.stringify([chunk.documentId, chunk.id]));
 
     if (existing) {
       existing.score += contribution;
@@ -88,7 +88,7 @@ const fold = (
       return;
     }
 
-    into.set(chunk.id, { chunk, score: contribution, found: [half] });
+    into.set(JSON.stringify([chunk.documentId, chunk.id]), { chunk, score: contribution, found: [half] });
   });
 };
 
@@ -110,8 +110,8 @@ export const createRetriever = (options: RetrieverOptions): Retriever => {
       };
 
       const fused = new Map<string, Fused>();
+      let vectors: ScoredChunk[] = [];
 
-      fold(fused, reader.lexical({ text, ...filter }), 'lexical');
 
       if (!query.lexicalOnly) {
         // Embedded here rather than by the caller: the query has to go through
@@ -125,13 +125,14 @@ export const createRetriever = (options: RetrieverOptions): Retriever => {
           // swap degrades this search to its lexical half rather than ranking
           // by vectors from a different space. Silent, but visible: no hit
           // comes back marked `vector`.
-          fold(
-            fused,
-            reader.neighbours({ vector, fingerprint: fingerprintOf(embedded), ...filter }),
-            'vector'
-          );
+          vectors = reader.neighbours({ vector, fingerprint: fingerprintOf(embedded), ...filter });
         }
       }
+
+      // Read lexical candidates after embedding so an intervening edit cannot
+      // leave pre-await lexical results in an otherwise current response.
+      fold(fused, reader.lexical({ text, ...filter }), 'lexical');
+      fold(fused, vectors, 'vector');
 
       return [...fused.values()]
         .sort((a, b) => b.score - a.score || a.chunk.id.localeCompare(b.chunk.id))

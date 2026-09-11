@@ -78,6 +78,8 @@ export type ScoredChunk = {
   readonly position: number;
   readonly meta: Readonly<Record<string, unknown>>;
   readonly score: number;
+  /** Document revision indexed; absent only on test/custom readers. */
+  readonly sourceRevision?: number;
 };
 
 export type ChunkQuery = {
@@ -129,12 +131,17 @@ export interface ChunkIndex extends ChunkReader {
    * upsert: a re-chunked document has a different number of pieces, and the
    * leftovers from the longer previous run would otherwise stay searchable.
    *
+   * Async builders must supply the source document revision. Publication
+   * checks it before clearing/replacing any rows. Omission is reserved for
+   * synchronous trusted callers; scoped run ports require the precondition.
+   *
    * Returns the number of chunks written.
    */
   replace(
     documentId: string,
     fingerprint: EmbeddingFingerprint,
-    chunks: readonly IndexedChunk[]
+    chunks: readonly IndexedChunk[],
+    options?: { readonly expectedRevision: number }
   ): number;
 
   /**
@@ -150,7 +157,7 @@ export interface ChunkIndex extends ChunkReader {
    * rather than changed. Leaving the old chunks in place would keep answering
    * queries about text the document no longer contains.
    */
-  clear(documentId: string): number;
+  clear(documentId: string, options?: { readonly expectedRevision: number }): number;
 }
 
 /**

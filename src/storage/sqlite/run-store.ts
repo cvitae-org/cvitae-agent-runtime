@@ -20,10 +20,17 @@ import type {
   StepKind,
   StepStatus
 } from '../../contracts/index.js';
+import { CvContextError } from '../../contracts/index.js';
+import { requireConversationContext } from './context-ownership.js';
 import type { Db } from './open.js';
 import { packBool, packJson, unpackBool, unpackJson, unpackStrings } from './rows.js';
 
 type RunRow = {
+  offer_snapshot_id: string | null;
+  context_id: string | null;
+  context_generation: number | null;
+  context_revision: number | null;
+  conversation_id: string | null;
   id: string;
   capability: string;
   status: string;
@@ -55,6 +62,11 @@ type StepRow = {
 };
 
 const toRun = (row: RunRow): RunRecord => ({
+  ...(row.offer_snapshot_id == null ? {} : { offerSnapshotId: row.offer_snapshot_id }),
+  ...(row.context_revision == null ? {} : { contextRevision: row.context_revision }),
+  ...(row.context_generation == null ? {} : { contextGeneration: row.context_generation }),
+  ...(row.context_id === null ? {} : { contextId: row.context_id }),
+  ...(row.conversation_id === null ? {} : { conversationId: row.conversation_id }),
   id: row.id,
   capability: row.capability,
   status: row.status as RunStatus,
@@ -87,10 +99,10 @@ const toStep = (row: StepRow): RunStepRecord => ({
 
 export const createRunStore = (db: Db): RunStore => {
   const insertRun = db.prepare<[
-    string, string, string, string, number | null, number
+    string, string, string, string, number | null, number, string | null, string | null, number | null, number | null, string | null
   ]>(
-    `INSERT INTO runs (id, capability, status, input, trace_id, deadline_at, created_at)
-     VALUES (?, ?, 'queued', ?, ?, ?, ?)`
+    `INSERT INTO runs (id, capability, status, input, trace_id, deadline_at, created_at, context_id, conversation_id, context_generation, context_revision, offer_snapshot_id)
+     VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
   const selectRun = db.prepare<[string]>('SELECT * FROM runs WHERE id = ?');
@@ -100,7 +112,7 @@ export const createRunStore = (db: Db): RunStore => {
   );
 
   const selectRunning = db.prepare(
-    `SELECT * FROM runs WHERE status = 'running' ORDER BY created_at DESC`
+    `SELECT * FROM runs WHERE status IN ('queued', 'running') ORDER BY created_at DESC`
   );
 
   const insertStep = db.prepare<[string, string, string, number, number]>(
@@ -190,13 +202,43 @@ export const createRunStore = (db: Db): RunStore => {
    * upgrade creates.
    */
   const runCreate = db.transaction((run: NewRun, events: readonly NewEvent[]) => {
+    if (run.offerSnapshotId !== undefined) {
+      const snapshot = db.prepare('SELECT context_id, conversation_id, snapshot FROM offer_snapshots WHERE id = ?').get(run.offerSnapshotId) as
+        { context_id: string; conversation_id: string; snapshot: string } | undefined;
+      if (!snapshot || snapshot.context_id !== run.contextId || snapshot.conversation_id !== run.conversationId ||
+          !db.prepare('SELECT id FROM conversations WHERE id = ?').get(snapshot.conversation_id)) {
+        throw new CvContextError('context_conflict', 'Snapshot, context and conversation do not match.');
+      }
+      const saved = JSON.parse(snapshot.snapshot) as { context: { generation: number }; document: { revision: number } };
+      if (run.contextGeneration !== saved.context.generation || run.contextRevision !== saved.document.revision) {
+        throw new CvContextError('context_conflict', 'Run does not match captured inputs.');
+      }
+    } else if (run.contextId !== undefined) {
+      const context = db.prepare('SELECT generation FROM cv_contexts WHERE id = ?').get(run.contextId) as { generation: number } | undefined;
+      const document = db.prepare('SELECT revision FROM documents WHERE id = ?').get(run.contextId) as { revision: number } | undefined;
+      if (!context || context.generation !== run.contextGeneration || (document?.revision ?? 0) !== run.contextRevision) {
+        throw new CvContextError('context_conflict', 'CV changed before the run could start.');
+      }
+    }
+    if (run.contextId === undefined && db.prepare("SELECT id FROM cv_contexts WHERE id != 'cv' OR language IS NOT NULL LIMIT 1").get()) {
+      throw new CvContextError('invalid_input', 'An explicit CV context is required.');
+    }
+    if (run.conversationId !== undefined && run.offerSnapshotId === undefined) {
+      if (run.contextId === undefined) throw new CvContextError('invalid_input', 'A conversation-bound run requires a context ID.');
+      requireConversationContext(db, run.conversationId, run.contextId);
+    }
     insertRun.run(
       run.id,
       run.capability,
       JSON.stringify(run.input),
       run.traceId,
       run.deadlineAt ?? null,
-      run.createdAt
+      run.createdAt,
+      run.contextId ?? null,
+      run.conversationId ?? null,
+      run.contextGeneration ?? null,
+      run.contextRevision ?? null,
+      run.offerSnapshotId ?? null
     );
     appendEvents(run.id, events);
   }).immediate;

@@ -28,6 +28,11 @@ import type {
 } from './run.js';
 
 export type NewRun = {
+  readonly offerSnapshotId?: string;
+  readonly contextId?: string;
+  readonly contextGeneration?: number;
+  readonly contextRevision?: number;
+  readonly conversationId?: string;
   readonly id: string;
   readonly capability: string;
   readonly input: Readonly<Record<string, unknown>>;
@@ -94,7 +99,7 @@ export interface RunStore {
   checkpoint(patch: RunPatch, events: readonly NewEvent[]): void;
 
   /**
-   * Runs left mid-flight by a process that died: `'running'` rows with nothing
+   * Runs left mid-flight by a process that died: `'queued'` or `'running'` rows with nothing
    * newer than their last checkpoint. Read at startup so a caller can be shown
    * what is stale rather than discovering it later.
    */

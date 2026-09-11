@@ -198,6 +198,54 @@ test('profile channels distinguish absence and atomically replace the canonical 
   }
 });
 
+test('a skills row survives being stored, whatever it is called', async () => {
+  const { harness, dispose } = harnessFor(capabilities());
+  const dispatch = createDispatch(harness);
+
+  try {
+    // The four rows that used to be impossible: one renamed away from the fold's
+    // vocabulary, one invented outright, and the count itself — the strip could
+    // hold three and only these three.
+    const document = cvDocumentSchema.parse({
+      skills: {
+        role: 'Backend Engineer',
+        groups: [
+          { label: 'Languages', items: ['Rust'] },
+          { label: 'Backend', items: ['NestJS'] },
+          { label: 'Blockchain', items: ['ICP'] },
+          { label: 'Libraries & Tools', items: ['Sentry'] }
+        ]
+      }
+    });
+
+    await dispatch('profile.update', { document });
+
+    const read = data<{ record: { body: { skills: { groups: { label: string }[] } } } }>(
+      await dispatch('profile.get', {})
+    );
+
+    assert.deepEqual(
+      read.record.body.skills.groups,
+      document.skills.groups,
+      'a row lost its heading, its items or its place on the way through the store'
+    );
+
+    // And the derived half still answers the old question, so every reader that
+    // concatenates the three sees all four rows' skills.
+    const skills = read.record.body.skills as unknown as Record<string, string[]>;
+    assert.deepEqual(
+      [
+        ...(skills.programming_languages as string[]),
+        ...(skills.frameworks as string[]),
+        ...(skills.libraries_and_tools as string[])
+      ].sort(),
+      ['ICP', 'NestJS', 'Rust', 'Sentry']
+    );
+  } finally {
+    dispose();
+  }
+});
+
 test('an invalid profile edit is refused before it can change the CV or its index', async () => {
   const { harness, dispose } = harnessFor(capabilities());
   const dispatch = createDispatch(harness);
@@ -484,4 +532,148 @@ test('no channel offers mail', () => {
     channels.filter((channel) => /mail|send/i.test(channel)),
     []
   );
+});
+
+/* ---------------------------------------------------------- the photograph */
+
+/** A buffer that starts like a JPEG and is otherwise nothing. */
+const jpegBase64 = (size = 64): string =>
+  Buffer.concat([
+    Buffer.from([0xff, 0xd8, 0xff]),
+    Buffer.alloc(size - 3)
+  ]).toString('base64');
+
+test('the photograph channels store, replace and clear one', async () => {
+  const { harness, dispose } = harnessFor(capabilities());
+  const dispatch = createDispatch(harness);
+
+  try {
+    assert.deepEqual(
+      data(await dispatch('profile.photo.get', {})),
+      { photo: null },
+      'a profile with no portrait should read as none, not as an error'
+    );
+
+    const first = { mime: 'image/jpeg', base64: jpegBase64(), width: 400, height: 500 };
+    assert.deepEqual(data(await dispatch('profile.photo.set', { photo: first })), {
+      photo: first
+    });
+    assert.deepEqual(data(await dispatch('profile.photo.get', {})), { photo: first });
+
+    // Replacing rather than accumulating. There is one portrait on a CV.
+    const second = { mime: 'image/jpeg', base64: jpegBase64(96), width: 300, height: 400 };
+    await dispatch('profile.photo.set', { photo: second });
+    assert.deepEqual(data(await dispatch('profile.photo.get', {})), { photo: second });
+
+    assert.deepEqual(data(await dispatch('profile.photo.clear', {})), { photo: null });
+    assert.deepEqual(data(await dispatch('profile.photo.get', {})), { photo: null });
+  } finally {
+    dispose();
+  }
+});
+
+test('a mislabelled photograph is refused at the channel, not stored', async () => {
+  const { harness, dispose } = harnessFor(capabilities());
+  const dispatch = createDispatch(harness);
+
+  try {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64');
+    const response = await dispatch('profile.photo.set', {
+      photo: { mime: 'image/jpeg', base64: png, width: 10, height: 10 }
+    });
+
+    assert.equal(response.ok, false);
+    // And nothing was written on the way to refusing.
+    assert.deepEqual(data(await dispatch('profile.photo.get', {})), { photo: null });
+  } finally {
+    dispose();
+  }
+});
+
+test('the CV and its photograph do not disturb each other', async () => {
+  const { harness, dispose } = harnessFor(capabilities());
+  const dispatch = createDispatch(harness);
+
+  try {
+    const photo = { mime: 'image/jpeg', base64: jpegBase64(), width: 400, height: 500 };
+    await dispatch('profile.photo.set', { photo });
+    await dispatch('profile.update', {
+      document: cvDocumentSchema.parse({ role_description: 'Backend engineer.' })
+    });
+
+    // The reason the portrait is a record of its own. A CV is read and written
+    // whole on every edit; if the photograph rode along in that body, this is
+    // where it would have been dropped by a client that did not know to resend
+    // it — which is exactly how the skills strip used to lose a row.
+    assert.deepEqual(
+      data<{ photo: unknown }>(await dispatch('profile.photo.get', {})).photo,
+      photo,
+      'writing the CV took the photograph with it'
+    );
+
+    const read = data<{ record: { body: Record<string, unknown> } }>(
+      await dispatch('profile.get', {})
+    );
+    assert.equal(read.record.body.role_description, 'Backend engineer.');
+    assert.equal(
+      'photo' in read.record.body,
+      false,
+      'the portrait leaked into the CV document, where every model call would pay for it'
+    );
+
+    // And the other way: clearing the picture is not clearing the CV.
+    await dispatch('profile.photo.clear', {});
+    assert.equal(
+      data<{ record: { body: { role_description: string } } }>(
+        await dispatch('profile.get', {})
+      ).record.body.role_description,
+      'Backend engineer.'
+    );
+  } finally {
+    dispose();
+  }
+});
+
+test('storing a photograph leaves the CV retrieval index alone', async () => {
+  const { harness, dispose } = harnessFor(capabilities());
+  const dispatch = createDispatch(harness);
+
+  try {
+    await dispatch('profile.update', {
+      document: cvDocumentSchema.parse({ role_description: 'Backend engineer.' })
+    });
+    harness.chunks.replace(
+      CV_ID,
+      {
+        provider: 'test',
+        model: 'survives-a-portrait',
+        dim: 1,
+        normalisation: 'l2',
+        chunkerVersion: 1
+      },
+      [{
+        id: 'current-highlight',
+        kind: 'highlight',
+        text: 'Backend engineer.',
+        position: 0,
+        vector: Float32Array.of(1)
+      }]
+    );
+
+    await dispatch('profile.photo.set', {
+      photo: { mime: 'image/jpeg', base64: jpegBase64(), width: 400, height: 500 }
+    });
+
+    // `profile.replace` clears the chunks, which is right for text somebody
+    // rewrote and wrong for a picture: a portrait has nothing to retrieve, and
+    // dropping the index would make the next `ask_profile` re-embed the whole
+    // CV to answer a question the photograph had no part in.
+    assert.equal(
+      harness.chunks.fingerprintOf(CV_ID)?.model,
+      'survives-a-portrait',
+      'saving a photograph threw away the CV embeddings'
+    );
+  } finally {
+    dispose();
+  }
 });

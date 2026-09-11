@@ -153,7 +153,7 @@ const decodedBytes = (base64: string): number => {
  * whether the process is willing to hold it at all.
  */
 export const validateUploadBudget = (channel: string, payload: unknown): void => {
-  if (channel !== 'run.start' || !payload || typeof payload !== 'object') return;
+  if ((channel !== 'run.start' && channel !== 'run.context.start' && channel !== 'run.offer.start') || !payload || typeof payload !== 'object') return;
 
   const input = (payload as { input?: unknown }).input;
   if (!input || typeof input !== 'object') return;

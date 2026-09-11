@@ -21,7 +21,8 @@ export const recoverInterruptedRuns = (
   for (const stale of runs.interrupted()) {
     // Re-read immediately before the transaction. Another host may have settled
     // the run after `interrupted()` returned; terminal state always wins.
-    if (runs.get(stale.id)?.status !== 'running') continue;
+    const status = runs.get(stale.id)?.status;
+    if (status !== 'running' && status !== 'queued') continue;
 
     const at = now();
     const patches: StepPatch[] = [];

@@ -37,6 +37,7 @@
 
 import { z } from 'zod';
 import { cvDocumentSchema } from '../../capabilities/cv/document.js';
+import { cvPhotoSchema } from '../../capabilities/cv/photo.js';
 import { runStatuses } from '../../contracts/index.js';
 
 /* ------------------------------------------------------------------ inputs */
@@ -57,19 +58,17 @@ const conversationId = z.string().min(1);
  * Mirrors the client's sealed `ChatSubject` exactly, including which half of
  * the pair carries an id: the profile is one thing and there is only ever one
  * of it, and an offer conversation is meaningless without saying which offer.
- * There can be many conversations about either — that is what the subject is
- * for — but a profile subject arriving with an id is a subject the client
- * cannot express, and it is refused rather than trimmed into one that looks
- * fine and lists somewhere nobody looks.
+ * Profile IDs name registered CV contexts. The empty legacy ID remains an
+ * alias for cv; unknown explicit IDs are rejected by the store.
  */
 const subject = z
   .object({
     kind: z.enum(['profile', 'offer']),
     id: z.string().max(200).default('')
-  })
+  }).strict()
   .refine(
-    (value) => (value.kind === 'offer' ? value.id !== '' : value.id === ''),
-    'A profile conversation carries no id, and an offer conversation needs one.'
+    (value) => value.kind !== 'offer' || value.id !== '',
+    'An offer conversation needs an offer ID.'
   );
 
 const settings = z.object({
@@ -84,27 +83,97 @@ export const payloads = {
   'capabilities.list': z.object({}),
 
   /** The one canonical profile stored by the harness. */
-  'profile.get': z.object({}),
+  'profile.get': z.object({}).strict(),
+
+  /** Additive contract: no creation/assignment until AI routing is isolated. */
+  'protocol.get': z.object({}).strict(),
+  'profile.contexts.create': z.object({ protocolVersion: z.literal(2), id: z.string().uuid(), language: z.enum(['pl', 'en']) }).strict(),
+  'profile.contexts.assignLanguage': z.object({ protocolVersion: z.literal(2), contextId: z.string().min(1), language: z.enum(['pl', 'en']), expectedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict(),
+  'profile.contexts.copy': z.object({ protocolVersion: z.literal(2), id: z.string().uuid(), language: z.enum(['pl', 'en']), sourceContextId: z.string().min(1), expectedSourceRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict(),
+  'profile.contexts.provenance': z.object({ contextId: z.string().min(1) }).strict(),
+  'run.offer.start': z.object({ protocolVersion: z.literal(2), offerSnapshotId: z.string().uuid(), contextId: z.string().min(1), conversationId: z.string().min(1), capability: z.string().min(1), input: z.unknown(), runId }).strict(),
+  'profile.contexts.list': z.object({}).strict(),
+  'profile.context.reindex': z.object({ contextId: z.string().min(1).max(200) }).strict(),
+  'profile.context.indexStatus': z.object({ contextId: z.string().min(1).max(200) }).strict(),
+  'profile.context.clearContent': z.object({
+    contextId: z.string().min(1).max(200),
+    expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    operationId: z.string().trim().min(1).max(200)
+  }).strict(),
+  'profile.proposals.list': z.object({ contextId: z.string().min(1).max(200) }).strict(),
+  'profile.proposals.accept': z.object({ contextId: z.string().min(1).max(200), proposalId: z.string().min(1).max(200) }).strict(),
+  'profile.proposals.discard': z.object({ contextId: z.string().min(1).max(200), proposalId: z.string().min(1).max(200) }).strict(),
+  'profile.context.get': z.object({ contextId: z.string().min(1).max(200) }).strict(),
+  'profile.context.update': z.object({
+    operationId: z.string().trim().min(1).max(200).optional(),
+    contextId: z.string().min(1).max(200),
+    expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    document: cvDocumentSchema
+  }).strict(),
 
   /**
    * A manual edit replaces the whole document. Parsing here both validates the
    * schema version and fills its declared defaults before storage sees it.
    */
-  'profile.update': z.object({ document: cvDocumentSchema }),
+  'profile.update': z.object({ document: cvDocumentSchema }).strict(),
+
+  /**
+   * The photograph, on channels of its own.
+   *
+   * Three rather than folding it into `profile.update`, because the CV is read
+   * and written whole on every edit and a portrait riding along on each of them
+   * is a megabyte spent to move a job title. `photo.ts` has the rest of the
+   * argument.
+   *
+   * `clear` takes no photograph and is not `set` with a null: a caller that can
+   * express "store this" and a caller that can express "there is none" are
+   * answering different questions, and one channel doing both is one typo away
+   * from erasing a picture instead of leaving it alone.
+   */
+  'offers.list': z.object({ limit: z.number().int().min(1).max(1000).default(500) }).strict(),
+  'offers.get': z.object({ id: z.string().min(1).max(200) }).strict(),
+  'offers.snapshots.capture': z.object({
+    id: z.string().uuid(), offerId: z.string().min(1).max(200), contextId: z.string().min(1).max(200),
+    expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    expectedContextRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    expectedPhotoRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
+  }).strict(),
+  'offers.snapshots.get': z.object({ id: z.string().uuid() }).strict(),
+  'offers.snapshots.list': z.object({ offerId: z.string().min(1).max(200), contextId: z.string().min(1).max(200).optional() }).strict(),
+  'profile.photoAsset.get': z.object({}).strict(),
+  'profile.photoAsset.replace': z.object({
+    photo: cvPhotoSchema.nullable(), expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    operationId: z.string().trim().min(1).max(200)
+  }).strict(),
+  'profile.context.photo.get': z.object({ contextId: z.string().min(1).max(200) }).strict(),
+  'profile.context.photo.include': z.object({
+    contextId: z.string().min(1).max(200), includePhoto: z.boolean(),
+    expectedRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    operationId: z.string().trim().min(1).max(200)
+  }).strict(),
+  'profile.photo.get': z.object({}).strict(),
+  'profile.photo.set': z.object({ photo: cvPhotoSchema }).strict(),
+  'profile.photo.clear': z.object({}).strict(),
 
   /**
    * `input` is unknown on purpose. The capability's own zod schema is what
    * decides whether it is valid, and a second opinion here would be a second
    * thing to keep in step with the first.
    */
-  'run.start': z.object({
+  'run.context.start': z.object({
+    contextRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+    contextGeneration: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+    contextId: z.string().min(1).max(200),
+    conversationId: z.string().min(1).max(200).optional(),
     capability: z.string().min(1),
     input: z.unknown(),
     /** Lets a caller name the run before it finishes, so it can follow it. */
     runId: runId.optional()
-  }),
+  }).strict(),
 
-  'run.resume': z.object({ runId }),
+  'run.start': z.object({ capability: z.string().min(1), input: z.unknown(), runId: runId.optional() }).strict(),
+
+  'run.resume': z.object({ runId }).strict(),
 
   /**
    * Waits for a run to reach a terminal state, and answers with what it
@@ -196,7 +265,7 @@ export const payloads = {
   'providers.status': z.object({}),
 
   /** Every conversation, or one subject's. Most recently active first. */
-  'conversations.list': z.object({ subject: subject.optional() }),
+  'conversations.list': z.object({ subject: subject.optional() }).strict(),
 
   /**
    * Where a window comes back to: the most recently active conversation about a
@@ -206,10 +275,10 @@ export const payloads = {
    * restoring a window does not know whether this is the first question, and
    * should not have to ask before it can show anything.
    */
-  'conversations.open': z.object({ subject }),
+  'conversations.open': z.object({ subject }).strict(),
 
   /** New chat. Always another one, never the one that is already open. */
-  'conversations.create': z.object({ subject }),
+  'conversations.create': z.object({ subject }).strict(),
 
   'conversations.get': z.object({ conversationId }),
 
@@ -278,11 +347,15 @@ export type PayloadOf<C extends Channel> = z.infer<(typeof payloads)[C]>;
  */
 export type Response<T = unknown> =
   | { readonly ok: true; readonly data: T }
-  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } };
+  | { readonly ok: false; readonly error: {
+    readonly code: string;
+    readonly message: string;
+    readonly details?: Readonly<Record<string, unknown>>;
+  } };
 
 export const ok = <T>(data: T): Response<T> => ({ ok: true, data });
 
-export const failed = (code: string, message: string): Response<never> => ({
+export const failed = (code: string, message: string, details?: Readonly<Record<string, unknown>>): Response<never> => ({
   ok: false,
-  error: { code, message }
+  error: { code, message, ...(details === undefined ? {} : { details }) }
 });

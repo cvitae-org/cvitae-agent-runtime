@@ -174,14 +174,12 @@ test('opening a subject resumes; starting one is a separate ask', async () => {
     const offer = await opened(it, { kind: 'offer', id: 'offer-1' });
     assert.notEqual(offer.id, first.id);
 
-    // A subject the client's own model cannot express is refused rather than
-    // stored. A profile conversation carrying an id would be a second profile
-    // conversation nothing could ever open again.
+    // Explicit profile subjects must name a registered context.
     assert.equal(
       error(await it.dispatch('conversations.open', {
         subject: { kind: 'profile', id: 'sneaky' }
       })).code,
-      'invalid_input'
+      'context_not_found'
     );
     assert.equal(
       error(await it.dispatch('conversations.open', { subject: { kind: 'offer' } })).code,
@@ -191,7 +189,7 @@ test('opening a subject resumes; starting one is a separate ask', async () => {
       error(await it.dispatch('conversations.create', {
         subject: { kind: 'profile', id: 'sneaky' }
       })).code,
-      'invalid_input'
+      'context_not_found'
     );
 
     assert.equal((await listed(it)).length, 3);

@@ -103,6 +103,11 @@ export type StepRef = {
 /* ----------------------------------------------------------------- records */
 
 export type RunRecord = {
+  readonly offerSnapshotId?: string;
+  readonly contextId?: string;
+  readonly contextGeneration?: number;
+  readonly contextRevision?: number;
+  readonly conversationId?: string;
   readonly id: string;
   readonly capability: string;
   readonly status: RunStatus;
@@ -228,6 +233,11 @@ export type StepDelta = {
 export type DeltaSink = (delta: StepDelta) => void;
 
 export type RunContext = {
+  readonly offerSnapshotId?: string;
+  readonly contextId?: string;
+  readonly contextGeneration?: number;
+  readonly contextRevision?: number;
+  readonly conversationId?: string;
   readonly runId: string;
   readonly traceId: string;
   readonly capability: string;

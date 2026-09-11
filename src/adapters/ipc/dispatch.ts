@@ -39,8 +39,15 @@
  * a separate question asked at a different time.
  */
 
-import { RuntimeError, isRunSuspension } from '../../contracts/index.js';
-import { cvDocumentSchema } from '../../capabilities/cv/document.js';
+import { CvContextError, DocumentConflictError, RuntimeError, isRunSuspension } from '../../contracts/index.js';
+import { asCvDocument, normaliseCv } from '../../capabilities/cv/document.js';
+import {
+  asCvPhotoBody,
+  asStorablePhoto,
+  emptyPhotoBody,
+  CV_PHOTO_ID,
+  CV_PHOTO_KIND
+} from '../../capabilities/cv/photo.js';
 import { all, page } from '../../events/tail.js';
 import type { RunHandle } from '../../runtime/run.js';
 import type { RunRecord, RunResult } from '../../contracts/index.js';
@@ -160,6 +167,36 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
    * describes. Here the mapped type does it: a handler that reads a field its
    * schema does not declare fails to compile.
    */
+  const launch = ({ capability, input, runId, contextId, conversationId, contextGeneration, contextRevision, offerSnapshotId }: {
+    capability: string;
+    input: unknown;
+    runId?: string;
+    offerSnapshotId?: string;
+    contextId?: string;
+    contextGeneration?: number;
+    contextRevision?: number;
+    conversationId?: string;
+  }): Response => {
+    const existing = harness.findRun({ capability, input,
+      ...(runId === undefined ? {} : { runId }), ...(contextId === undefined ? {} : { contextId }),
+      ...(conversationId === undefined ? {} : { conversationId }), ...(offerSnapshotId === undefined ? {} : { offerSnapshotId }),
+      ...(contextGeneration === undefined ? {} : { contextGeneration }), ...(contextRevision === undefined ? {} : { contextRevision }) });
+    if (existing) return ok({ runId: existing.id, status: existing.status, recovered: true });
+    const { controller, deadline } = started();
+    return track(harness.begin({
+      capability,
+      input,
+      ...(offerSnapshotId === undefined ? {} : { offerSnapshotId }),
+      ...(contextId === undefined ? {} : { contextId }),
+      ...(contextGeneration === undefined ? {} : { contextGeneration }),
+      ...(contextRevision === undefined ? {} : { contextRevision }),
+      ...(conversationId === undefined ? {} : { conversationId }),
+      runId: runId ?? crypto.randomUUID(),
+      signal: controller.signal,
+      ...deadline
+    }), controller);
+  };
+
   const handlers: { [C in Channel]: (input: PayloadOf<C>) => Promise<Response> | Response } = {
     'capabilities.list': () =>
       ok(
@@ -169,49 +206,123 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
         }))
       ),
 
+    'protocol.get': () => ok({ version: 2, features: ['cv-contexts', 'checked-writes', 'durable-proposals', 'context-copy', 'offer-snapshot-runs'], languages: ['pl', 'en'] }),
+    'profile.contexts.create': ({ id, language }) => ok({ context: harness.cvContexts.create(id, language) }),
+    'profile.contexts.assignLanguage': ({ contextId, language, expectedRevision }) => ok({ context: harness.cvContexts.assignLanguage(contextId, language, expectedRevision) }),
+    'profile.contexts.copy': ({ id, language, sourceContextId, expectedSourceRevision }) => ok(harness.cvCopies.copy({ id, language, sourceContextId, expectedSourceRevision })),
+    'profile.contexts.provenance': ({ contextId }) => { harness.profile.readContext(contextId); return ok(harness.cvCopies.get(contextId)?.provenance ?? null); },
+    'run.offer.start': launch,
+    'profile.contexts.list': () => ok({ contexts: harness.cvContexts.list() }),
+    'profile.context.reindex': ({ contextId }) => {
+      harness.profile.readContext(contextId);
+      harness.indexRecovery.enqueue(contextId);
+      return ok({ pending: harness.indexRecovery.status(contextId) ?? null });
+    },
+    'profile.context.indexStatus': ({ contextId }) => {
+      harness.profile.readContext(contextId);
+      return ok({ pending: harness.indexRecovery.status(contextId) ?? null });
+    },
+    'profile.context.clearContent': ({ contextId, expectedRevision, operationId }) =>
+      ok(harness.cvLifecycle.clearContent(contextId, expectedRevision, operationId)),
+    'profile.proposals.list': ({ contextId }) => ok({ proposals: harness.cvLifecycle.list(contextId) }),
+    'profile.proposals.accept': ({ contextId, proposalId }) =>
+      ok({ record: harness.cvLifecycle.accept(contextId, proposalId) }),
+    'profile.proposals.discard': ({ contextId, proposalId }) =>
+      ok({ proposal: harness.cvLifecycle.discard(contextId, proposalId) }),
+
+    'profile.context.get': ({ contextId }) => {
+      const { context, record } = harness.profile.readContext(contextId);
+      return ok({
+        context,
+        present: record !== undefined,
+        record: record ? { ...record, body: asCvDocument(record.body) } : null
+      });
+    },
+
+    'profile.context.update': ({ contextId, document, expectedRevision, operationId }) => {
+      const updated = harness.profile.replaceContext(contextId, normaliseCv(document), expectedRevision, operationId);
+      return ok({
+        context: updated.context,
+        present: true,
+        record: { ...updated.record, body: asCvDocument(updated.record.body) },
+        clearedChunks: updated.clearedChunks
+      });
+    },
+
     'profile.get': () => {
       const record = harness.profile.read();
 
       if (!record) return ok({ present: false, record: null });
 
+      // `asCvDocument` rather than a bare parse: it backfills the skills strip's
+      // named rows for a body stored before they existed, so a client never has
+      // to guess at what the three legacy arrays were called.
       return ok({
         present: true,
-        record: { ...record, body: cvDocumentSchema.parse(record.body) }
+        record: { ...record, body: asCvDocument(record.body) }
       });
     },
 
     'profile.update': ({ document }) => {
-      const updated = harness.profile.replace(document);
+      // Normalised before it is stored, not after it is read back. The channel's
+      // schema has already accepted whatever the client sent — `groups` alone, the
+      // three arrays alone, or both disagreeing — and exactly one of those is the
+      // document. Deciding here means the stored body is the decided one, so a
+      // reader that bypasses `profile.get` sees the same CV.
+      const updated = harness.profile.replace(normaliseCv(document));
 
       return ok({
         present: true,
         record: {
           ...updated.record,
-          body: cvDocumentSchema.parse(updated.record.body)
+          body: asCvDocument(updated.record.body)
         },
         clearedChunks: updated.clearedChunks
       });
     },
 
-    'run.start': ({ capability, input, runId }) => {
-      const { controller, deadline } = started();
+    // Through `harness.documents` rather than `harness.profile`, and that is the
+    // point of writing it out: `profile.replace` also clears the retrieval
+    // chunks for the CV, which is right for text somebody rewrote and wrong for
+    // a picture. A photograph has nothing to retrieve, so a write that dropped
+    // the index would make the next `ask_profile` re-embed the whole CV to
+    // answer a question the portrait had no part in.
+    'offers.list': ({ limit }) => ok({ offers: harness.offers.recent(limit) }),
+    'offers.get': ({ id }) => ok({ offer: harness.offers.get(id) ?? null }),
+    'offers.snapshots.capture': (request) => ok(harness.offerSnapshots.capture(request)),
+    'offers.snapshots.get': ({ id }) => ok(harness.offerSnapshots.get(id) ?? null),
+    'offers.snapshots.list': ({ offerId, contextId }) => ok(harness.offerSnapshots.list(offerId, contextId)),
+    'profile.photoAsset.get': () => ok(harness.photos.asset()),
+    'profile.photoAsset.replace': ({ photo, expectedRevision, operationId }) =>
+      ok(harness.photos.replace(photo, expectedRevision, operationId)),
+    'profile.context.photo.get': ({ contextId }) => ok(harness.photos.snapshot(contextId)),
+    'profile.context.photo.include': ({ contextId, includePhoto, expectedRevision, operationId }) =>
+      ok(harness.photos.include(contextId, includePhoto, expectedRevision, operationId)),
+    'profile.photo.get': () =>
+      ok(asCvPhotoBody(harness.documents.read(CV_PHOTO_ID)?.body)),
 
-      // `begin` creates the row and returns before the work is done, so by the
-      // time this answers there is a run to cancel and events to read. It still
-      // throws *here* for an unknown capability or bad input, which is right:
-      // neither ever became a run, and handing back an id for one would be a
-      // lie a caller then has to discover by asking about it.
-      return track(
-        harness.begin({
-          capability,
-          input,
-          runId: runId ?? crypto.randomUUID(),
-          signal: controller.signal,
-          ...deadline
-        }),
-        controller
-      );
+    'profile.photo.set': ({ photo }) => {
+      harness.profile.read(); // Reject ambiguous legacy mutations once another context exists.
+      const record = harness.documents.update(CV_PHOTO_ID, CV_PHOTO_KIND, () => ({
+        photo: asStorablePhoto(photo)
+      }));
+
+      return ok(asCvPhotoBody(record.body));
     },
+
+    'profile.photo.clear': () => {
+      harness.profile.read();
+      const record = harness.documents.update(
+        CV_PHOTO_ID,
+        CV_PHOTO_KIND,
+        emptyPhotoBody
+      );
+
+      return ok(asCvPhotoBody(record.body));
+    },
+
+    'run.start': launch,
+    'run.context.start': launch,
 
     'run.resume': ({ runId }) => {
       const { controller, deadline } = started();
@@ -283,7 +394,10 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
       // Not an error, and not silently true either. A run this dispatcher did
       // not start is not its to cancel, and a caller that is told so can go and
       // look at the run rather than believing it stopped.
-      if (!active) return ok({ cancelled: false, reason: 'not running here' });
+      if (!active) {
+        if (harness.cancelSuspended(runId)) return ok({ cancelled: true });
+        return ok({ cancelled: false, reason: 'not running here' });
+      }
 
       active.controller.abort(new RuntimeError('The run was cancelled.', 'aborted'));
       return ok({ cancelled: true });
@@ -452,6 +566,14 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
         return ok({ suspended: true, runId: error.runId, step: error.step, approvalId: error.approvalId });
       }
 
+      if (error instanceof DocumentConflictError) {
+        return failed(error.code, error.message, {
+          contextId: error.documentId,
+          expectedRevision: error.expectedRevision,
+          actualRevision: error.actualRevision
+        });
+      }
+      if (error instanceof CvContextError) return failed(error.code, error.message, error.details);
       if (error instanceof RuntimeError) return failed(error.code, error.message);
 
       // Message only. An unexpected error's stack names paths on this machine,

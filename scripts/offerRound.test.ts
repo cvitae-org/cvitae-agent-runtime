@@ -40,6 +40,10 @@ const cv = (over: Partial<CvDocument['skills']> = {}): CvDocument => ({
   ...emptyDocument(),
   skills: {
     role: 'Flutter Developer',
+    groups: [
+      { label: 'Languages', items: ['Dart'] },
+      { label: 'Frameworks', items: ['Flutter'] }
+    ],
     programming_languages: ['Dart'],
     frameworks: ['Flutter'],
     libraries_and_tools: [],

@@ -28,10 +28,9 @@ export type ConversationSubjectKind = 'profile' | 'offer';
 /**
  * What a conversation is about.
  *
- * The profile's id is the empty string rather than `undefined`, so that a
- * subject is always a pair and the index over it never has to reason about
- * NULLs — which in SQLite compare unequal to each other and would put every
- * profile conversation in a bucket of its own.
+ * Profile IDs name registered CV contexts. The empty legacy ID aliases cv;
+ * existing transcripts retain their stored keys. Offer IDs still name offers.
+ * A scoped offer conversation needs a separate snapshot/ownership contract.
  */
 export type ConversationSubject = {
   readonly kind: ConversationSubjectKind;
@@ -39,6 +38,8 @@ export type ConversationSubject = {
 };
 
 export type Conversation = {
+  /** Present only for explicitly captured offer work. */
+  readonly offerSnapshotId?: string;
   readonly id: string;
   readonly subject: ConversationSubject;
   /** Absent until something names it. A client shows its own placeholder. */

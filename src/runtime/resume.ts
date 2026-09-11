@@ -18,10 +18,11 @@ import { executePlan } from '../core/orchestrator.js';
 import { plan as makePlan } from '../core/planner.js';
 import { route, validateInput } from '../core/router.js';
 import { createCheckpointer } from '../runs/checkpoint.js';
-import { RuntimeError } from '../contracts/index.js';
+import { CvContextError, RuntimeError } from '../contracts/index.js';
 import type { RunResult } from '../contracts/index.js';
 import {
   buildRunContext,
+  scopedDeps,
   recordedOutcomes,
   settleFailure,
   type RunHandle,
@@ -75,10 +76,19 @@ export const beginResume = (
   const capability = route(deps.capabilities, record.capability);
   const input = validateInput(capability, record.input);
 
+  if (record.contextId && record.capability === 'extract_cv' && record.contextRevision === undefined) {
+    throw new CvContextError('context_conflict', 'This legacy import has no original base revision; start a new import.');
+  }
+  const bound = scopedDeps(deps, record.contextId, record.conversationId, record.contextGeneration, record.contextRevision, record.offerSnapshotId);
   const checkpoint = createCheckpointer(deps.runs, record.id, now);
   checkpoint.resumed();
 
-  const context = buildRunContext(deps, {
+  const context = buildRunContext(bound, {
+    ...(record.offerSnapshotId === undefined ? {} : { offerSnapshotId: record.offerSnapshotId }),
+    ...(record.contextId === undefined ? {} : { contextId: record.contextId }),
+    ...(bound.contextGeneration === undefined ? {} : { contextGeneration: bound.contextGeneration }),
+    ...(bound.contextRevision === undefined ? {} : { contextRevision: bound.contextRevision }),
+    ...(record.conversationId === undefined ? {} : { conversationId: record.conversationId }),
     runId: record.id,
     traceId: record.traceId,
     capability: capability.name,
@@ -100,7 +110,9 @@ export const beginResume = (
         now
       });
 
-      checkpoint.succeeded(result.data, result.degraded, result.elapsedMs);
+      const commit = (value: RunResult) => checkpoint.succeeded(value.data, value.degraded, value.elapsedMs);
+      if (deps.finish) return deps.finish(record.id, result, commit);
+      commit(result);
       return result;
     } catch (error) {
       return settleFailure(checkpoint, error);

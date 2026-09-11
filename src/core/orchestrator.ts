@@ -28,7 +28,7 @@ import { runStep } from './executor.js';
 import { mergeOutcomes } from './aggregator.js';
 import { buildStepContext } from '../context/build.js';
 import type { Checkpointer } from '../runs/checkpoint.js';
-import { RuntimeError, isRunSuspension } from '../contracts/index.js';
+import { OperationError, RuntimeError, isRunSuspension } from '../contracts/index.js';
 import type {
   ApprovalGate,
   Concurrency,
@@ -180,7 +180,7 @@ export const executePlan = async (
       );
     }
 
-    if (reason instanceof RuntimeError) throw reason;
+    if (reason instanceof RuntimeError || reason instanceof OperationError) throw reason;
 
     throw new RuntimeError(`The "${step}" step failed: ${describe(reason)}`, 'step_failed', {
       cause: reason

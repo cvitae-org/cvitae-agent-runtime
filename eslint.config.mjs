@@ -5,7 +5,7 @@ export default tseslint.config(
   // `port/` is the old runtime, parked until it is ported onto the spine. It is
   // outside the build tsconfig too — it is a work queue made of code, not a
   // second source tree, and linting it would only report on code being deleted.
-  { ignores: ['dist/**', 'node_modules/**', 'port/**'] },
+  { ignores: ['dist/**', 'node_modules/**', 'port/**', '.claude/worktrees/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

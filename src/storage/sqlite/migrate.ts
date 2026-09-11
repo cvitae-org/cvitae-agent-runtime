@@ -8,6 +8,9 @@
  * administered by anyone else.
  */
 
+import { contextPhotos0013 } from './migrations/0013-context-photos.js';
+import { offerSnapshots0014 } from './migrations/0014-offer-snapshots.js';
+import { contextContracts0015 } from './migrations/0015-context-contracts.js';
 import type { Db } from './open.js';
 import { init0001 } from './migrations/0001-init.js';
 import { stepStopped0002 } from './migrations/0002-step-stopped.js';
@@ -17,6 +20,10 @@ import { settings0005 } from './migrations/0005-settings.js';
 import { conversations0006 } from './migrations/0006-conversations.js';
 import { manyConversations0007 } from './migrations/0007-many-conversations.js';
 import { conversationNote0008 } from './migrations/0008-conversation-note.js';
+import { indexRecovery0012 } from './migrations/0012-index-recovery.js';
+import { cvLifecycle0011 } from './migrations/0011-cv-lifecycle.js';
+import { contextIsolation0010 } from './migrations/0010-context-isolation.js';
+import { cvContexts0009 } from './migrations/0009-cv-contexts.js';
 
 export type Migration = { readonly version: number; readonly sql: string };
 
@@ -28,7 +35,14 @@ export const migrations: readonly Migration[] = [
   { version: 5, sql: settings0005 },
   { version: 6, sql: conversations0006 },
   { version: 7, sql: manyConversations0007 },
-  { version: 8, sql: conversationNote0008 }
+  { version: 8, sql: conversationNote0008 },
+  { version: 9, sql: cvContexts0009 },
+  { version: 10, sql: contextIsolation0010 },
+  { version: 11, sql: cvLifecycle0011 },
+  { version: 12, sql: indexRecovery0012 },
+  { version: 13, sql: contextPhotos0013 },
+  { version: 14, sql: offerSnapshots0014 },
+  { version: 15, sql: contextContracts0015 }
 ];
 
 export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.version), 0);

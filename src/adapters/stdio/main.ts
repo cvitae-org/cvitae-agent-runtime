@@ -35,7 +35,7 @@ const stderrLogger: AiLogger = {
 };
 
 const host = createHost({
-  open: (deltas) => createHarness({ logger: stderrLogger, deltas }),
+  open: (deltas) => createHarness({ logger: stderrLogger, deltas, indexRecovery: true }),
   input: process.stdin,
   output: process.stdout
 });

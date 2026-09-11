@@ -24,7 +24,15 @@
  * produce a different document the second time through.
  */
 
-import type { CvDocument, ExperienceEntry } from './document.js';
+import {
+  normaliseCv,
+  normaliseSkills,
+  skillGroupKey,
+  skillGroupsFromLegacy,
+  type CvDocument,
+  type ExperienceEntry,
+  type SkillGroup
+} from './document.js';
 
 /** Case- and whitespace-insensitive identity for matching two entries. */
 const key = (...parts: (string | undefined | null)[]): string =>
@@ -68,6 +76,48 @@ const unionStrings = (existing: string[], incoming: string[]): string[] => {
   return merged;
 };
 
+/** Every skill the strip claims, however its rows are named. */
+const countSkills = (groups: readonly SkillGroup[]): number =>
+  groups.reduce((total, group) => total + group.items.length, 0);
+
+/**
+ * Folds an incoming strip into the stored one, row by row.
+ *
+ * Matched on the heading rather than on position, for the reason an experience
+ * entry is matched on company and title: a source that lists its frameworks
+ * first would otherwise pour them into whatever row happens to be stored first.
+ *
+ * A heading the stored CV does not have is appended as a new row, which is the
+ * import policy's *add* half and not its *overwrite* half — nothing already
+ * there moves or is renamed. The stored heading wins on casing where the two
+ * agree, the same way `unionStrings` lets a corrected "React" survive a source
+ * that still says "react".
+ */
+const mergeSkillGroups = (
+  existing: readonly SkillGroup[],
+  incoming: readonly SkillGroup[]
+): SkillGroup[] => {
+  const merged = existing.map((group) => ({ label: group.label, items: [...group.items] }));
+  const at = new Map(merged.map((group, index) => [skillGroupKey(group.label), index]));
+
+  for (const group of incoming) {
+    const index = at.get(skillGroupKey(group.label));
+
+    if (index === undefined) {
+      at.set(skillGroupKey(group.label), merged.length);
+      merged.push({ label: group.label, items: unionStrings([], group.items) });
+      continue;
+    }
+
+    (merged[index] as SkillGroup).items = unionStrings(
+      (merged[index] as SkillGroup).items,
+      group.items
+    );
+  }
+
+  return merged;
+};
+
 /**
  * Merges one experience entry into a matching existing one.
  *
@@ -106,7 +156,12 @@ export const mergeDocument = (
   existing: CvDocument,
   incoming: Partial<CvDocument>
 ): { document: CvDocument; report: MergeReport } => {
-  const document = structuredClone(existing);
+  // Normalised rather than cloned bare, so the merge below can treat `groups`
+  // as the strip's only shape. Every caller reaches its `existing` through
+  // `asCvDocument`, which already does this — the call is here so the function
+  // is total on any parsed document rather than only on the ones that came
+  // through that door.
+  const document = normaliseCv(structuredClone(existing));
 
   const filled: string[] = [];
   const added: MergeReport['added'] = {
@@ -138,11 +193,23 @@ export const mergeDocument = (
   if (incoming.skills) {
     if (fill(document.skills, incoming.skills, 'role')) filled.push('skills.role');
 
-    for (const field of ['programming_languages', 'frameworks', 'libraries_and_tools'] as const) {
-      const before = document.skills[field].length;
-      document.skills[field] = unionStrings(document.skills[field], incoming.skills[field] ?? []);
-      added.skills += document.skills[field].length - before;
-    }
+    // An extraction still answers in the three sorted lists — see the note on
+    // `skillFields` in `extract.ts`, where the sorting is the model's job and
+    // the prompt is tuned for it — so a source with no rows of its own is read
+    // as the rows those three imply.
+    const rows =
+      incoming.skills.groups.length > 0
+        ? incoming.skills.groups
+        : skillGroupsFromLegacy(incoming.skills);
+
+    const before = countSkills(document.skills.groups);
+    document.skills.groups = mergeSkillGroups(document.skills.groups, rows);
+    added.skills += countSkills(document.skills.groups) - before;
+
+    // The three arrays are derived, so they are rebuilt from the merged rows
+    // rather than merged themselves. Unioning both would double-count a skill
+    // that arrived under a new heading.
+    document.skills = normaliseSkills(document.skills);
   }
 
   for (const entry of incoming.experience ?? []) {

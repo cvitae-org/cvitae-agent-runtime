@@ -423,21 +423,40 @@ test('a bad request is answered, and the process keeps taking work', async () =>
   }
 });
 
-test('an oversized attachment is refused before anything decodes it', async () => {
+test('context-bound runs stream events through stdio after their start reply', { timeout: 3000 }, async () => {
+  const host = drive();
+  try {
+    data(await host.send('profile.update', { document: {} }));
+    const { runId } = data<{ runId: string }>(await host.send('run.context.start', {
+      capability: 'fine', input: {}, contextId: 'cv'
+    }));
+    await host.until((frame) => frame.kind === 'event' && frame.runId === runId && frame.event.type === 'run.succeeded');
+    const firstEvent = host.frames.findIndex((frame) => frame.kind === 'event' && frame.runId === runId);
+    const startReply = host.frames.findIndex((frame) => frame.kind === 'reply' && frame.ok &&
+      (frame.data as { runId?: string })?.runId === runId);
+    assert.ok(startReply >= 0 && startReply < firstEvent);
+    const outcome = data<{ data: Record<string, unknown> }>(await host.send('run.await', { runId }));
+    assert.deepEqual(outcome.data, { answer: 42 });
+  } finally { await host.dispose(); }
+});
+
+test('an oversized attachment is refused before anything decodes it on both start channels', async () => {
   const host = drive();
 
   try {
-    const refused = await host.send('run.start', {
-      capability: 'fine',
-      // 'A' repeated: valid base64, and over the ten-megabyte file ceiling.
-      input: { sources: [{ base64: 'A'.repeat(16 * 1024 * 1024) }] }
-    });
+    for (const channel of ['run.start', 'run.context.start']) {
+      const refused = await host.send(channel, {
+        capability: 'fine',
+        // 'A' repeated: valid base64, and over the ten-megabyte file ceiling.
+        input: { sources: [{ base64: 'A'.repeat(16 * 1024 * 1024) }] }
+      });
 
-    assert.ok(refused.kind === 'reply' && !refused.ok);
-    assert.match(
-      refused.kind === 'reply' && !refused.ok ? refused.error.message : '',
-      /10 MB/
-    );
+      assert.ok(refused.kind === 'reply' && !refused.ok);
+      assert.match(
+        refused.kind === 'reply' && !refused.ok ? refused.error.message : '',
+        /10 MB/
+      );
+    }
   } finally {
     await host.dispose();
   }

@@ -25,10 +25,122 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createDocumentStore } from '../src/storage/sqlite/document-store.js';
+import { DocumentConflictError } from '../src/contracts/document-store.js';
 import { scratch } from './support/db.js';
 
 const run = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
+
+test('a stale editor or proposal cannot replace a newer document', () => {
+  const s = scratch();
+  const documents = createDocumentStore(s.db);
+  const another = createDocumentStore(s.connect());
+  try {
+    const base = documents.update('pl', 'cv', () => ({ summary: 'original' }));
+    const newer = another.update('pl', 'cv', () => ({ summary: 'manual edit' }), {
+      expectedRevision: base.revision
+    });
+    let invoked = false;
+    assert.throws(() => documents.update('pl', 'cv', () => {
+      invoked = true;
+      return { summary: 'stale proposal' };
+    }, { expectedRevision: base.revision }), (error: unknown) => {
+      assert.ok(error instanceof DocumentConflictError);
+      assert.equal(error.code, 'document_conflict');
+      assert.equal(error.documentId, 'pl');
+      assert.equal(error.expectedRevision, base.revision);
+      assert.equal(error.actualRevision, newer.revision);
+      return true;
+    });
+    assert.equal(invoked, false, 'a rejected write must not run the mutator');
+    assert.deepEqual(documents.read('pl'), newer);
+  } finally {
+    s.dispose();
+  }
+});
+
+test('revision zero means absent, and a missing positive base is a conflict', () => {
+  const s = scratch();
+  const documents = createDocumentStore(s.db);
+  try {
+    assert.throws(() => documents.update('pl', 'cv', () => ({}), {
+      expectedRevision: 1
+    }), (error: unknown) => error instanceof DocumentConflictError && error.actualRevision === 0);
+    assert.equal(documents.read('pl'), undefined);
+    const created = documents.update('pl', 'cv', () => ({ summary: 'first' }), {
+      expectedRevision: 0
+    });
+    assert.equal(created.revision, 1);
+    assert.throws(() => documents.update('pl', 'cv', () => ({}), {
+      expectedRevision: 0
+    }), DocumentConflictError);
+    assert.deepEqual(documents.read('pl'), created);
+  } finally {
+    s.dispose();
+  }
+});
+
+test('revision checks are independent per document and reject invalid bases', () => {
+  const s = scratch();
+  const documents = createDocumentStore(s.db);
+  try {
+    const pl = documents.update('pl', 'cv', () => ({ summary: 'Polski' }));
+    const en = documents.update('en', 'cv', () => ({ summary: 'English' }));
+    documents.update('pl', 'cv', () => ({ summary: 'Changed' }), { expectedRevision: pl.revision });
+    const saved = documents.update('en', 'cv', () => ({ summary: 'Independent' }), {
+      expectedRevision: en.revision
+    });
+    assert.equal(saved.revision, 2);
+    for (const expectedRevision of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      assert.throws(() => documents.update('en', 'cv', () => ({}), { expectedRevision }), RangeError);
+    }
+    assert.deepEqual(documents.read('en'), saved);
+  } finally {
+    s.dispose();
+  }
+});
+
+test('a conflict rolls back the surrounding transaction and successful checked writes remain usable', () => {
+  const s = scratch();
+  const documents = createDocumentStore(s.db);
+  try {
+    const base = documents.update('pl', 'cv', () => ({ summary: 'original' }));
+    const mutate = s.db.transaction(() => {
+      documents.update('en', 'cv', () => ({ summary: 'must roll back' }));
+      documents.update('pl', 'cv', () => ({}), { expectedRevision: 0 });
+    });
+    assert.throws(() => mutate(), DocumentConflictError);
+    assert.equal(documents.read('en'), undefined);
+    assert.deepEqual(documents.read('pl'), base);
+    assert.throws(() => documents.update('pl', 'cv', () => {
+      throw new Error('invalid content');
+    }, { expectedRevision: base.revision }), /invalid content/);
+    assert.deepEqual(documents.read('pl'), base);
+    assert.equal(documents.update('pl', 'cv', () => ({}), {
+      expectedRevision: base.revision
+    }).revision, base.revision + 1);
+  } finally {
+    s.dispose();
+  }
+});
+
+test('competing processes with the same base have exactly one winner, including creation', async () => {
+  const s = scratch();
+  const documents = createDocumentStore(s.db);
+  try {
+    for (const expected of [0, 1]) {
+      const results = await Promise.all(Array.from({ length: 4 }, () => run(process.execPath, [
+        '--import', 'tsx', join(here, 'support/revision-worker.ts'), s.path, 'shared', String(expected)
+      ])));
+      const statuses = results.map(({ stdout }) => stdout.trim());
+      assert.equal(statuses.filter((status) => status === 'saved').length, 1);
+      assert.equal(statuses.filter((status) => status === 'conflict').length, 3);
+      assert.equal(documents.read('shared')?.revision, expected + 1);
+    }
+  } finally {
+    s.dispose();
+  }
+});
 
 test('concurrent updates serialise, and none is lost', async () => {
   const s = scratch();

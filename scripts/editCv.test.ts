@@ -92,6 +92,11 @@ const STORED: CvDocument = cvDocumentSchema.parse({
   role_description: 'Backend engineer with 8 years on payment systems.',
   skills: {
     role: 'Backend Engineer',
+    groups: [
+      { label: 'Languages', items: ['TypeScript'] },
+      { label: 'Frameworks', items: ['NestJS'] },
+      { label: 'Libraries & Tools', items: ['PostgreSQL'] }
+    ],
     programming_languages: ['TypeScript'],
     frameworks: ['NestJS'],
     libraries_and_tools: ['PostgreSQL']
@@ -132,12 +137,17 @@ const STORED: CvDocument = cvDocumentSchema.parse({
  */
 const ANSWERS: Readonly<Record<string, Record<string, unknown>>> = {
   route: { section: 'skills', reason: 'It names a programming language.' },
+  // The rows and the role, which is the whole of what the skills step's schema
+  // asks for. The three legacy arrays are derived from these on the way back —
+  // a model answering in them would be answering the same question twice.
   skills: {
     skills: {
       role: 'Backend Engineer',
-      programming_languages: ['TypeScript', 'Ruby'],
-      frameworks: ['NestJS'],
-      libraries_and_tools: ['PostgreSQL']
+      groups: [
+        { label: 'Languages', items: ['TypeScript', 'Ruby'] },
+        { label: 'Frameworks', items: ['NestJS'] },
+        { label: 'Libraries & Tools', items: ['PostgreSQL'] }
+      ]
     }
   },
   personal: {
@@ -201,6 +211,16 @@ const harness = async <T>(
 
 const edit = (s: Spine, input: Record<string, unknown>) =>
   startRun(s.deps, { capability: 'edit_cv', input: { document: STORED, ...input } });
+
+test('stored edits carry their actual source revision; inline previews do not invent a stored base', async () => {
+  await harness(async (s) => {
+    const original = s.deps.documents.update(CV_ID, CV_KIND, () => STORED);
+    const result = await startRun(s.deps, { capability: 'edit_cv', input: { instruction: 'Move to Berlin.', section: 'personal' } });
+    assert.deepEqual(result.data.base, { contextId: CV_ID, revision: original.revision, generation: 0 });
+    const inline = await edit(s, { instruction: 'Move to Berlin.', section: 'personal' });
+    assert.equal(inline.data.base, undefined);
+  });
+});
 
 const documentOf = (data: Readonly<Record<string, unknown>>): CvDocument =>
   data.document as CvDocument;
