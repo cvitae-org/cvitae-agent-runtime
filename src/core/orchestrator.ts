@@ -259,7 +259,9 @@ export const executePlan = async (
             throw error;
           }
 
-          if (step.critical) {
+          const recoverable = step.kind === 'extract' && error instanceof RuntimeError &&
+            step.fallbackOn?.includes(error.code) === true;
+          if (step.critical && !recoverable) {
             deps.checkpoint.stepFailed(ref, describe(error), elapsed);
             stop.abort(error);
             throw error;

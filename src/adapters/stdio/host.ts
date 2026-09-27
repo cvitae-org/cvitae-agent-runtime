@@ -193,6 +193,7 @@ export const createHost = (options: HostOptions): Host => {
 
   const hello = (): Record<string, unknown> => ({
     protocolVersion: PROTOCOL_VERSION,
+    offerQuery: { schemaVersion: 1, supported: harness.offerQueries.schema().supported },
     runtimeVersion: RUNTIME_VERSION,
     capabilities: Object.values(harness.capabilities).map((capability) => ({
       name: capability.name,

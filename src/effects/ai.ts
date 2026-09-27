@@ -383,6 +383,9 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
       if (code === 'aborted') throw new RuntimeError(message, 'aborted');
 
       // No `cause`. See the redaction note at the top of the file.
+      if (code === 'AI_NoObjectGeneratedError') {
+        throw new RuntimeError('The model did not return a valid structured response.', 'invalid_model_output');
+      }
       throw new RuntimeError(`${choice.modelId}: ${message}`, 'model_call_failed');
     }
   };
@@ -416,9 +419,11 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
           const result = await generateObject({
             model: await language(),
             schema: request.schema,
+            ...(request.strictSchema && choice.providerId === 'openai' ? { providerOptions: { openai: { strictJsonSchema: true } } } : {}),
             system: request.system,
             prompt: request.prompt,
             maxOutputTokens: request.maxOutputTokens,
+            ...(request.maxRetries === undefined ? {} : { maxRetries: request.maxRetries }),
             ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
             abortSignal: request.signal
           });
@@ -455,6 +460,7 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
             system: request.system,
             prompt: request.prompt,
             maxOutputTokens: request.maxOutputTokens,
+            ...(request.maxRetries === undefined ? {} : { maxRetries: request.maxRetries }),
             ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
             abortSignal: request.signal
           };

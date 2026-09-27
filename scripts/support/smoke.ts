@@ -458,6 +458,8 @@ const verificationWorld = (): Pick<EffectSet, 'sites' | 'search'> => ({
  * do are the ones written against real strings.
  */
 export const smokes: Readonly<Record<string, Smoke>> = {
+  detect_offer_language: { input: { text: OFFER_TEXT } },
+  draft_application_fields: { input: { fields: [], facts: { 'profile.personal.name': 'Ada Lovelace' }, offer: OFFER_TEXT, company: 'Acme', page: 'Application form', language: 'en' } },
   analyze_offer: {
     input: { url: 'https://example.test/offers/backend-engineer' },
     effects: offerReader()

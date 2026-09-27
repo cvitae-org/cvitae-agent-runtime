@@ -48,6 +48,7 @@ const OFFER_HTML =
   + '</p></body></html>';
 
 const PUBLIC_ADDRESS = '93.184.216.34';
+const SCRAPER_TOKEN = '0123456789abcdef0123456789abcdef';
 
 const resolver: HostResolver = async (host) => {
   if (host.endsWith('.example')) return [PUBLIC_ADDRESS];
@@ -216,6 +217,18 @@ test('a readable page comes back as text, with the furniture stripped', async ()
 
 /* ----------------------------------------------------------- the scraper */
 
+test('the scraper address cannot redirect credentials away from the local API contract', () => {
+  for (const scraperUrl of [
+    'https://example.com:8787',
+    'ftp://127.0.0.1:8787',
+    'http://user:password@127.0.0.1:8787',
+    'http://127.0.0.1:8787?token=bad',
+    'http://127.0.0.1:8787#fragment'
+  ]) {
+    assert.throws(() => createWebReader({ scraperUrl }), { code: 'misconfigured' });
+  }
+});
+
 test("the scraper's refusal is final — the plain fetch is never tried", async () => {
   const scraperUrl = 'http://127.0.0.1:8787';
   const { fetch, asked } = fakeFetch({
@@ -225,7 +238,7 @@ test("the scraper's refusal is final — the plain fetch is never tried", async 
     'https://board.example/offer/1': new Response(OFFER_HTML)
   });
 
-  const reader = createWebReader({ scraperUrl, fetch, resolveHost: resolver });
+  const reader = createWebReader({ scraperUrl, scraperToken: SCRAPER_TOKEN, fetch, resolveHost: resolver });
 
   const error = await reader.resolve('https://board.example/offer/1', callFor()).then(
     () => undefined,
@@ -247,7 +260,7 @@ test('a scraper that is not running is not an answer about the offer', async () 
     'https://board.example/offer/1': new Response(OFFER_HTML)
   });
 
-  const reader = createWebReader({ scraperUrl, fetch, resolveHost: resolver });
+  const reader = createWebReader({ scraperUrl, scraperToken: SCRAPER_TOKEN, fetch, resolveHost: resolver });
   const offer = await reader.resolve('https://board.example/offer/1', callFor());
 
   assert.match(offer.text, /Senior TypeScript Engineer/);
@@ -276,7 +289,7 @@ test('what the board stated comes back uninterpreted, and only the declared fiel
     )
   });
 
-  const reader = createWebReader({ scraperUrl, fetch, resolveHost: resolver });
+  const reader = createWebReader({ scraperUrl, scraperToken: SCRAPER_TOKEN, fetch, resolveHost: resolver });
   const offer = await reader.resolve('https://board.example/offer/1', callFor());
 
   assert.equal(offer.board, 'justjoin');
@@ -289,12 +302,12 @@ test('what the board stated comes back uninterpreted, and only the declared fiel
     title: 'Senior TypeScript Engineer',
     work_mode: 'Praca zdalna',
     salary: '18000 - 24000 PLN',
-    required_skills: ['TypeScript', 'Node.js']
+    required_skills: ['TypeScript', 'Node.js'],
+    contract_type: 'B2B'
   });
 
-  // `contract_type` is not one of the fields a board is allowed to speak to,
-  // so it does not arrive by accident when either side grows a field.
-  assert.equal('contract_type' in (offer.stated ?? {}), false);
+  // Only a recognized contract form is admitted, independently of employment type.
+  assert.equal(offer.stated?.contract_type, 'B2B');
 });
 
 /* -------------------------------------------------------------- manners */
@@ -425,7 +438,7 @@ test('a readable page comes back with the URL it actually landed on', async () =
 test('asking for a company site with neither a site nor a name asks nobody', async () => {
   const scraperUrl = 'http://127.0.0.1:8787';
   const { fetch, asked } = fakeFetch({});
-  const reader = createWebReader({ scraperUrl, fetch, resolveHost: resolver });
+  const reader = createWebReader({ scraperUrl, scraperToken: SCRAPER_TOKEN, fetch, resolveHost: resolver });
 
   const outcome = await reader.readCompany({}, callFor());
 
@@ -443,7 +456,7 @@ test('a company read with no scraper is unavailable, not a fact about the employ
       throw new Error('ECONNREFUSED');
     }
   });
-  const reader = createWebReader({ scraperUrl, fetch, resolveHost: resolver });
+  const reader = createWebReader({ scraperUrl, scraperToken: SCRAPER_TOKEN, fetch, resolveHost: resolver });
 
   const outcome = await reader.readCompany({ url: 'https://acme.example' }, callFor());
 
@@ -471,7 +484,7 @@ test('a page the scraper could not read is not carried as evidence of anything',
       })
     )
   });
-  const reader = createWebReader({ scraperUrl, fetch, resolveHost: resolver });
+  const reader = createWebReader({ scraperUrl, scraperToken: SCRAPER_TOKEN, fetch, resolveHost: resolver });
 
   const outcome = await reader.readCompany({ url: 'https://acme.example' }, callFor());
 
@@ -489,6 +502,7 @@ test('a page the scraper could not read is not carried as evidence of anything',
 test('a board is asked for rows only, and rows missing a URL are dropped', async () => {
   const scraperUrl = 'http://127.0.0.1:8787';
   const sent: unknown[] = [];
+  const authorizations: string[] = [];
   const { fetch } = fakeFetch({
     [`${scraperUrl}/scrape/search`]: new Response(
       JSON.stringify({
@@ -503,10 +517,11 @@ test('a board is asked for rows only, and rows missing a URL are dropped', async
 
   const recording = (async (input: string | URL | Request, init?: RequestInit) => {
     sent.push(JSON.parse(String(init?.body)));
+    authorizations.push(new Headers(init?.headers).get('authorization') ?? '');
     return fetch(input, init);
   }) as unknown as typeof globalThis.fetch;
 
-  const reader = createWebReader({ scraperUrl, fetch: recording, resolveHost: resolver });
+  const reader = createWebReader({ scraperUrl, scraperToken: SCRAPER_TOKEN, fetch: recording, resolveHost: resolver });
   const outcome = await reader.listBoard(
     { board: 'justjoin', keyword: 'backend', limit: 200 },
     callFor()
@@ -521,4 +536,50 @@ test('a board is asked for rows only, and rows missing a URL are dropped', async
   assert.deepEqual(sent, [
     { board: 'justjoin', keyword: 'backend', limit: 200, listingOnly: true }
   ]);
+  assert.deepEqual(authorizations, [`Bearer ${SCRAPER_TOKEN}`]);
+  assert.doesNotMatch(String(scraperUrl), new RegExp(SCRAPER_TOKEN));
+});
+
+test('Board archival capture retains full source text and extra metadata separately from model limits',async()=>{
+ const text='Full job posting content. '.repeat(2000);
+ const reader=createWebReader({scraperUrl:'http://127.0.0.1:8000',scraperToken:SCRAPER_TOKEN,minHostIntervalMs:0,resolveHost:resolver,
+  fetch:async()=>new Response(JSON.stringify({status:'ok',data:{text,source_url:'https://jobs.example/role',board:'example',title:'Engineer',custom_application_field:'Availability',salary:'20 000 PLN'}}),{headers:{'Content-Type':'application/json'}})});
+ const call={traceId:'board-capture',signal:new AbortController().signal};
+ const archived=await reader.capture!('https://jobs.example/role',call);
+ assert.equal(archived.text,text);assert.equal(archived.sourceData?.custom_application_field,'Availability');assert.equal(archived.contentTruncated,false);
+ const model=await reader.resolve('https://jobs.example/role',call);assert.equal(model.text.length,20000);
+});
+test('oversized archival source is explicitly marked truncated',async()=>{
+ const reader=createWebReader({scraperUrl:'http://127.0.0.1:8000',scraperToken:SCRAPER_TOKEN,minHostIntervalMs:0,resolveHost:resolver,
+  fetch:async()=>new Response(JSON.stringify({status:'ok',data:{text:'Posting '.repeat(150000)}}),{headers:{'Content-Type':'application/json'}})});
+ const archived=await reader.capture!('https://jobs.example/role',{traceId:'large-capture',signal:new AbortController().signal});
+ assert.equal(archived.text.length,1000000);assert.equal(archived.contentTruncated,true);
+});
+
+
+test('full capture keeps page text but separates the matching JobPosting description for language detection', async () => {
+ const url='https://board.example/offer/1';
+ const description='<p>We are looking for an engineer to build reliable services.</p><p>You will develop applications and work with our product team.</p>';
+ const html='<p>Przejdź do treści ogłoszenia. Wybrano język polski. </p>'.repeat(20)
+  + '<script type="application/ld+json">'+JSON.stringify({'@graph':[
+   {'@type':'JobPosting',url:'/offer/2',description:'Projektowanie aplikacji. '.repeat(20)},
+   {'@type':'JobPosting',url:url+'?utm_source=board',description}
+  ]})+'</script>';
+ const {fetch}=fakeFetch({[url]:new Response(html)});
+ const reader=createWebReader({scraperUrl:'',fetch,resolveHost:resolver});
+ const result=await reader.capture!(url,callFor());
+ assert.match(result.text,/Przejdź/);
+ assert.equal(result.descriptionText,'We are looking for an engineer to build reliable services.\nYou will develop applications and work with our product team.');
+});
+
+test('ambiguous JobPosting metadata never supplies another job’s language evidence', async () => {
+ const url='https://board.example/offer/1';
+ const html=OFFER_HTML+'<script type="application/ld+json">'+JSON.stringify([
+  {'@type':'JobPosting',description:'Other description. '.repeat(20)},
+  {'@type':'JobPosting',url:'/offer/2',description:'Different description. '.repeat(20)}
+ ])+'</script>';
+ const {fetch}=fakeFetch({[url]:new Response(html)});
+ const reader=createWebReader({scraperUrl:'',fetch,resolveHost:resolver});
+ const result=await reader.capture!(url,callFor());
+ assert.equal(result.descriptionText,undefined);
 });

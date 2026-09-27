@@ -23,7 +23,7 @@ module.exports = {
         'makes that false without anyone deciding it.',
       severity: 'error',
       from: { path: '^src/', pathNot: '^src/storage/sqlite/' },
-      to: { dependencyTypes: ['npm'], path: 'better-sqlite3' }
+      to: { path: '^(better-sqlite3|node:sqlite|sqlite)$' }
     },
     {
       name: 'contracts-import-nothing',

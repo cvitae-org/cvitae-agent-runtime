@@ -23,7 +23,7 @@
  * result it does not repeat.
  */
 
-export type ConversationSubjectKind = 'profile' | 'offer';
+export type ConversationSubjectKind = 'profile' | 'offer' | 'discovery';
 
 /**
  * What a conversation is about.

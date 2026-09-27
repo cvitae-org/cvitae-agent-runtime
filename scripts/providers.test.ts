@@ -130,3 +130,16 @@ test('a local server needs no credential at all', async () => {
   // there is no secret to manage and nothing to prompt anyone for.
   assert.ok(await resolver.language());
 });
+
+
+test('credential changes rebuild language and embedding clients; clearing cannot reuse an old key', async () => {
+  const env: Record<string,string> = {AI_PROVIDER:'openai',EMBEDDING_PROVIDER:'openai',EMBEDDING_MODEL:'text-embedding-3-small',OPENAI_API_KEY:'synthetic-old'};
+  const resolver=createModelResolver({env});
+  const language=await resolver.language(), embedding=await resolver.embedding();
+  env.OPENAI_API_KEY='synthetic-new';resolver.clearCache();
+  assert.notEqual(await resolver.language(),language);
+  assert.notEqual(await resolver.embedding(),embedding);
+  delete env.OPENAI_API_KEY;resolver.clearCache();
+  await assert.rejects(()=>resolver.language(),misconfigured);
+  await assert.rejects(()=>resolver.embedding(),misconfigured);
+});

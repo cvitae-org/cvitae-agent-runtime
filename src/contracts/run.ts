@@ -349,6 +349,7 @@ export type RuntimeErrorCode =
    * The message on these is always constructed here, never copied from the
    * provider's error — see the redaction note in `effects/ai.ts`.
    */
+  | 'invalid_model_output'
   | 'model_call_failed';
 
 export class RuntimeError extends Error {

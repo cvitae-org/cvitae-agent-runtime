@@ -1,3 +1,5 @@
+import type { FieldEvidence } from './field-evidence.js';
+import type { PublishedSalary } from './published-salary.js';
 /**
  * The offer vocabulary: the words two modules have to agree on to talk about a
  * job posting at all.
@@ -41,6 +43,20 @@ export const isWorkMode = (value: unknown): value is WorkMode =>
  * more than the source can deliver would just move the lie earlier.
  */
 export type StatedFacts = {
+  readonly extractor_version?: string;
+  readonly field_evidence?: Record<string, FieldEvidence>;
+  readonly requisition_id?: string;
+  readonly requisition_issuer?: string;
+  readonly apply_url?: string;
+  readonly client_name?: string;
+  readonly contract_type?: string;
+  readonly employment_type?: string;
+  readonly company_type?: string;
+  readonly company_size?: string;
+  readonly engagement_length?: string;
+  readonly posted_at?: string;
+  readonly valid_through?: string;
+  readonly salary_ranges?: readonly PublishedSalary[];
   readonly company?: string;
   readonly title?: string;
   readonly location?: string;
@@ -82,6 +98,7 @@ export type StatedRoutes = {
  * widening when a capability grows a field.
  */
 export type StatedKey =
+  | 'contract_type' | 'company_type' | 'company_size' | 'engagement_length'
   | 'company'
   | 'position'
   | 'salary'

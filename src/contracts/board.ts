@@ -1,0 +1,34 @@
+import type { ApplicationAgentState } from './application-agent.js';
+import type { CvContext } from './cv-context.js';
+import type { DocumentRecord } from './document-store.js';
+import type { OfferRecord } from './offer.js';
+import type { ResolvedOffer } from './effects.js';
+import type { OfferSnapshot } from './offer-snapshot.js';
+
+export const applicationStages = ['notApplied', 'applying', 'applied', 'screening', 'interviewing', 'offerReceived', 'hired', 'rejected', 'withdrawn', 'closed'] as const;
+export type ApplicationStage = typeof applicationStages[number];
+export type PreparationStatus = 'notStarted' | 'queued' | 'running' | 'waiting' | 'paused' | 'failed' | 'ready';
+export const preparationSteps = ['fetch', 'language', 'copyCv', 'analyze', 'summary'] as const;
+export type PreparationStep = typeof preparationSteps[number];
+export type BoardStep = { status: 'pending' | 'running' | 'complete' | 'failed'; attempts: number; startedAt?: number; completedAt?: number; runId?: string; error?: string; result?: Record<string, unknown> };
+export type BoardAnswer = { id: string; label: string; value: string };
+export type BoardPosting = ResolvedOffer & { id: string; capturedAt: number; provenance: 'source' | 'manual'; completeness: 'complete' | 'partial'; warnings: string[] };
+export type BoardCv = { id: string; createdAt: number; reason: 'profile' | 'tailored' | 'manual'; sourceContext: CvContext; sourceDocument: DocumentRecord; document: DocumentRecord; photo: OfferSnapshot['photo']; evidence?: Record<string, unknown> };
+export type BoardSubmission = { id: string; kind: 'application' | 'followup' | 'correction'; correctsId?: string; submittedAt: number; recordedAt: number; destination: string; channel: string; answers: BoardAnswer[]; note: string; cvVersionId?: string; artifactId?: string; legacyCvDocumentId?: string };
+export type BoardArtifact = { id: string; name: string; mime: string; sha256: string; bytes: number; createdAt: number; cvVersionId?: string };
+export type BoardEvent = { id: string; at: number; type: string; data: Record<string, unknown> };
+export type BoardEntry = {
+  id: string; offerId: string; opportunityId?: string; addedAt: number; updatedAt: number; revision: number; archived: boolean;
+  discovery: OfferRecord; applicationStage: ApplicationStage;
+  preparation: { status: PreparationStatus; generation: number; step: PreparationStep; steps: Record<PreparationStep, BoardStep>; retryAt?: number; error?: string; code?: string };
+  language?: { detected: string; uncertain: boolean; reason: string; detectedAt: number };
+  languageOverride?: 'pl' | 'en'; selectedContextId?: string;
+  postings: BoardPosting[]; currentPostingId?: string; cvs: BoardCv[]; currentCvId?: string;
+  answers: BoardAnswer[]; submissions: BoardSubmission[]; artifacts: BoardArtifact[]; history: BoardEvent[];
+  applicationAgent?: ApplicationAgentState;
+  legacy?: Record<string, unknown>;
+};
+export type BoardSummary = Pick<BoardEntry, 'id' | 'offerId' | 'opportunityId' | 'addedAt' | 'updatedAt' | 'revision' | 'applicationStage' | 'preparation' | 'currentCvId' | 'languageOverride'> & { title: string; company: string; url: string; board: string; language?: string; archived: boolean };
+export type BoardWrite = { entryId: string; operationId: string; expectedRevision: number };
+export type BoardRunInput = { runId: string; entryId: string; generation: number; step: string; capability: string; input: Record<string, unknown>; snapshot: OfferSnapshot; application?: Pick<BoardEntry, 'applicationStage' | 'answers' | 'submissions' | 'history' | 'artifacts'> };
+export type BoardChatMessage = { id: string; role: 'user' | 'assistant'; text: string; createdAt: number; runId: string; contextRevision: number };

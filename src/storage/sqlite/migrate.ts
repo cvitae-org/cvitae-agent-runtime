@@ -1,3 +1,17 @@
+import { boardRemoval0034 } from './migrations/0034-board-removal.js';
+import { browserCompanion0033 } from './migrations/0033-browser-companion.js';
+import { discoveryRegistry0032 } from './migrations/0032-discovery-registry.js';
+import { boardWorkspaces0031 } from './migrations/0031-board-workspaces.js';
+import { discoveryOfferActions0030 } from './migrations/0030-discovery-offer-actions.js';
+import { headlineOpportunities0029 } from './migrations/0029-headline-opportunities.js';
+import { sameBoardOpportunities0028 } from './migrations/0028-same-board-opportunities.js';
+import { opportunities0027 } from './migrations/0027-opportunities.js';
+import { offerFacts0024 } from './migrations/0024-offer-facts.js';
+import { discoveryDecisions0025 } from './migrations/0025-discovery-decisions.js';
+import { discoveryRequestLedger0026 } from './migrations/0026-discovery-request-ledger.js';
+import { offerQueries0023 } from './migrations/0023-offer-queries.js';
+import { detailQueue0022 } from './migrations/0022-detail-queue.js';
+import { discoveryEvidenceIndex0021 } from './migrations/0021-discovery-evidence-index.js';
 /**
  * Schema versioning on `PRAGMA user_version`.
  *
@@ -11,6 +25,11 @@
 import { contextPhotos0013 } from './migrations/0013-context-photos.js';
 import { offerSnapshots0014 } from './migrations/0014-offer-snapshots.js';
 import { contextContracts0015 } from './migrations/0015-context-contracts.js';
+import { discoveryCatalogue0016 } from './migrations/0016-discovery-catalogue.js';
+import { offerEnrichment0017 } from './migrations/0017-offer-enrichment.js';
+import { offerNotes0018 } from './migrations/0018-offer-notes.js';
+import { discoverySearches0019 } from './migrations/0019-discovery-searches.js';
+import { discoveryChat0020 } from './migrations/0020-discovery-chat.js';
 import type { Db } from './open.js';
 import { init0001 } from './migrations/0001-init.js';
 import { stepStopped0002 } from './migrations/0002-step-stopped.js';
@@ -42,7 +61,26 @@ export const migrations: readonly Migration[] = [
   { version: 12, sql: indexRecovery0012 },
   { version: 13, sql: contextPhotos0013 },
   { version: 14, sql: offerSnapshots0014 },
-  { version: 15, sql: contextContracts0015 }
+  { version: 15, sql: contextContracts0015 },
+  { version: 16, sql: discoveryCatalogue0016 },
+  { version: 17, sql: offerEnrichment0017 },
+  { version: 18, sql: offerNotes0018 },
+  { version: 19, sql: discoverySearches0019 },
+  { version: 20, sql: discoveryChat0020 },
+  { version: 21, sql: discoveryEvidenceIndex0021 },
+  { version: 22, sql: detailQueue0022 },
+  { version: 23, sql: offerQueries0023 },
+  { version: 24, sql: offerFacts0024 },
+  { version: 25, sql: discoveryDecisions0025 },
+  { version: 26, sql: discoveryRequestLedger0026 },
+  { version: 27, sql: opportunities0027 },
+  { version: 28, sql: sameBoardOpportunities0028 },
+  { version: 29, sql: headlineOpportunities0029 },
+  { version: 30, sql: discoveryOfferActions0030 },
+  { version: 31, sql: boardWorkspaces0031 },
+  { version: 32, sql: discoveryRegistry0032 },
+  { version: 33, sql: browserCompanion0033 },
+  { version: 34, sql: boardRemoval0034 }
 ];
 
 export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.version), 0);

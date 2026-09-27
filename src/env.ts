@@ -7,11 +7,21 @@
  */
 
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const path = process.env.ENV_FILE ?? '.env';
+const explicit = process.env.ENV_FILE?.trim();
+const paths = explicit
+  ? [explicit]
+  : ['.env', fileURLToPath(new URL('../.env', import.meta.url)), join(homedir(), '.cvitae', 'runtime.env')];
 
-if (existsSync(path)) {
-  // Node's own loader, so there is no dependency for this. It does not
-  // overwrite variables that are already set.
-  process.loadEnvFile(path);
+for (const path of new Set(paths)) {
+  if (existsSync(path)) {
+    // Node's own loader does not overwrite existing variables. This lets a
+    // service manager win, then the launch working directory, then the runtime
+    // package's development checkout. The package-relative fallback matters
+    // when Studio launches the sidecar from Studio's working directory.
+    process.loadEnvFile(path);
+  }
 }

@@ -1,3 +1,5 @@
+import { extractJobDescription } from './offer-description.js';
+import { fieldEvidenceMapSchema } from '../contracts/field-evidence.js';
 /**
  * Reading the public web: the offer a user pasted, and the pages that say
  * whether an application to it would reach the employer.
@@ -42,6 +44,7 @@
  * second each is two requests a second.
  */
 
+import { publishedSalarySchema } from '../contracts/published-salary.js';
 import { lookup } from 'node:dns/promises';
 import { RuntimeError } from '../contracts/index.js';
 import type {
@@ -349,9 +352,10 @@ const scraperBase = (configured: string | undefined): string => {
     throw new RuntimeError(`SCRAPER_URL "${value}" is not a valid URL.`, 'misconfigured');
   }
 
-  if (!LOOPBACK_HOSTS.has(url.hostname)) {
+  if (!['http:', 'https:'].includes(url.protocol) || !LOOPBACK_HOSTS.has(url.hostname)
+      || url.username || url.password || url.search || url.hash) {
     throw new RuntimeError(
-      `SCRAPER_URL must point at localhost, not "${url.hostname}".`,
+      'SCRAPER_URL must be an HTTP(S) loopback URL without credentials, query or fragment.',
       'misconfigured'
     );
   }
@@ -363,6 +367,11 @@ const scraperBase = (configured: string | undefined): string => {
 
 /** Mirrors the scraper's offer shape. Optional means the board was silent. */
 type BoardOffer = {
+  extractor_version?: string;
+  field_evidence?: unknown;
+  requisition_id?: string;
+  requisition_issuer?: string;
+  client_name?: string;
   board: string;
   source_url: string;
   /** 'api' | 'jsonld' | 'html' | 'browser' — how much to trust the text. */
@@ -373,6 +382,12 @@ type BoardOffer = {
   work_mode?: string;
   salary?: string;
   contract_type?: string;
+  employment_type?: string;
+  company_type?: string;
+  company_size?: string;
+  engagement_length?: string;
+  valid_through?: string;
+  salary_ranges?: unknown;
   seniority?: string;
   posted_at?: string;
   /** When the work begins ("ASAP"). Not to be confused with `posted_at`. */
@@ -401,7 +416,7 @@ const REFUSALS = new Set(['blocked', 'disallowed', 'unsupported', 'empty', 'erro
 /**
  * What a board stated, narrowed to the fields `StatedKey` admits.
  *
- * `contract_type` is dropped on purpose. Naming the set in `contracts/offer.ts`
+ * Contract form is allowlisted separately from employment type. Naming the set in `contracts/offer.ts`
  * rather than copying whatever the scraper happens to emit is what keeps "the
  * board wins" from silently widening when either side grows a field.
  */
@@ -412,6 +427,15 @@ const statedFrom = (offer: BoardOffer): StatedFacts | undefined => {
     if (Array.isArray(value) && value.length > 0) stated[key] = value;
   };
 
+  put('contract_type', offer.contract_type);
+  put('employment_type', offer.employment_type);
+  put('company_type', offer.company_type);
+  put('company_size', offer.company_size);
+  put('engagement_length', offer.engagement_length);
+  put('posted_at', offer.posted_at);
+  put('valid_through', offer.valid_through);
+  const ranges=Array.isArray(offer.salary_ranges) ? offer.salary_ranges.slice(0,20).flatMap(value=>{const parsed=publishedSalarySchema.safeParse(value);return parsed.success?[parsed.data]:[];}) : [];
+  if (ranges.length) stated.salary_ranges=ranges;
   put('company', offer.company);
   put('title', offer.title);
   put('location', offer.location);
@@ -419,6 +443,13 @@ const statedFrom = (offer: BoardOffer): StatedFacts | undefined => {
   put('salary', offer.salary);
   put('seniority', offer.seniority);
   put('start_date', offer.start_date);
+  put('extractor_version', offer.extractor_version);
+  put('requisition_id', offer.requisition_id);
+  put('requisition_issuer', offer.requisition_issuer);
+  put('client_name', offer.client_name);
+  put('apply_url', offer.apply_url);
+  const evidence=fieldEvidenceMapSchema.safeParse(offer.field_evidence);
+  if(evidence.success) stated.field_evidence=evidence.data;
   put('required_skills', offer.required_skills);
 
   return Object.keys(stated).length > 0 ? (stated as StatedFacts) : undefined;
@@ -518,6 +549,8 @@ const listingsFrom = (raw: readonly ScrapedListing[]): Listing[] =>
 export type WebReaderOptions = {
   /** Unset uses the default loopback port; `''` switches the scraper off. */
   readonly scraperUrl?: string;
+  /** Shared only in an Authorization header; never placed in a URL or log. */
+  readonly scraperToken?: string;
   /** Injected so the tests that matter here need no network. */
   readonly fetch?: typeof globalThis.fetch;
   readonly resolveHost?: HostResolver;
@@ -559,6 +592,7 @@ export const createWebReader = (
   const base = scraperBase(
     options.scraperUrl === undefined ? process.env.SCRAPER_URL : options.scraperUrl
   );
+  const scraperToken = (options.scraperToken ?? process.env.SCRAPER_API_TOKEN ?? '').trim();
 
   /** One request per host at a time, spaced. Instance state, not module state. */
   const hostQueue = new Map<string, Promise<unknown>>();
@@ -729,13 +763,16 @@ export const createWebReader = (
     if (!base) {
       return { status: 'unavailable', detail: 'SCRAPER_URL is empty, so the scraper is off.' };
     }
+    if (scraperToken.length < 32) {
+      return { status: 'unavailable', detail: 'SCRAPER_API_TOKEN is missing or too short.' };
+    }
 
     let response: Response;
 
     try {
       response = await request(`${base}${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${scraperToken}` },
         body: JSON.stringify(body),
         signal: AbortSignal.any([call.signal, AbortSignal.timeout(timeoutMs)])
       });
@@ -778,7 +815,7 @@ export const createWebReader = (
     };
   };
 
-  const readDirectly = async (url: string, call: EffectCall): Promise<ResolvedOffer> => {
+  const readDirectly = async (url: string, call: EffectCall, full = false): Promise<ResolvedOffer> => {
     let host: string;
 
     try {
@@ -812,9 +849,10 @@ export const createWebReader = (
       throw new RuntimeError(outcome.detail.replace('site', 'board'), 'step_failed');
     }
 
-    const text = extractVisibleText(outcome.html);
+    const descriptionText = extractJobDescription(outcome.html, outcome.finalUrl, extractVisibleText);
+    const text = extractVisibleText(outcome.html) || descriptionText || '';
 
-    if (text.length < MIN_USEFUL_CHARS) {
+    if (text.length < MIN_USEFUL_CHARS && !descriptionText) {
       throw new RuntimeError(
         'The page rendered no readable text on the server — it is likely a '
           + 'JavaScript-only board. Paste the offer text manually.',
@@ -822,11 +860,10 @@ export const createWebReader = (
       );
     }
 
-    return { url, finalUrl: outcome.finalUrl, text: text.slice(0, MAX_TEXT_CHARS) };
+    return { url, finalUrl: outcome.finalUrl, ...(descriptionText ? { descriptionText } : {}), text: text.slice(0, full ? 1_000_000 : MAX_TEXT_CHARS), ...(full ? { contentTruncated: text.length > 1_000_000, extractionWarnings: ['Structured metadata is unavailable from the direct HTML reader.'] } : {}) };
   };
 
-  return {
-    async resolve(url, call) {
+  const resolveOffer = async (url: string, call: EffectCall, full: boolean): Promise<ResolvedOffer> => {
       if (call.signal.aborted) throw cancelled();
 
       const scraped = await askScraper<BoardOffer>('/scrape/offer', { url }, call);
@@ -841,7 +878,8 @@ export const createWebReader = (
         return {
           url,
           finalUrl: offer.source_url || url,
-          text: offer.text.slice(0, MAX_TEXT_CHARS),
+          text: offer.text.slice(0, full ? 1_000_000 : MAX_TEXT_CHARS),
+          ...(full ? { sourceData: { ...offer, text: undefined }, contentTruncated: offer.text.length > 1_000_000 || (offer as unknown as Record<string,unknown>).truncated === true } : {}),
           ...(offer.board ? { board: offer.board } : {}),
           ...(stated ? { stated } : {}),
           ...(routes ? { routes } : {})
@@ -855,8 +893,11 @@ export const createWebReader = (
         throw new RuntimeError(scraped.detail, 'unreadable_source');
       }
 
-      return readDirectly(url, call);
-    },
+      return readDirectly(url, call, full);
+  };
+  return {
+    resolve: (url, call) => resolveOffer(url, call, false),
+    capture: (url, call) => resolveOffer(url, call, true),
 
     /**
      * A page, or nothing.

@@ -40,6 +40,7 @@
  */
 
 import { CvContextError, DocumentConflictError, RuntimeError, isRunSuspension } from '../../contracts/index.js';
+import { OperationError } from '../../contracts/operation-error.js';
 import { asCvDocument, normaliseCv } from '../../capabilities/cv/document.js';
 import {
   asCvPhotoBody,
@@ -206,7 +207,34 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
         }))
       ),
 
-    'protocol.get': () => ok({ version: 2, features: ['cv-contexts', 'checked-writes', 'durable-proposals', 'context-copy', 'offer-snapshot-runs'], languages: ['pl', 'en'] }),
+    'browser.internal.dispatch': async ({sessionId,method,payload,targetSearchId}) => ok(await harness.browser.dispatch('studio:'+sessionId,method,payload,targetSearchId)),
+    'browser.status': () => ok(harness.browser.status()),
+    'browser.configure': async ({enabled}) => ok(await harness.browser.configure(enabled)),
+    'browser.poll': ({after}) => ok(harness.browser.store.poll(after)),
+    'browser.collection': () => ok(harness.browser.store.collection()),
+    'protocol.get': () => ok({ version: 2, features: ['cv-contexts', 'checked-writes', 'durable-proposals', 'context-copy', 'offer-snapshot-runs', 'board-workspaces-v1', 'board-application-agent-v1', 'browser-companion-v1', 'studio-browser-v1', 'discovery-board-threads-v1'], languages: ['pl', 'en'] }),
+    'board.application.start': request => ok(harness.applicationAgent.start(request)),
+    'board.application.observe': async request => ok(await harness.applicationAgent.observe(request)),
+    'board.application.report': request => ok(harness.applicationAgent.report(request)),
+    'board.application.control': request => ok(harness.applicationAgent.control(request)),
+    'board.entries.list': () => ok(harness.board.list()),
+    'board.entries.get': ({entryId}) => ok(harness.board.requireEntry(entryId)),
+    'board.entries.add': request => ok(harness.board.add(request)),
+    'board.entries.importLegacy': request => ok(harness.board.importLegacy(request)),
+    'board.entries.drop': request => ok(harness.board.drop(request)),
+    'board.poll': ({after}) => ok(harness.board.poll(after)),
+    'board.preparation.control': request => ok(harness.board.control(request)),
+    'board.context.configure': request => ok(harness.board.configure(request)),
+    'board.summary.update': request => ok(harness.board.updateSummary(request)),
+    'board.answers.save': request => ok(harness.board.saveAnswers(request)),
+    'board.notes.add': request => ok(harness.board.addNote(request)),
+    'board.stage.set': request => ok(harness.board.setStage(request)),
+    'board.submissions.record': request => ok(harness.board.recordSubmission(request)),
+    'board.artifacts.put': request => ok(harness.board.putArtifact(request)),
+    'board.artifacts.get': ({entryId,artifactId}) => ok(harness.board.artifact(entryId,artifactId)),
+    'board.chat.start': request => ok(harness.board.chatSend(request)),
+    'board.chat.get': ({entryId}) => ok(harness.board.chatGet(entryId)),
+    'board.chat.cancel': ({entryId,runId}) => {harness.board.chatCancel(entryId,runId);return ok({cancelled:true});},
     'profile.contexts.create': ({ id, language }) => ok({ context: harness.cvContexts.create(id, language) }),
     'profile.contexts.assignLanguage': ({ contextId, language, expectedRevision }) => ok({ context: harness.cvContexts.assignLanguage(contextId, language, expectedRevision) }),
     'profile.contexts.copy': ({ id, language, sourceContextId, expectedSourceRevision }) => ok(harness.cvCopies.copy({ id, language, sourceContextId, expectedSourceRevision })),
@@ -289,6 +317,77 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     // answer a question the portrait had no part in.
     'offers.list': ({ limit }) => ok({ offers: harness.offers.recent(limit) }),
     'offers.get': ({ id }) => ok({ offer: harness.offers.get(id) ?? null }),
+    'opportunities.resolve': ({ids}) => ok(harness.opportunities.resolve(ids)),
+    'opportunities.link': ({offerId,otherOfferId}) => ok(harness.opportunities.link(offerId,otherOfferId)),
+    'opportunities.separate': ({offerId}) => ok(harness.opportunities.separate(offerId)),
+    'opportunities.candidates': ({offerId,term}) => ok({items:harness.opportunities.candidates(offerId,term)}),
+    'offers.query.opportunities': ({ownerSearchId,executionId,cursor,limit}) => ok(harness.offerQueries.opportunities(ownerSearchId,executionId,cursor,limit)),
+    'offers.query.schema': () => ok(harness.offerQueries.schema()),
+    'offers.query.context': async ({ownerSearchId,scope}) => ok(await harness.offerQueries.context(ownerSearchId,scope)),
+    'offers.query.document': ({ownerSearchId}) => ok(harness.offerQueries.document(ownerSearchId)),
+    'offers.query.save': input => ok(harness.offerQueries.save(input)),
+    'offers.query.validate': async input => ok(await harness.offerQueries.validate(input)),
+    'offers.query.start': input => ok(harness.offerQueries.start(input)),
+    'offers.query.get': ({ownerSearchId,executionId}) => ok(harness.offerQueries.get(ownerSearchId,executionId)),
+    'offers.query.page': ({ownerSearchId,executionId,cursor,limit}) => ok(harness.offerQueries.page(ownerSearchId,executionId,cursor,limit)),
+    'offers.query.cancel': async ({ownerSearchId,executionId}) => ok(await harness.offerQueries.cancel(ownerSearchId,executionId)),
+    'offers.query.release': ({ownerSearchId,executionId}) => ok(harness.offerQueries.release(ownerSearchId,executionId)),
+    'discovery.searches.createBatch': (input) => ok(harness.discoverySearches.createBatch(input)),
+    'discovery.searches.import.begin': (input) => ok(harness.discoverySearches.begin(input)),
+    'discovery.searches.import.append': (input) => ok(harness.discoverySearches.append(input)),
+    'discovery.searches.import.finish': (input) => ok(harness.discoverySearches.finish(input)),
+    'discovery.searches.filters': ({ id, filters, revision }) => ok(harness.discoverySearches.filters(id,filters,revision)),
+    'discovery.chat.get': ({ searchId, before }) => ok(harness.discoveryChat.get(searchId,before)),
+    'discovery.chat.start': (request) => ok(harness.discoveryChat.send(request)),
+    'discovery.chat.cancel': ({ searchId, runId }) => { harness.discoveryChat.cancel(searchId,runId); return ok({ cancelled: true }); },
+    'discovery.searches.list': ({ limit, offset }) => ok(harness.discoverySearches.list(limit, offset)),
+    'discovery.searches.offer': ({ id, offerId, group }) => ok(harness.discoverySearches.offer(id,offerId,group)),
+    'discovery.searches.read': (input) => ok(harness.discoverySearches.read(input)),
+    'discovery.offers.manage': ({ id, offerIds, action }) => ok(harness.discoverySearches.manage(id,offerIds,action)),
+    'discovery.offers.managed': ({ id }) => ok(harness.discoverySearches.managed(id)),
+    'discovery.searches.delete': async ({ id }) => { await harness.offerQueries.deleteSearch(id); harness.discovery.cancelSearch(id); harness.discoveryChat.delete(id); return ok({ deleted: harness.discoverySearches.delete(id) }); },
+    'discovery.browserSearch': async ({board, keyword}) => ok(await harness.discovery.browserSearch(board, keyword)),
+    'discovery.boards': async () => ok(await harness.discovery.boards()),
+    'offers.note.get': ({ offerId }) => ok({ note: harness.offerNotes.get(offerId) }),
+    'offers.note.save': ({ offerId, text, revision }) => ok({ note: harness.offerNotes.save(offerId, text, revision) }),
+    'discovery.details.auto.enqueue': ({ searchId, offerIds }) => { harness.detailQueue.enqueue(searchId,offerIds.filter(id=>!harness.discoverySearches.suppressed(searchId,id))); return ok({ queued:true }); },
+    'discovery.details.auto.poll': ({ after }) => ok(harness.detailQueue.poll(after)),
+    'discovery.details.auto.pause': ({ paused }) => { harness.detailQueue.pause(paused); return ok({ paused }); },
+    'discovery.details.auto.stop': () => { harness.detailQueue.stop(); return ok({ paused:true }); },
+    'discovery.details.auto.clear': () => { harness.detailQueue.clear(); return ok({ cleared:true }); },
+    'discovery.details.start': ({ offerId, force }) => ok({ enrichment: harness.enrichment.details.start(offerId, force) }),
+    'discovery.details': ({ offerId }) => ok(harness.enrichment.get(offerId)),
+    'discovery.details.cancel': ({ offerId }) => { harness.enrichment.details.cancel(offerId); return ok(harness.enrichment.get(offerId)); },
+    'discovery.enrich': ({ offerId, force, refreshDetails }) => ok({ enrichment: harness.enrichment.start(offerId, force, refreshDetails) }),
+    'discovery.enrichment': ({ offerId }) => { const result=harness.enrichment.get(offerId); if (result.enrichment && ['succeeded','partial'].includes(result.enrichment.status)) harness.discoverySearches.refreshOffer(result.offer,result.enrichment); return ok(result); },
+    'discovery.enrichment.cancel': ({ offerId }) => { harness.enrichment.cancel(offerId); return ok({ cancelled: true }); },
+    'discovery.cached': (query) => ok(harness.discovery.cached(query)),
+    'discovery.start': async (query) => {
+      if (query.searchId) {
+        try {
+          if (harness.discoverySearches.get(query.searchId).boardThread?.mode === 'browser') throw new OperationError('browser_capture_required', 'Open this search in Cvitae Browser to import jobs.');
+        } catch (error) { if (!(error instanceof OperationError) || error.code !== 'search_not_found') throw error; }
+      }
+      const boards = query.refetch && query.searchId ? harness.discoverySearches.get(query.searchId).boards : query.boards;
+      harness.discovery.validateFilters(boards, query.workMode);
+      // Refresh live availability before validation, and before changing saved-search state.
+      // A scraper that restarted must not remain disabled by an earlier health snapshot.
+      if (query.sourceMode !== 'cache' || query.refetch) {
+        await harness.discovery.boards();
+        harness.discovery.validateBoards(boards);
+      }
+      if (query.refetch && query.searchId) {
+        harness.discoverySearches.get(query.searchId);
+        harness.discoveryChat.delete(query.searchId);
+        harness.discovery.cancelSearch(query.searchId);
+        await harness.offerQueries.deleteSearch(query.searchId);
+        await harness.detailQueue.cancelSearch(query.searchId);
+      }
+      return ok(harness.discovery.start(query));
+    },
+    'discovery.poll': ({ id, after }) => ok(harness.discovery.poll(id, after)),
+    'discovery.next': ({ id, board }) => { harness.discovery.next(id, board); return ok({ accepted: true }); },
+    'discovery.cancel': ({ id }) => { harness.discovery.cancel(id); return ok({ cancelled: true }); },
     'offers.snapshots.capture': (request) => ok(harness.offerSnapshots.capture(request)),
     'offers.snapshots.get': ({ id }) => ok(harness.offerSnapshots.get(id) ?? null),
     'offers.snapshots.list': ({ offerId, contextId }) => ok(harness.offerSnapshots.list(offerId, contextId)),
@@ -538,6 +637,7 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     const parsed = payloads[channel].safeParse(payload ?? {});
 
     if (!parsed.success) {
+      if(channel.startsWith('offers.query.')) return failed(parsed.error.issues.some(i=>i.path[0]==='schemaVersion')?'query_schema_mismatch':'query_invalid_params','Invalid query request. Check the schema version, scope, parameters and limits.');
       return failed(
         'invalid_input',
         `Bad payload for "${channel}": ${parsed.error.issues
@@ -575,9 +675,11 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
       }
       if (error instanceof CvContextError) return failed(error.code, error.message, error.details);
       if (error instanceof RuntimeError) return failed(error.code, error.message);
+      if (error instanceof OperationError) return failed(error.code, error.message);
 
       // Message only. An unexpected error's stack names paths on this machine,
       // and this envelope is bound for somewhere else.
+      if(channel.startsWith('offers.query.')) return failed('query_failed','The query request could not be completed.');
       return failed('internal', String((error as Error)?.message ?? error));
     }
   };

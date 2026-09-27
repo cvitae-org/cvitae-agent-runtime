@@ -69,8 +69,8 @@ const CURRENCIES: [RegExp, string][] = [
  */
 const PERIODS: [RegExp, SalaryPeriod][] = [
   [/\/\s*h\b|\bh\b|godz|hour|hourly|per hour|stawka godzinowa/, 'hour'],
-  [/\/\s*d\b|\bmd\b|dzien|dziennie|daily|per day|day rate|man-?day/, 'day'],
-  [/\/\s*mies|mies|miesiac|monthly|per month|\/\s*m\b|\bpm\b/, 'month'],
+  [/\/\s*d\b|\bmd\b|dzien|dziennie|daily|\bday\b|per day|day rate|man-?day/, 'day'],
+  [/\/\s*mies|mies|miesiac|monthly|\bmonth\b|per month|\/\s*m\b|\bpm\b/, 'month'],
   [/\/\s*rok|rocznie|annually|annual|per year|\/\s*yr\b|\bp\.?a\.?\b|year/, 'year']
 ];
 

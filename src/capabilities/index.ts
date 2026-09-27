@@ -1,3 +1,5 @@
+import { draftApplicationFields } from './apply/form.js';
+import { detectOfferLanguage } from './detectOfferLanguage.js';
 /**
  * The capability map: everything this runtime knows how to do.
  *
@@ -23,6 +25,8 @@ import { translateCv } from './cv/translate.js';
 import { verifyRecipient } from './recipient/verify.js';
 
 export const capabilities: CapabilityMap = {
+  [draftApplicationFields.name]: draftApplicationFields as CapabilityMap[string],
+  [detectOfferLanguage.name]: detectOfferLanguage as CapabilityMap[string],
   [analyzeOffer.name]: analyzeOffer as CapabilityMap[string],
   [askProfile.name]: askProfile as CapabilityMap[string],
   [draftApplication.name]: draftApplication as CapabilityMap[string],

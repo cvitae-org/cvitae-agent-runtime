@@ -154,6 +154,9 @@ export const createConversationStore = (
   // this new is known here, and a select would only be asking SQLite to confirm
   // the insert that just succeeded.
   const checkedSubject = (subject: ConversationSubject): ConversationSubject => {
+    if (subject.kind === 'discovery' && !db.prepare("SELECT id FROM discovery_searches WHERE id=? AND status='ready'").get(subject.id)) {
+      throw new CvContextError('context_not_found', 'Saved search is unavailable.');
+    }
     if (subject.kind !== 'profile' || subject.id === '') return subject;
     if (!db.prepare('SELECT id FROM cv_contexts WHERE id = ?').get(subject.id)) {
       throw new CvContextError('context_not_found', `No such CV context: ${subject.id}`);
@@ -187,6 +190,9 @@ export const createConversationStore = (
       conversationId: string,
       message: { role: MessageRole; text: string; runId?: string | undefined; id?: string | undefined }
     ): Message => {
+      if ((byId.get(conversationId) as ConversationRow | undefined)?.subject_kind === 'discovery') {
+        throw new CvContextError('context_conflict', 'Discover turns must be submitted through discovery.chat.start.');
+      }
       if (message.runId !== undefined) {
         const snapshot = db.prepare('SELECT id FROM offer_snapshots WHERE conversation_id = ?').get(conversationId) as { id: string } | undefined;
         const run = db.prepare('SELECT context_id, conversation_id, offer_snapshot_id FROM runs WHERE id = ?').get(message.runId) as
@@ -239,7 +245,7 @@ export const createConversationStore = (
 
     open: (subject) => openSubject(checkedSubject(subject)),
 
-    create: db.transaction((subject: ConversationSubject) => start(checkedSubject(subject))).immediate,
+    create: db.transaction((subject: ConversationSubject) => subject.kind === 'discovery' ? openSubject(checkedSubject(subject)) : start(checkedSubject(subject))).immediate,
 
     read(id) {
       const row = byId.get(id) as ConversationRow | undefined;
@@ -271,6 +277,9 @@ export const createConversationStore = (
       return row ? toConversation(row) : undefined;
     },
 
-    delete: (id) => remove.run(id).changes > 0
+    delete: (id) => {
+      if ((byId.get(id) as ConversationRow | undefined)?.subject_kind === 'discovery') throw new CvContextError('context_conflict', 'Delete the saved search to delete its conversation.');
+      return remove.run(id).changes > 0;
+    }
   };
 };

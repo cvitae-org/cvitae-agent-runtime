@@ -202,6 +202,28 @@ export const createRunStore = (db: Db): RunStore => {
    * upgrade creates.
    */
   const runCreate = db.transaction((run: NewRun, events: readonly NewEvent[]) => {
+    // Discover has its own durable owner, created in the same transaction by
+    // discovery-chat.start. A capability name alone must not bypass CV checks.
+    const discovery = run.capability === 'ask_discovery';
+    const boardOwner = db.prepare('SELECT i.body,a.input FROM board_run_inputs i JOIN board_run_authorizations a ON a.run_id=i.run_id JOIN board_entries e ON e.id=i.entry_id WHERE i.run_id=?').get(run.id) as {body:string;input:string}|undefined;
+    const board = boardOwner !== undefined;
+    if (boardOwner && (JSON.parse(boardOwner.body).capability !== run.capability || boardOwner.input !== JSON.stringify(run.input) || run.contextId !== undefined || run.conversationId !== undefined || run.offerSnapshotId !== undefined)) {
+      throw new CvContextError('context_conflict','Board run inputs do not match their captured owner.');
+    }
+    if (discovery) {
+      const owner = db.prepare(`SELECT json_extract(t.request,'$.question') AS question
+        FROM discovery_chat_turns t
+        JOIN discovery_searches s ON s.id=t.search_id AND s.status='ready'
+        JOIN conversations c ON c.id=t.conversation_id
+          AND c.subject_kind='discovery' AND c.subject_id=t.search_id
+        WHERE t.run_id=?`).get(run.id) as { question: string } | undefined;
+      if (!owner || owner.question !== run.input.question ||
+          run.contextId !== undefined || run.contextGeneration !== undefined ||
+          run.contextRevision !== undefined || run.conversationId !== undefined ||
+          run.offerSnapshotId !== undefined) {
+        throw new CvContextError('invalid_input', 'A Discover run requires its own saved-search turn and cannot bind a CV.');
+      }
+    }
     if (run.offerSnapshotId !== undefined) {
       const snapshot = db.prepare('SELECT context_id, conversation_id, snapshot FROM offer_snapshots WHERE id = ?').get(run.offerSnapshotId) as
         { context_id: string; conversation_id: string; snapshot: string } | undefined;
@@ -220,7 +242,7 @@ export const createRunStore = (db: Db): RunStore => {
         throw new CvContextError('context_conflict', 'CV changed before the run could start.');
       }
     }
-    if (run.contextId === undefined && db.prepare("SELECT id FROM cv_contexts WHERE id != 'cv' OR language IS NOT NULL LIMIT 1").get()) {
+    if (!discovery && !board && run.contextId === undefined && db.prepare("SELECT id FROM cv_contexts WHERE id != 'cv' OR language IS NOT NULL LIMIT 1").get()) {
       throw new CvContextError('invalid_input', 'An explicit CV context is required.');
     }
     if (run.conversationId !== undefined && run.offerSnapshotId === undefined) {

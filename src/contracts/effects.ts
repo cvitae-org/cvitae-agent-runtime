@@ -67,6 +67,10 @@ export type ObjectRequest<T> = EffectCall & {
    */
   readonly maxOutputTokens: number;
   readonly temperature?: number;
+  /** Optional transport retry ceiling; bounded workflows can disable retries. */
+  readonly maxRetries?: number;
+  /** Enforce the complete JSON schema on providers that support it. */
+  readonly strictSchema?: boolean;
 };
 
 export type ObjectResult<T> = {
@@ -80,6 +84,8 @@ export type TextRequest = EffectCall & {
   readonly prompt: string;
   readonly maxOutputTokens: number;
   readonly temperature?: number;
+  /** Optional transport retry ceiling; bounded workflows can disable retries. */
+  readonly maxRetries?: number;
   /**
    * Called with each fragment of the completion as it arrives.
    *
@@ -243,6 +249,11 @@ export interface AiGateway {
 /* ----------------------------------------------------------------- offers */
 
 export type ResolvedOffer = {
+  /** The published job description, separate from an archival whole-page capture. */
+  readonly descriptionText?: string;
+  readonly sourceData?: Readonly<Record<string, unknown>>;
+  readonly contentTruncated?: boolean;
+  readonly extractionWarnings?: readonly string[];
   readonly url: string;
   readonly finalUrl: string;
   readonly board?: string;
@@ -262,6 +273,8 @@ export type ResolvedOffer = {
 };
 
 export interface OfferReader {
+  /** Board archival capture keeps source text independently of model budgets. */
+  capture?(url: string, call: EffectCall): Promise<ResolvedOffer>;
   /**
    * Fetches an offer, following redirects with the SSRF guard applied at every
    * hop — not only the first, because a permitted host is free to redirect to

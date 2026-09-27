@@ -1,0 +1,12 @@
+import { z } from 'zod';
+export const criterionSchema = z.object({key:z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),question:z.string().trim().min(3).max(500),valueType:z.enum(['text','number','boolean'])}).strict();
+export const criteriaSchema=z.array(criterionSchema).min(1).max(5).refine(v=>new Set(v.map(c=>c.key)).size===v.length,'Criterion keys must be unique');
+export type Criterion=z.infer<typeof criterionSchema>;
+export const factOutputSchema=z.object({facts:z.array(z.object({criterionKey:z.string(),status:z.enum(['stated','not_stated','ambiguous']),value:z.union([z.string().max(1000),z.number().finite(),z.boolean(),z.null()]),evidenceQuote:z.string().max(2000).nullable()}).strict()).max(5)}).strict();
+export type FactOutput=z.infer<typeof factOutputSchema>['facts'][number];
+export type FactSource={offerId:string;evidenceId:string;text:string;sourceHash:string};
+export type StoredFact=FactOutput & {offerId:string;evidenceId:string;sourceHash:string;criterion:Criterion;criterionHash:string;modelVersion:string;extractorVersion:string;extractedAt:number};
+export type ExtractionCoverage={candidates:number;attempted:number;completed:number;cached:number;stated:number;notStated:number;ambiguous:number;unavailable:number;limited:boolean;criteria:Criterion[];criterionHashes:Record<string,string>;limitations:string[]};
+export type FactBatch={sources:FactSource[];candidates:number;unavailable:number;members:{offer_id:string;evidence_id:string;metadata:string}[]};
+export const extractorVersion='targeted-facts-v1-entailment-v1';
+export const factLimits={offers:10,criteria:5,concurrency:2,sourceBytes:16000} as const;

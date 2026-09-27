@@ -20,8 +20,11 @@ export * from './effects.js';
 export * from './event.js';
 export * from './event-log.js';
 export * from './offer.js';
+export * from './discovery.js';
 export * from './offer-snapshot.js';
 export * from './run.js';
 export * from './run-store.js';
 export * from './settings.js';
 export * from './tools.js';
+
+export * from './board.js';

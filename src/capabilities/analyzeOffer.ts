@@ -26,6 +26,7 @@
  * that is slower and strictly less reliable.
  */
 
+import { publishedContract } from './offers/published.js';
 import { z } from 'zod';
 import {
   RuntimeError,
@@ -215,17 +216,8 @@ export type Overlay = {
  *     "Remote", which is true but would overwrite a city the model correctly
  *     read out of the text, and `work_mode` already carries the remote part.
  *
- * What is deliberately *not* taken from the board:
- *
- *   contract_type — schema.org's `employmentType` is a different axis. It
- *     answers FULL_TIME/CONTRACTOR/PART_TIME where this record wants the Polish
- *     form of employment: B2B, UoP, zlecenie. Overriding turned a correct "B2B"
- *     into "CONTRACTOR" and a correct "umowa o pracę" into "FULL_TIME". One
- *     board happens to emit the real contract form in that field; two others
- *     emit the enum, and the field cannot tell you which one you got.
- *
- *   posted_at — stated, genuinely useful, and there is nowhere to put it. A
- *     field for it is a change to the stored shape, not to this function.
+ * Contract form is allowlisted independently of employment type. Published dates
+ * and salary alternatives remain available on stated facts, outside AI extraction.
  */
 export const applyStated = (
   analysis: Readonly<Record<string, unknown>>,
@@ -248,6 +240,10 @@ export const applyStated = (
     applied.push(key);
   };
 
+  replace('contract_type', publishedContract(stated.contract_type));
+  replace('company_type', stated.company_type);
+  replace('company_size', stated.company_size);
+  replace('engagement_length', stated.engagement_length);
   replace('company', stated.company);
   replace('position', stated.title);
   replace('salary', stated.salary);

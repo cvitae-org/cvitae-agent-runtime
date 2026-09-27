@@ -1,3 +1,18 @@
+import { configuredDiscoveryProvider, type DiscoveryProvider } from '../effects/discovery-provider.js';
+import {createBrowserService} from './browser.js';
+import {createBrowserImportStore} from '../storage/sqlite/browser-imports.js';
+import {OperationError} from '../contracts/operation-error.js';
+import { withDiscoveryMetadata } from '../storage/sqlite/discovery-registry.js';
+import { createBoardStore } from '../storage/sqlite/board.js';
+import { createApplicationAgent } from './application-agent.js';
+import { createBoardService } from './board.js';
+import type { BoardRunInput } from '../contracts/board.js';
+import type { OfferReader } from '../contracts/index.js';
+import { createOfferFactStore } from '../storage/sqlite/offer-facts.js';
+import { createFactPort } from './offer-facts.js';
+import { createOpportunityStore } from '../storage/sqlite/opportunities.js';
+import { createOfferQueryStore } from '../storage/sqlite/offer-query-store.js';
+import { createOfferQueryService } from './offer-query.js';
 /**
  * The composition root. The one place anything is wired to anything.
  *
@@ -47,9 +62,26 @@ import { createCvContextStore } from '../storage/sqlite/cv-contexts.js';
 import { createCvCopies } from '../storage/sqlite/cv-copy.js';
 import { bindOfferScope, snapshotInput } from './offer-scope.js';
 import { bindCvScope } from './cv-scope.js';
-import { CvContextError } from '../contracts/index.js';
+import { CvContextError, RuntimeError } from '../contracts/index.js';
 import { createChunkIndex } from '../storage/sqlite/chunk-index.js';
 import { createOfferStore } from '../storage/sqlite/offers.js';
+import { createDiscoveryCatalogue } from '../storage/sqlite/discovery.js';
+import { createDiscoverySource } from '../effects/discovery.js';
+import { createDiscoverySearchStore } from '../storage/sqlite/discovery-searches.js';
+import { createDiscoveryChatStore } from '../storage/sqlite/discovery-chat.js';
+import { createDiscoveryChatService } from './discovery-chat.js';
+import { bindDiscoveryScope } from './discovery-scope.js';
+import { askDiscoverySql } from '../capabilities/askDiscoverySql.js';
+import { createDiscoverySqlPort } from './discovery-sql.js';
+import { createCollectionPort } from './offer-collection.js';
+import { createDiscoveryService } from './discovery.js';
+import { createOfferNotes } from '../storage/sqlite/offer-notes.js';
+import { createEnrichmentStore } from '../storage/sqlite/enrichment.js';
+import { createDetailQueueStore } from '../storage/sqlite/detail-queue.js';
+import { createDetailQueue } from './detail-queue.js';
+import { createEnrichmentService } from './enrichment.js';
+import { analyzeOffer } from '../capabilities/analyzeOffer.js';
+import type { DiscoverySource } from '../contracts/discovery.js';
 import { createAiLog } from '../storage/sqlite/ai-log.js';
 import { createSettingsStore } from '../storage/sqlite/settings.js';
 import { createConversationStore } from '../storage/sqlite/conversations.js';
@@ -141,6 +173,11 @@ export const consoleLogger: AiLogger = {
 export const silentLogger: AiLogger = { record: () => undefined };
 
 export type CreateOptions = {
+  readonly discoveryProvider?: DiscoveryProvider;
+  /** Optional source port for hosts/tests; defaults to the loopback scraper. */
+  readonly discoverySource?: DiscoverySource;
+  /** Injectable public reader for deterministic Board integration tests. */
+  readonly boardReader?: OfferReader;
   /** Desktop host enables durable background index recovery; libraries opt in. */
   readonly indexRecovery?: boolean;
   /** Defaults to `CVITAE_DB`, then `~/.cvitae/runtime.db`. */
@@ -150,6 +187,8 @@ export type CreateOptions = {
   readonly logger?: AiLogger;
   /** Unset uses the default loopback port; `''` switches the scraper off. */
   readonly scraperUrl?: string;
+  /** Bearer credential shared with the loopback scraper. */
+  readonly scraperToken?: string;
   /** Unset reads `MAIL_URL`. Loopback only, checked at construction. */
   readonly mailUrl?: string;
   readonly timeoutMs?: number;
@@ -225,7 +264,18 @@ export type Harness = {
   };
   /** The write half. Held here, never placed on a run context. */
   readonly chunks: ChunkIndex;
+  readonly opportunities: ReturnType<typeof createOpportunityStore>;
   readonly offers: OfferStore;
+  readonly browser: ReturnType<typeof createBrowserService>;
+  readonly board: ReturnType<typeof createBoardService>;
+  readonly applicationAgent: ReturnType<typeof createApplicationAgent>;
+  readonly offerQueries: ReturnType<typeof createOfferQueryService>;
+  readonly discoveryChat: ReturnType<typeof createDiscoveryChatService>;
+  readonly discoverySearches: ReturnType<typeof createDiscoverySearchStore>;
+  readonly discovery: ReturnType<typeof createDiscoveryService>;
+  readonly offerNotes: ReturnType<typeof createOfferNotes>;
+  readonly enrichment: ReturnType<typeof createEnrichmentService>;
+  readonly detailQueue: ReturnType<typeof createDetailQueue>;
   /**
    * The durable transcript, one per subject.
    *
@@ -294,6 +344,19 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   const chunks = createChunkIndex(db, options.now);
   const cvLifecycle = createCvLifecycle(db, cvContexts, documents, chunks, () => cvDocumentSchema.parse({}), options.now);
   const offers = createOfferStore(db);
+  const opportunities = createOpportunityStore(db, options.now);
+  opportunities.sync();
+  const offerQueryStore = createOfferQueryStore(db, options.now);
+  const offerQueries = createOfferQueryService(offerQueryStore);
+  const discoverySearches = createDiscoverySearchStore(db, offers, options.now);
+  const scraperToken = options.scraperToken ?? options.env?.SCRAPER_API_TOKEN ?? process.env.SCRAPER_API_TOKEN;
+  const catalogue = createDiscoveryCatalogue(db, offers);
+  const enrichmentStore = createEnrichmentStore(db, offers);
+  const browserImports = createBrowserImportStore(db,offers,catalogue,discoverySearches,enrichmentStore,options.now);
+  const provider = options.discoveryProvider ?? configuredDiscoveryProvider();
+  const browser = createBrowserService(browserImports,options.now,provider);
+  const discovery = createDiscoveryService(catalogue,
+    withDiscoveryMetadata(db, options.discoverySource ?? createDiscoverySource({ url: options.scraperUrl, token: scraperToken, provider })), options.now, discoverySearches);
   const attempts = createAttemptLog(db);
   const aiLog = createAiLog(db);
   const settings = createSettingsStore(db, options.now);
@@ -314,7 +377,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   }
 
   const assertNoLegacyWork = (): void => {
-    if (db.prepare("SELECT id FROM runs WHERE context_id IS NULL AND status IN ('queued', 'running', 'suspended') LIMIT 1").get()) {
+    if (db.prepare("SELECT id FROM runs WHERE context_id IS NULL AND status IN ('queued', 'running', 'suspended') AND NOT EXISTS (SELECT 1 FROM board_run_inputs WHERE run_id=runs.id) LIMIT 1").get()) {
       throw new CvContextError('context_conflict', 'Finish or cancel legacy runs before enabling CV contexts.');
     }
   };
@@ -389,6 +452,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   // them spacing the same host at a second each is two requests a second.
   const web = createWebReader({
     ...(options.scraperUrl === undefined ? {} : { scraperUrl: options.scraperUrl }),
+    ...(scraperToken === undefined ? {} : { scraperToken }),
     ...(options.now ? { now: options.now } : {})
   });
 
@@ -465,6 +529,68 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs })
   };
 
+  const discoveryChatStore = createDiscoveryChatStore(db, conversations, options.now, offerQueryStore);
+  const discoveryChat = createDiscoveryChatService(discoveryChatStore, (scope, signal, onText) => beginRun({
+    ...bindDiscoveryScope(deps), timeoutMs: Math.min(options.timeoutMs ?? 120000,120000), capabilities: { ask_discovery: askDiscoverySql(scope, createDiscoverySqlPort(offerQueries, offerQueryStore, discoveryChatStore.recordSql, factPort, collectionPort)) },
+    deltas: (delta) => { onText(delta.text); deps.deltas?.(delta); },
+    finish: (runId,result,commit) => {
+      if (signal.aborted) throw new RuntimeError('Cancelled','aborted');
+      return discoveryChatStore.finish(runId,result,commit);
+    }
+  }, { capability:'ask_discovery',runId:scope.request.runId,input:{question:scope.request.question},signal }));
+
+  // Public offer extraction has no CV/conversation input. Use only the fixed
+  // analyze_offer plan; this does not relax context checks for ordinary runs.
+  const enrichment = createEnrichmentService(offers, enrichmentStore, web,
+    (offerId, signal) => {
+      const offer = offers.get(offerId)!;
+      return beginRun({ ...deps, scopeLegacy: () => undefined, capabilities: { analyze_offer: analyzeOffer } }, {
+        capability: 'analyze_offer', input: { offerText: offer.text, url: offer.url, stated: offer.stated }, signal
+      });
+    }, options.now, (value) => { const offer = offers.get(value.offerId); if (offer) discoverySearches.refreshOffer(offer, value); });
+
+  const factPort=createFactPort(offerQueryStore,createOfferFactStore(db),(id,signal)=>enrichment.details.ensure(id,false,signal),()=>environment.env.LOCAL_BASE_URL?.trim()??'default');
+
+  const collectionPort=createCollectionPort(discovery,discoverySearches,offerQueryStore,(id,signal)=>enrichment.details.ensure(id,false,signal));
+
+  const detailQueue = createDetailQueue(createDetailQueueStore(db), enrichment, discoverySearches);
+
+  const boardStore = createBoardStore(db, offers, ids => new Map(opportunities.resolve(ids).identities.map(item => [item.id,item.opportunityId])), options.now);
+  const executeBoardRun = (input: BoardRunInput, signal: AbortSignal, onText?: (text: string) => void) => {
+    boardStore.authorizeRun(input.runId,validateInput(route(deps.capabilities,input.capability),input.input));
+    const bound = bindOfferScope(input.snapshot,effects);
+    return beginRun({...deps,...bound,scopeLegacy:()=>undefined,
+      finish: (_runId,result,commit)=>{commit(result);return result;},
+      deltas: delta=>{onText?.(delta.text);deps.deltas?.(delta);}
+    }, {runId:input.runId,capability:input.capability,input:input.input,signal});
+  };
+  const applicationAgent = createApplicationAgent(boardStore, {
+    now: options.now, execute: executeBoardRun,
+    captureProfile: contextId => {
+      const context=requireContext(contextId),document=documents.read(contextId);
+      if(!document)throw new CvContextError('context_not_found','Complete this Profile CV before applying.');
+      const photo=createContextPhotos(db,cvContexts,documents,options.now).snapshot(contextId);
+      return {context,document,photo:{revision:photo.assetRevision,photo:photo.photo}};
+    }
+  });
+  const board = createBoardService(boardStore, {
+    reader: {...(options.boardReader ?? web),capture:async (url,call)=>{
+      const captured=browserImports.capture(url);if(captured)return captured;
+      if(browserImports.has(url))throw new OperationError('browser_capture_required','Open the offer and import its details with Cvitae Browser Companion.');
+      const reader=options.boardReader??web;return (reader.capture??reader.resolve).call(reader,url,call);
+    }}, contexts: cvContexts.list, run: runs.get, now: options.now,
+    emptyCv: cvDocumentSchema.parse({}),
+    captureCv: db.transaction((contextId: string) => {
+      const context = requireContext(contextId), document = documents.read(contextId);
+      if (!document) throw new CvContextError('context_not_found','Create or import the selected CV first.');
+      const photo = createContextPhotos(db,cvContexts,documents,options.now).snapshot(contextId);
+      return {sourceContext:context,sourceDocument:document,document,photo:{revision:photo.assetRevision,photo:photo.photo}};
+    }).deferred,
+    execute: executeBoardRun,
+    onDrop: entryId => applicationAgent.cancelEntry(entryId)
+  });
+
+
   return {
     findRun: (request) => {
       const record = request.runId ? runs.get(request.runId) : undefined;
@@ -514,6 +640,17 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     cvLifecycle: { clearContent: cvLifecycle.clearContent, list: cvLifecycle.list, accept: cvLifecycle.accept, discard: cvLifecycle.discard },
     chunks,
     offers,
+    browser,
+    board,
+    applicationAgent,
+    opportunities,
+    discovery,
+    discoverySearches,
+    discoveryChat,
+    offerQueries,
+    enrichment,
+    detailQueue,
+    offerNotes: createOfferNotes(db, options.now),
     conversations,
     aiCalls: aiLog,
     approvals,
@@ -534,13 +671,16 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
         for (const context of cvContexts.list()) indexJobs.enqueue(context.id);
         return stored;
       },
-      secret: (providerId, apiKey) => environment.secret(providerId, apiKey),
+      secret: (providerId, apiKey) => {
+        environment.secret(providerId, apiKey);
+        resolver.clearCache();
+      },
       status: () =>
         providerStatus(resolver, environment, {
           ...(options.probe ? { fetch: options.probe } : {})
         })
     },
     recoverInterrupted: () => recoverInterruptedRuns(runs, options.now),
-    close: () => { indexRebuilder.close(); db.close(); }
+    close: () => { browser.close(); applicationAgent.close(); board.close(); offerQueries.close(); discoveryChat.close(); detailQueue.close(); enrichment.close(); discovery.close(); indexRebuilder.close(); db.close(); }
   };
 };

@@ -1,3 +1,6 @@
+import { discoveryBoardIdSchema, maxDiscoveryBoards } from '../../contracts/discovery-board.js';
+import { boardPayloads } from '../../contracts/board-channels.js';
+import { queryPayloads } from '../../contracts/offer-query.js';
 /**
  * The channel names and what may be sent on each.
  *
@@ -36,6 +39,7 @@
  */
 
 import { z } from 'zod';
+import { discoveryFiltersSchema, discoveryBudgetSchema, discoveryBudgetDefaults, discoveryChatRequestSchema, discoveryImportSchema, discoverySearchBatchSchema, discoveryImportBatchSchema, discoveryImportIdentitySchema, discoverySearchPageSchema } from '../../contracts/discovery-search.js';
 import { cvDocumentSchema } from '../../capabilities/cv/document.js';
 import { cvPhotoSchema } from '../../capabilities/cv/photo.js';
 import { runStatuses } from '../../contracts/index.js';
@@ -63,11 +67,11 @@ const conversationId = z.string().min(1);
  */
 const subject = z
   .object({
-    kind: z.enum(['profile', 'offer']),
+    kind: z.enum(['profile', 'offer', 'discovery']),
     id: z.string().max(200).default('')
   }).strict()
   .refine(
-    (value) => value.kind !== 'offer' || value.id !== '',
+    (value) => value.kind === 'profile' || value.id !== '',
     'An offer conversation needs an offer ID.'
   );
 
@@ -80,6 +84,12 @@ const settings = z.object({
 });
 
 export const payloads = {
+  ...boardPayloads,
+  'browser.internal.dispatch': z.object({sessionId:z.string().uuid(),targetSearchId:z.string().min(1).max(200).optional(),method:z.enum(['browser.recipe','collection.navigation','browser.hello','capture.preview','import.commit','operation.read','capture.cancel','collection.start','collection.append','collection.preview','collection.commit','collection.cancel']),payload:z.unknown()}).strict(),
+  'browser.status': z.object({}).strict(),
+  'browser.configure': z.object({enabled:z.boolean()}).strict(),
+  'browser.poll': z.object({after:z.number().int().nonnegative().default(0)}).strict(),
+  'browser.collection': z.object({}).strict(),
   'capabilities.list': z.object({}),
 
   /** The one canonical profile stored by the harness. */
@@ -132,6 +142,70 @@ export const payloads = {
    */
   'offers.list': z.object({ limit: z.number().int().min(1).max(1000).default(500) }).strict(),
   'offers.get': z.object({ id: z.string().min(1).max(200) }).strict(),
+  ...queryPayloads,
+  'opportunities.resolve': z.object({ ids: z.array(z.string().min(1).max(200)).max(1000) }).strict(),
+  'opportunities.link': z.object({ offerId: z.string().min(1).max(200), otherOfferId: z.string().min(1).max(200) }).strict(),
+  'opportunities.separate': z.object({ offerId: z.string().min(1).max(200) }).strict(),
+  'opportunities.candidates': z.object({ offerId: z.string().min(1).max(200), term: z.string().trim().min(2).max(300) }).strict(),
+  'discovery.searches.createBatch': discoverySearchBatchSchema,
+  'discovery.searches.import.begin': discoveryImportSchema,
+  'discovery.searches.import.append': discoveryImportBatchSchema,
+  'discovery.searches.import.finish': discoveryImportIdentitySchema,
+  'discovery.searches.filters': z.object({ id: z.string().min(1).max(200), filters: discoveryFiltersSchema, revision: z.number().int().nonnegative() }).strict(),
+  'discovery.chat.get': z.object({ searchId: z.string().min(1).max(200), before: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional() }).strict(),
+  'discovery.chat.start': discoveryChatRequestSchema,
+  'discovery.chat.cancel': z.object({ searchId: z.string().min(1).max(200), runId: z.string().min(1).max(200) }).strict(),
+  'discovery.searches.list': z.object({ limit: z.number().int().min(1).max(100).default(30), offset: z.number().int().min(0).max(100000).default(0) }).strict(),
+  'discovery.searches.offer': z.object({ id: z.string().min(1).max(200), offerId: z.string().min(1).max(200), group: z.enum(['accepted','review']).default('accepted') }).strict(),
+  'discovery.searches.read': discoverySearchPageSchema,
+  'discovery.offers.manage': z.object({ id: z.string().min(1).max(200), offerIds: z.array(z.string().min(1).max(200)).min(1).max(1000), action: z.enum(['hide','delete','blacklist','restore','unblacklist']) }).strict(),
+  'discovery.offers.managed': z.object({ id: z.string().min(1).max(200) }).strict(),
+  'discovery.searches.delete': z.object({ id: z.string().min(1).max(200) }).strict(),
+  'discovery.browserSearch': z.object({ board: discoveryBoardIdSchema, keyword: z.string().max(300) }).strict(),
+  'discovery.boards': z.object({}).strict(),
+  'offers.note.get': z.object({ offerId: z.string().min(1).max(200) }).strict(),
+  'offers.note.save': z.object({ offerId: z.string().min(1).max(200), text: z.string().max(10000), revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1) }).strict(),
+  'discovery.details.auto.enqueue': z.object({ searchId: z.string().min(1).max(200), offerIds: z.array(z.string().min(1).max(200)).min(1).max(100) }).strict(),
+  'discovery.details.auto.poll': z.object({ after: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0) }).strict(),
+  'discovery.details.auto.pause': z.object({ paused: z.boolean() }).strict(),
+  'discovery.details.auto.stop': z.object({}).strict(),
+  'discovery.details.auto.clear': z.object({}).strict(),
+  'discovery.details.start': z.object({ offerId: z.string().min(1).max(200), force: z.boolean().default(false) }).strict(),
+  'discovery.details': z.object({ offerId: z.string().min(1).max(200) }).strict(),
+  'discovery.details.cancel': z.object({ offerId: z.string().min(1).max(200) }).strict(),
+  'discovery.enrich': z.object({ offerId: z.string().min(1).max(200), force: z.boolean().default(false), refreshDetails: z.boolean().optional() }).strict(),
+  'discovery.enrichment': z.object({ offerId: z.string().min(1).max(200) }).strict(),
+  'discovery.enrichment.cancel': z.object({ offerId: z.string().min(1).max(200) }).strict(),
+  'discovery.cached': z.object({
+    searchId: z.string().min(1).max(200).optional(),
+    keyword: z.string().trim().min(1).max(300),
+    boards: z.array(discoveryBoardIdSchema).min(1).max(maxDiscoveryBoards),
+    matchMode: z.enum(['title', 'anywhere']).default('anywhere'),
+    unknownPolicy: z.literal('separate').default('separate'),
+    activity: z.enum(['exclude_explicitly_inactive','any']).default('exclude_explicitly_inactive'),
+    maxPublishedAgeDays: z.number().int().min(0).max(3650).nullable().default(null),
+    limit: z.number().int().min(1).max(100).default(30),
+    offset: z.number().int().min(0).max(1_000_000).default(0)
+  }).strict(),
+  'discovery.start': z.object({
+    refetch: z.enum(['append', 'reset']).optional(),
+    schemaVersion: z.literal(2).optional(),
+    searchId: z.string().min(1).max(200).optional(),
+    keyword: z.string().trim().min(1).max(300),
+    boards: z.array(discoveryBoardIdSchema).min(1).max(maxDiscoveryBoards),
+    sourceMode: z.enum(['live', 'cache', 'hybrid']).default('live'),
+    matchMode: z.enum(['title', 'anywhere']).default('anywhere'),
+    unknownPolicy: z.literal('separate').default('separate'),
+    activity: z.enum(['exclude_explicitly_inactive','any']).default('exclude_explicitly_inactive'),
+    maxPublishedAgeDays: z.number().int().min(0).max(3650).nullable().default(null),
+    workMode: z.enum(['any','remote','hybrid','onsite']).default('any'),
+    budget: discoveryBudgetSchema.default(discoveryBudgetDefaults),
+    pageSize: z.number().int().min(1).max(100).default(30),
+    replaceSessionId: z.string().uuid().optional()
+  }).strict(),
+  'discovery.poll': z.object({ id: z.string().uuid(), after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0) }).strict(),
+  'discovery.next': z.object({ id: z.string().uuid(), board: discoveryBoardIdSchema.optional() }).strict(),
+  'discovery.cancel': z.object({ id: z.string().uuid() }).strict(),
   'offers.snapshots.capture': z.object({
     id: z.string().uuid(), offerId: z.string().min(1).max(200), contextId: z.string().min(1).max(200),
     expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),

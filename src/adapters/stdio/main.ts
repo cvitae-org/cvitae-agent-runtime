@@ -15,6 +15,7 @@
  */
 
 import '../../env.js';
+import {createBrowserBridge,defaultBridgeDirectory} from '../browser/bridge.js';
 import { createHost } from './host.js';
 import { createHarness } from '../../runtime/create.js';
 import type { AiLogEntry, AiLogger } from '../../contracts/index.js';
@@ -35,7 +36,11 @@ const stderrLogger: AiLogger = {
 };
 
 const host = createHost({
-  open: (deltas) => createHarness({ logger: stderrLogger, deltas, indexRecovery: true }),
+  open: (deltas) => {
+    const harness=createHarness({logger:stderrLogger,deltas,indexRecovery:true});
+    const bridge=createBrowserBridge(defaultBridgeDirectory(),(session,method,payload)=>harness.browser.dispatch(session,method,payload),session=>harness.browser.disconnect(session),{extensionPath:process.env.CVITAE_BROWSER_EXTENSION_PATH});
+    harness.browser.attach(bridge);return harness;
+  },
   input: process.stdin,
   output: process.stdout
 });

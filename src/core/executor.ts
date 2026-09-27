@@ -100,6 +100,11 @@ export const runStep = async (
     }
 
     case 'generate': {
+      const direct = step.directText?.(context);
+      if (direct !== undefined) {
+        if (!direct.trim()) throw new RuntimeError('The deterministic answer is empty.', 'step_failed');
+        return { [step.key]: direct };
+      }
       const { text, finishReason } = await context.effects.ai.generateText({
         ...call,
         system: step.system,

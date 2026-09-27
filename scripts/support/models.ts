@@ -34,6 +34,7 @@ export const fakeResolver = (options: {
   providerId?: ProviderId;
   modelId?: string;
   answer?: string;
+  extractAnswer?: string;
   delayMs?: number;
   fail?: () => never;
   onCall?: (prompt: string) => void;
@@ -82,7 +83,7 @@ export const fakeResolver = (options: {
         options.fail?.();
 
         return {
-          content: [{ type: 'text' as const, text: answer }],
+          content: [{ type: 'text' as const, text: options.extractAnswer ?? answer }],
           finishReason: 'stop' as const,
           usage,
           warnings: []

@@ -17,7 +17,7 @@
 
 import type { z } from 'zod';
 import type { ConversationTurn } from './effects.js';
-import type { RunContext, StepContext, StepKind } from './run.js';
+import type { RunContext, StepContext, StepKind, RuntimeErrorCode } from './run.js';
 
 type StepBase = {
   readonly name: string;
@@ -43,6 +43,8 @@ type StepBase = {
  */
 export type ExtractStep = StepBase & {
   readonly kind: 'extract';
+  /** Only these typed failures may degrade even when this step is critical. */
+  readonly fallbackOn?: readonly RuntimeErrorCode[];
   readonly schema: z.ZodTypeAny;
   readonly system: string;
   readonly prompt: string | ((context: StepContext) => string);
@@ -82,6 +84,8 @@ export type ExtractStep = StepBase & {
  */
 export type GenerateStep = StepBase & {
   readonly kind: 'generate';
+  /** Use a known answer from earlier steps without another model call. */
+  readonly directText?: (context: StepContext) => string | undefined;
   readonly system: string;
   readonly prompt: string | ((context: StepContext) => string);
   readonly maxOutputTokens: number;

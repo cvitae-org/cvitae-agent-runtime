@@ -21,8 +21,9 @@ pnpm install
 cp .env.example .env
 ```
 
-Nothing in `.env` is required. Generation defaults to a local provider, which
-needs no credential at all.
+No model credential in `.env` is required. Generation defaults to a local
+provider. The optional companion scraper does require a shared
+`SCRAPER_API_TOKEN` when its HTTP service is enabled.
 
 ```bash
 pnpm check

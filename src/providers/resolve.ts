@@ -206,7 +206,7 @@ export interface ModelResolver {
 
 export const createModelResolver = (
   options: { readonly env?: Env } = {}
-): ModelResolver => {
+): ModelResolver & { clearCache(): void } => {
   const env = options.env ?? process.env;
 
   // Instance state, not module state — see the note at the top.
@@ -318,7 +318,7 @@ export const createModelResolver = (
       cache.set(key, cached);
       // A failed build must not stick, or the process keeps serving the
       // rejection after the environment is fixed.
-      cached.catch(() => cache.delete(key));
+      cached.catch(() => { if (cache.get(key) === cached) cache.delete(key); });
     }
 
     return cached;
@@ -367,6 +367,7 @@ export const createModelResolver = (
   // must never also throw synchronously: a caller who writes `.catch(...)` —
   // which is the reasonable thing to write — would not catch it.
   return {
+    clearCache() { languageCache.clear(); embeddingCache.clear(); },
     describe,
     describeEmbedding,
     async language(override = {}) {
