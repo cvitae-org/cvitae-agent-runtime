@@ -157,25 +157,31 @@ import type {
  */
 export const consoleLogger: AiLogger = {
   record(entry: AiLogEntry): void {
-    const parts = [
-      `${entry.operation} ${entry.providerId}/${entry.modelId}`,
-      entry.step ? `step=${entry.step}` : undefined,
-      `in=${entry.promptChars}c`,
-      `out=${entry.completionChars}c`,
-      // Tokens, where the provider reports them, because that is the unit the
-      // ceiling is set in. A step that truncates says to raise its
-      // `maxOutputTokens`, and a log measured only in characters cannot say
-      // what to raise it to — least of all on a model that reasons before it
-      // answers, where the tokens spent are not visible in the output at all.
-      entry.usage.outputTokens === undefined ? undefined : `out=${entry.usage.outputTokens}t`,
-      `${entry.latencyMs}ms`,
-      entry.finishReason ? `finish=${entry.finishReason}` : undefined,
-      entry.outcome === 'ok' ? 'ok' : `failed=${entry.errorCode ?? 'unknown'}`
-    ].filter(Boolean);
-
-    console.error(parts.join(' '));
+    console.error(aiLine(entry));
   }
 };
+
+/**
+ * One model call as one line of text: what `consoleLogger` prints, and what the
+ * desktop host writes to stderr. A failure ends `failed=<code>`, so a reader of
+ * the line can tell a refused key from a timeout without the table.
+ */
+export const aiLine = (entry: AiLogEntry): string =>
+  [
+    `${entry.operation} ${entry.providerId}/${entry.modelId}`,
+    entry.step ? `step=${entry.step}` : undefined,
+    `in=${entry.promptChars}c`,
+    `out=${entry.completionChars}c`,
+    // Tokens, where the provider reports them, because that is the unit the
+    // ceiling is set in. A step that truncates says to raise its
+    // `maxOutputTokens`, and a log measured only in characters cannot say
+    // what to raise it to — least of all on a model that reasons before it
+    // answers, where the tokens spent are not visible in the output at all.
+    entry.usage.outputTokens === undefined ? undefined : `out=${entry.usage.outputTokens}t`,
+    `${entry.latencyMs}ms`,
+    entry.finishReason ? `finish=${entry.finishReason}` : undefined,
+    entry.outcome === 'ok' ? 'ok' : `failed=${entry.errorCode ?? 'unknown'}`
+  ].filter(Boolean).join(' ');
 
 /** Discards everything. For a caller that wants no output at all. */
 export const silentLogger: AiLogger = { record: () => undefined };
@@ -197,6 +203,17 @@ export type CreateOptions = {
   readonly capabilities?: CapabilityMap;
   /** Defaults to the `ai_calls` table. `consoleLogger` and `silentLogger` are here. */
   readonly logger?: AiLogger;
+  /**
+   * A second sink, handed every line the `ai_calls` table gets, for a host that
+   * wants to watch the calls go by and keep them too. Ignored when `logger`
+   * replaces the table.
+   */
+  readonly echo?: AiLogger;
+  /**
+   * How long an `ai_calls` row is kept. Older rows are deleted when the runtime
+   * opens. Unset keeps every row, because retention is the host's policy.
+   */
+  readonly aiCallsKeptMs?: number;
   /** Unset uses the default loopback port; `''` switches the scraper off. */
   readonly scraperUrl?: string;
   /** Bearer credential shared with the loopback scraper. */
@@ -381,6 +398,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     withDiscoveryMetadata(db, integrationDiscovery), options.now, discoverySearches);
   const attempts = createAttemptLog(db);
   const aiLog = createAiLog(db);
+  if (options.aiCallsKeptMs !== undefined) aiLog.prune((options.now ?? Date.now)() - options.aiCallsKeptMs);
   const settings = createSettingsStore(db, options.now);
   const conversations = createConversationStore(db, options.now);
   const offerSnapshots = createOfferSnapshots(db, cvContexts, documents, offers, conversations, options.now);
@@ -449,7 +467,9 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     return result;
   }).immediate;
 
-  const logger = options.logger ?? aiLog;
+  const echo = options.echo;
+  const logger: AiLogger = options.logger
+    ?? (echo ? { record: entry => { aiLog.record(entry); echo.record(entry); } } : aiLog);
 
   // Resolution is deferred until a step needs a model, so a runtime with no
   // credential still opens, still lists runs, and still fails at the point of

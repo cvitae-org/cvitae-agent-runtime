@@ -20,11 +20,19 @@
  *   `record` rethrowing instead of warning 1  a log that cannot write…
  *   `forRun` ordered by `at DESC`          1  a run's calls come back oldest…
  *   `prune` using `<=` instead of `<`      1  pruning keeps the boundary…
+ *   `echo` replacing the table             1  the desktop host keeps…
+ *   no prune when the runtime opens        1  the desktop host keeps…
+ *   `aiLine` without the error code        2  a failed line names…, the desktop host…
  */
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createAiLog } from '../src/storage/sqlite/ai-log.js';
+import { aiLine, createHarness, silentLogger } from '../src/runtime/create.js';
+import { CV_ID, CV_KIND, cvDocumentSchema } from '../src/capabilities/cv/document.js';
 import type { AiLogEntry } from '../src/contracts/index.js';
 import { scratch } from './support/db.js';
 
@@ -207,5 +215,68 @@ test('a log that cannot write does not take the run down with it', () => {
   } finally {
     console.warn = warn;
     s.dispose();
+  }
+});
+
+test('a failed line names its code, and an ok line its tokens', () => {
+  assert.equal(
+    aiLine(entry()),
+    'object ollama/gemma4:12b step=extract in=4200c out=380c out=96t 8430ms finish=stop ok'
+  );
+  assert.match(
+    aiLine(entry({ outcome: 'failed', errorCode: 'credential_rejected', usage: {}, completionChars: 0 })),
+    / failed=credential_rejected$/
+  );
+});
+
+test('the desktop host keeps each call in the table as well as echoing it, and prunes by age', async () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = 1_000 * DAY;
+  const dir = mkdtempSync(join(tmpdir(), 'ai-calls-host-'));
+  const databasePath = join(dir, 'runtime.db');
+  const quiet = { env: {}, probe: () => Promise.reject(new Error('no local server in these tests')) };
+
+  // Two calls from an earlier session: one older than the host keeps, one not.
+  const earlier = createHarness({ ...quiet, databasePath, logger: silentLogger });
+  earlier.aiCalls.record(entry({ at: now - 91 * DAY, runId: 'expired' }));
+  earlier.aiCalls.record(entry({ at: now - DAY, runId: 'kept' }));
+  earlier.close();
+
+  const echoed: AiLogEntry[] = [];
+  // The shape `adapters/stdio/main.ts` opens with. A hosted embedder with no
+  // key is a real call that fails the same way every time, and dials nothing.
+  const harness = createHarness({
+    ...quiet,
+    env: { EMBEDDING_PROVIDER: 'openai' },
+    databasePath,
+    echo: { record: (call) => void echoed.push(call) },
+    aiCallsKeptMs: 90 * DAY,
+    now: () => now,
+    indexRecovery: true
+  });
+
+  try {
+    assert.deepEqual(harness.aiCalls.recent().map((call) => call.runId), ['kept']);
+
+    harness.documents.update(CV_ID, CV_KIND, () => cvDocumentSchema.parse({
+      role_description: 'An engineer building resilient TypeScript services for customers.'
+    }));
+    for (let i = 0; i < 100 && echoed.length === 0; i++) await new Promise((done) => setTimeout(done, 50));
+
+    const [call] = echoed;
+    assert.ok(call, 'the rebuild made a call');
+    assert.equal(call.operation, 'embed');
+    assert.equal(call.outcome, 'failed');
+    assert.equal(call.errorCode, 'misconfigured');
+    assert.match(aiLine(call), / failed=misconfigured$/);
+
+    const [stored] = harness.aiCalls.recent(1);
+    assert.ok(stored, 'the table has the call the echo saw');
+    const { id, ...row } = stored;
+    assert.ok(Number.isInteger(id));
+    assert.deepEqual(row, call);
+  } finally {
+    harness.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
