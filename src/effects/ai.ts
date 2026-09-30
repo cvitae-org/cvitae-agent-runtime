@@ -49,6 +49,7 @@ import {
   streamText,
   tool,
   APICallError,
+  RetryError,
   type LanguageModel,
   type ToolSet
 } from 'ai';
@@ -168,6 +169,26 @@ const redact = (error: unknown): { code: string; message: string } => {
 
   return { code: 'error', message: 'The call failed.' };
 };
+
+/**
+ * The attempt that decided the outcome.
+ *
+ * The SDK retries a retryable failure and, when it gives up, throws a
+ * `RetryError` holding every attempt. Its message quotes the provider's, and
+ * its name says only that there were retries. The last attempt is the one that
+ * says why the call failed: a 503 retried into a 401 is a rejected key.
+ */
+const lastAttempt = (error: unknown): unknown =>
+  RetryError.isInstance(error) ? error.lastError : error;
+
+/**
+ * The provider refused the key, rather than the request.
+ *
+ * Retrying cannot help and neither can another model from the same provider;
+ * a person has to change the key. Before this had a code of its own, a rejected
+ * key was `model_call_failed`, and the studio offered "Try again".
+ */
+const rejectedCredential = new Set(['http_401', 'http_403']);
 
 /**
  * Hands a fragment to whoever asked for it, and never lets them break the call.
@@ -365,7 +386,8 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
       });
 
       return settled.value;
-    } catch (error) {
+    } catch (thrown) {
+      const error = lastAttempt(thrown);
       const { code, message } = redact(error);
 
       logger.record({
@@ -385,6 +407,17 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
       // No `cause`. See the redaction note at the top of the file.
       if (code === 'AI_NoObjectGeneratedError') {
         throw new RuntimeError('The model did not return a valid structured response.', 'invalid_model_output');
+      }
+
+      // Ours, raised before the provider was reached: a missing key, a
+      // provider with no embeddings endpoint. The code already says what a
+      // person has to change; relabelling it as the model failing is how
+      // a missing key came to be offered a retry.
+      if (error instanceof RuntimeError) {
+        throw new RuntimeError(`${choice.modelId}: ${message}`, error.code);
+      }
+      if (rejectedCredential.has(code)) {
+        throw new RuntimeError(`${choice.modelId}: ${message}`, 'credential_rejected');
       }
       throw new RuntimeError(`${choice.modelId}: ${message}`, 'model_call_failed');
     }

@@ -344,6 +344,15 @@ export type RuntimeErrorCode =
    */
   | 'misconfigured'
   /**
+   * The provider refused the key: HTTP 401 or 403.
+   *
+   * Separate from `model_call_failed` for the same reason `misconfigured` is:
+   * retrying changes nothing, and a person has to replace the key. Before it
+   * existed, every AI failure in the field that had a cause anyone could fix
+   * was a rejected or missing key, and each one was offered "Try again".
+   */
+  | 'credential_rejected'
+  /**
    * The model server refused, timed out, or answered with something unusable.
    *
    * The message on these is always constructed here, never copied from the

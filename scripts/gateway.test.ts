@@ -26,6 +26,7 @@ import { APICallError } from 'ai';
 import { MockLanguageModelV2 } from 'ai/test';
 import { z } from 'zod';
 import { createAiGateway } from '../src/effects/ai.js';
+import { createModelResolver } from '../src/providers/resolve.js';
 import { RuntimeError } from '../src/contracts/index.js';
 import { callFor, fakeResolver } from './support/models.js';
 import { recorder } from './support/spine.js';
@@ -119,6 +120,75 @@ test('a provider error reaches the caller with the payload stripped out', async 
   const [entry] = log.entries;
   assert.equal(entry?.outcome, 'failed');
   assert.equal(entry?.errorCode, 'http_400');
+});
+
+const refusal = (statusCode: number) => new APICallError({
+  message: 'Incorrect API key provided',
+  url: 'https://api.openai.com/v1/chat/completions',
+  requestBodyValues: {},
+  statusCode,
+  // Retried at once rather than after the SDK's two-second backoff.
+  responseHeaders: { 'retry-after-ms': '1' },
+  isRetryable: statusCode >= 500
+});
+
+const failureOf = (promise: Promise<unknown>): Promise<unknown> =>
+  promise.then(() => undefined, (thrown: unknown) => thrown);
+
+test('a key the provider refuses is credential_rejected, not a model failure', async () => {
+  for (const statusCode of [401, 403]) {
+    const fake = fakeResolver({ providerId: 'openai', modelId: 'gpt-4o', fail: () => { throw refusal(statusCode); } });
+    const log = recorder();
+    const ai = createAiGateway({ resolver: fake.resolver, logger: log });
+
+    const error = await failureOf(
+      ai.generateText({ ...callFor(), system: 's', prompt: 'p', maxOutputTokens: 64 })
+    );
+
+    assert.ok(error instanceof RuntimeError);
+    assert.equal(error.code, 'credential_rejected', `HTTP ${statusCode}`);
+    assert.match(error.message, new RegExp(`^gpt-4o: api\\.openai\\.com refused the call \\(HTTP ${statusCode}\\)`));
+    assert.equal(log.entries[0]?.errorCode, `http_${statusCode}`);
+  }
+});
+
+test('a missing key keeps its own code through the gateway', async () => {
+  // The real resolver, as the field saw it: a hosted provider with no key.
+  const ai = createAiGateway({
+    resolver: createModelResolver({ env: { AI_PROVIDER: 'openai', EMBEDDING_PROVIDER: 'openai' } }),
+    logger: recorder()
+  });
+
+  for (const call of [
+    () => ai.generateText({ ...callFor(), system: 's', prompt: 'p', maxOutputTokens: 64 }),
+    () => ai.embed({ ...callFor(), values: ['a'] })
+  ]) {
+    const error = await failureOf(call());
+    assert.ok(error instanceof RuntimeError);
+    assert.equal(error.code, 'misconfigured');
+    assert.match(error.message, /Missing OPENAI_API_KEY/);
+  }
+});
+
+test('a refusal after a retried outage is judged by the last attempt', async () => {
+  let attempts = 0;
+  const fake = fakeResolver({
+    providerId: 'openai',
+    fail: () => { attempts += 1; throw refusal(attempts === 1 ? 503 : 401); }
+  });
+  const log = recorder();
+  const ai = createAiGateway({ resolver: fake.resolver, logger: log });
+
+  const error = await failureOf(
+    ai.generateText({ ...callFor(), system: 's', prompt: 'p', maxOutputTokens: 64, maxRetries: 1 })
+  );
+
+  assert.equal(attempts, 2, 'the SDK retried the 503 once');
+  assert.ok(error instanceof RuntimeError);
+  assert.equal(error.code, 'credential_rejected');
+  assert.match(error.message, /api\.openai\.com/, 'the host survives the unwrapping');
+  assert.equal(log.entries[0]?.errorCode, 'http_401');
+  assert.ok(!inspect(error, { depth: 10 }).includes('Incorrect API key'), 'the provider\'s text does not');
 });
 
 test('the log records sizes and never text', async () => {
