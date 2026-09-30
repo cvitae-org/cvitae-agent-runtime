@@ -27,7 +27,14 @@
 
 import { RuntimeError, type Settings } from '../contracts/index.js';
 import { hasCredential, type Env } from '../secrets/env.js';
-import { assertLoopbackUrl, isProviderId, providerIds, providers } from './resolve.js';
+import {
+  assertLoopbackUrl,
+  defaultEmbeddingProviderId,
+  defaultProviderId,
+  isProviderId,
+  providerIds,
+  providers
+} from './resolve.js';
 import type { ProviderId } from './resolve.js';
 
 /**
@@ -44,6 +51,28 @@ const VARIABLES = {
   embeddingProviderId: 'EMBEDDING_PROVIDER',
   embeddingModelId: 'EMBEDDING_MODEL'
 } as const satisfies Record<keyof Settings, string>;
+
+/**
+ * Each model setting, the provider setting it belongs to, and that provider's
+ * default when nothing names one.
+ *
+ * A model is inherited only with its provider. A development `.env` saying
+ * `local` and `nomic-embed-text`, under a settings page that chose OpenAI and
+ * named no model, used to send `nomic-embed-text` to OpenAI; the settings page
+ * names no model for a hosted provider precisely so that it gets its own.
+ */
+const PAIRS = [
+  { provider: 'providerId', model: 'modelId', fallback: defaultProviderId },
+  {
+    provider: 'embeddingProviderId',
+    model: 'embeddingModelId',
+    fallback: defaultEmbeddingProviderId
+  }
+] as const satisfies readonly {
+  provider: keyof Settings;
+  model: keyof Settings;
+  fallback: ProviderId;
+}[];
 
 const knownProvider = (value: string, setting: string): ProviderId => {
   if (!isProviderId(value)) {
@@ -101,7 +130,10 @@ export const validateSettings = (settings: Settings): Settings => {
 export type Environment = {
   /** Hand this to `createModelResolver`. It changes underneath it, on purpose. */
   readonly env: Env;
-  /** Replaces every setting. Fields left unset fall back to the inherited environment. */
+  /**
+   * Replaces every setting. Fields left unset fall back to the inherited
+   * environment, except a model, which is inherited only with its provider.
+   */
   apply(settings: Settings): void;
   /** Holds a credential for the life of the process. Never persisted. */
   secret(providerId: string, apiKey: string | undefined): void;
@@ -127,6 +159,14 @@ export const createEnvironment = (base: Env = process.env): Environment => {
     apply(settings) {
       for (const [field, variable] of Object.entries(VARIABLES)) {
         put(variable, settings[field as keyof Settings] ?? inherited[variable]);
+      }
+
+      for (const pair of PAIRS) {
+        const chosen = settings[pair.provider];
+        const before = inherited[VARIABLES[pair.provider]]?.trim() || pair.fallback;
+        if (chosen && chosen !== before && !settings[pair.model]) {
+          put(VARIABLES[pair.model], undefined);
+        }
       }
     },
 

@@ -220,6 +220,63 @@ test('a cleared setting with nothing behind it returns to the default', async ()
   }
 });
 
+test('a provider chosen in the app gets its own model, not one written for another', async () => {
+  // A debug build's `.env`: everything local, with the model each wants.
+  const inherited = {
+    AI_PROVIDER: 'local',
+    AI_MODEL: 'qwen3:8b',
+    EMBEDDING_PROVIDER: 'local',
+    EMBEDDING_MODEL: 'mxbai-embed-large'
+  };
+  let it = bench({ env: inherited });
+
+  try {
+    // What the settings page sends for a hosted provider: the provider, and
+    // no model, so that the provider's own is used.
+    await it.dispatch('settings.set', {
+      settings: { providerId: 'openai', embeddingProviderId: 'openai' }
+    });
+
+    const hosted = data<ProviderStatus>(await it.dispatch('providers.status', {}));
+    assert.equal(hosted.modelId, 'gpt-4o');
+    assert.equal(hosted.embeddingModelId, 'text-embedding-3-small');
+
+    // The field case was the next launch, which applies the stored settings
+    // over the same environment.
+    it = it.restart(inherited);
+    const relaunched = data<ProviderStatus>(await it.dispatch('providers.status', {}));
+    assert.equal(relaunched.embeddingProviderId, 'openai');
+    assert.equal(relaunched.embeddingModelId, 'text-embedding-3-small');
+
+    // Choosing the environment's own provider keeps the environment's model.
+    await it.dispatch('settings.set', {
+      settings: { providerId: 'local', embeddingProviderId: 'local' }
+    });
+    const local = data<ProviderStatus>(await it.dispatch('providers.status', {}));
+    assert.equal(local.modelId, 'qwen3:8b');
+    assert.equal(local.embeddingModelId, 'mxbai-embed-large');
+  } finally {
+    it.dispose();
+  }
+});
+
+test('a hosted provider the environment already names keeps its model there', async () => {
+  const it = bench({
+    env: { EMBEDDING_PROVIDER: 'openai', EMBEDDING_MODEL: 'text-embedding-3-large' }
+  });
+
+  try {
+    await it.dispatch('settings.set', { settings: { embeddingProviderId: 'openai' } });
+
+    assert.equal(
+      data<ProviderStatus>(await it.dispatch('providers.status', {})).embeddingModelId,
+      'text-embedding-3-large'
+    );
+  } finally {
+    it.dispose();
+  }
+});
+
 test('a local server URL that is not this machine is refused, and nothing is stored', async () => {
   const it = bench();
 

@@ -112,6 +112,37 @@ test('embeddings default to the local server whatever AI_PROVIDER says', () => {
   assert.equal(resolver.describe().providerId, 'openai', 'generation is unaffected');
 });
 
+test('a model from the environment goes only to the provider it was set for', () => {
+  const resolver = createModelResolver({
+    env: {
+      AI_PROVIDER: 'local',
+      AI_MODEL: 'qwen3:8b',
+      EMBEDDING_PROVIDER: 'local',
+      EMBEDDING_MODEL: 'mxbai-embed-large'
+    }
+  });
+
+  assert.equal(resolver.describe().modelId, 'qwen3:8b');
+  assert.equal(resolver.describeEmbedding().modelId, 'mxbai-embed-large');
+  assert.equal(resolver.describe({ providerId: 'local' }).modelId, 'qwen3:8b');
+
+  // Sent to OpenAI, a local model name is refused. Its own default is not.
+  assert.equal(resolver.describe({ providerId: 'openai' }).modelId, providers.openai.defaultModel);
+  assert.equal(
+    resolver.describeEmbedding({ providerId: 'openai' }).modelId,
+    providers.openai.defaultEmbeddingModel
+  );
+  assert.equal(
+    resolver.describeEmbedding({ providerId: 'openai', modelId: 'text-embedding-3-large' }).modelId,
+    'text-embedding-3-large'
+  );
+
+  // No provider named: the model is the default provider's, as before.
+  const unnamed = createModelResolver({ env: { EMBEDDING_MODEL: 'mxbai-embed-large' } });
+  assert.equal(unnamed.describeEmbedding().providerId, 'local');
+  assert.equal(unnamed.describeEmbedding().modelId, 'mxbai-embed-large');
+});
+
 test('a provider serving no embeddings endpoint says so', () => {
   const resolver = createModelResolver({ env: { EMBEDDING_PROVIDER: 'openrouter' } });
 

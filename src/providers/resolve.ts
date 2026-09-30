@@ -128,6 +128,9 @@ export const providers = {
  */
 export const defaultProviderId: ProviderId = 'local';
 
+/** What embedding uses when nothing is configured. See the note at the top. */
+export const defaultEmbeddingProviderId: ProviderId = 'local';
+
 export const isProviderId = (value: unknown): value is ProviderId =>
   typeof value === 'string' && (providerIds as readonly string[]).includes(value);
 
@@ -242,6 +245,22 @@ export const createModelResolver = (
   const keyFor = (providerId: ProviderId, supplied: string | undefined): string =>
     credentialFor(credentialRequest(providerId, supplied), env);
 
+  /**
+   * The environment's model, if it was set for the provider in use.
+   *
+   * A model name means something only to the provider it was written for:
+   * `nomic-embed-text` is on a local server and not at OpenAI. So an override
+   * naming another provider gets that provider's default, not a model meant
+   * for the one the environment names.
+   */
+  const modelOf = (
+    providerId: ProviderId,
+    variables: { provider: string; model: string; fallback: ProviderId }
+  ): string | undefined =>
+    (env[variables.provider]?.trim() || variables.fallback) === providerId
+      ? env[variables.model]?.trim() || undefined
+      : undefined;
+
   const describe = (override: ModelOverride = {}): ModelChoice => {
     const providerId = pick(
       override.providerId?.trim() || env.AI_PROVIDER?.trim(),
@@ -251,7 +270,13 @@ export const createModelResolver = (
     return {
       providerId,
       modelId:
-        override.modelId?.trim() || env.AI_MODEL?.trim() || providers[providerId].defaultModel,
+        override.modelId?.trim()
+        || modelOf(providerId, {
+          provider: 'AI_PROVIDER',
+          model: 'AI_MODEL',
+          fallback: defaultProviderId
+        })
+        || providers[providerId].defaultModel,
       // Only the local provider may be repointed. Accepting a URL for a hosted
       // one would make this an open proxy that spends our credential.
       baseURL: providerId === 'local' ? localBaseUrl(override.baseURL) : undefined
@@ -260,7 +285,9 @@ export const createModelResolver = (
 
   const describeEmbedding = (override: ModelOverride = {}): ModelChoice => {
     const providerId = pick(
-      override.providerId?.trim() || env.EMBEDDING_PROVIDER?.trim() || 'local',
+      override.providerId?.trim()
+        || env.EMBEDDING_PROVIDER?.trim()
+        || defaultEmbeddingProviderId,
       'EMBEDDING_PROVIDER'
     );
     const provider = providers[providerId];
@@ -275,7 +302,11 @@ export const createModelResolver = (
 
     const modelId =
       override.modelId?.trim()
-      || env.EMBEDDING_MODEL?.trim()
+      || modelOf(providerId, {
+        provider: 'EMBEDDING_PROVIDER',
+        model: 'EMBEDDING_MODEL',
+        fallback: defaultEmbeddingProviderId
+      })
       || provider.defaultEmbeddingModel;
 
     if (!modelId) {
