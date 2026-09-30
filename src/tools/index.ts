@@ -18,9 +18,9 @@
  * The table is short on purpose. Two more tools are obvious and neither is here
  * yet: a CV summary would have to know the CV's schema, which is one
  * capability's domain knowledge and belongs with it rather than in the path of
- * every other; and an offer search needs a port that does not exist, since
- * building its filter in this file would put SQL in a tool. Both arrive with
- * the capabilities that need them.
+ * every other; and an offer search has its port, `OfferStore.search`, but
+ * `ToolContext` does not carry the offers, so `ask_profile` answers about the
+ * CV alone. Both arrive with the capabilities that need them.
  */
 
 import { z } from 'zod';

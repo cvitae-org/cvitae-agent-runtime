@@ -2,10 +2,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  // `port/` is the old runtime, parked until it is ported onto the spine. It is
-  // outside the build tsconfig too — it is a work queue made of code, not a
-  // second source tree, and linting it would only report on code being deleted.
-  { ignores: ['dist/**', 'node_modules/**', 'port/**', '.claude/worktrees/**'] },
+  { ignores: ['dist/**', 'node_modules/**', '.claude/worktrees/**'] },
   js.configs.recommended,
   { files: ['vendor/integration-protocol/*.mjs'], languageOptions: { globals: { URL: 'readonly', Buffer: 'readonly', structuredClone: 'readonly' } } },
   ...tseslint.configs.recommended,

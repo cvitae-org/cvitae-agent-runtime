@@ -1,12 +1,5 @@
 # cvitae-agent-runtime
 
-> **Consolidation in progress.** This tree is the harness spine — the engine,
-> the contracts, the storage and the boundary rules. The offer-discovery
-> pipeline, the source readers and the AI audit log are parked in
-> [`port/`](port/README.md) and land on top of it commit by commit. `port/` is
-> empty before this branch merges; the runtime it holds is described by the
-> README at `git show offer-discovery-foundations:README.md`.
-
 A local-first agent harness. One process, one SQLite file, and a set of
 capabilities that turn job postings and CVs into structured work a person can
 check before it leaves the machine.
