@@ -209,9 +209,10 @@ const conversation = (input: EditCvInput): string =>
 /* ------------------------------------------------------------------- routing */
 
 /**
- * An enum rather than a string, which is where this differs from
- * `routeWithModel` — that one picks from the capability map, which is built at
- * runtime and cannot be a static schema, so it validates by lookup afterwards.
+ * An enum rather than a string, which is where this differed from
+ * `routeWithModel`, the capability router's removed model path — that one
+ * picked from the capability map, which is built at runtime and cannot be a
+ * static schema, so it validated by lookup afterwards.
  * The sections are known at compile time, so the list can reach the provider's
  * structured-output grammar instead of only being described in the prompt.
  *
@@ -232,16 +233,16 @@ const routing = z.object({
  * fixed list of names applies, and the step that follows cannot be declared
  * until it is known — a `Step`'s schema is fixed when the plan is made.
  *
- * The prompt is shaped after `routeWithModel`, which asks the same kind of
- * question and was measured answering it 6 of 6 on `gemma4:12b`. Note that
- * `selectTools` failed 3 of 3 with a near-identical instruction and a different
- * opening verb, so this wording is worth leaving alone unless it is measured
- * again.
+ * The prompt is shaped after `routeWithModel`, which asked the same kind of
+ * question and was measured answering it 6 of 6 on `gemma4:12b` (its last copy
+ * is `git show 308ba7b:src/core/router.ts`). Note that `selectTools` failed 3
+ * of 3 with a near-identical instruction and a different opening verb, so this
+ * wording is worth leaving alone unless it is measured again.
  *
  * Unlike both of those, a failure here cannot fall back to doing everything.
- * Tool selection can offer the whole registry and routing can decline to route;
- * an edit with no section is an edit with nothing to send. So it refuses, with
- * the one thing the caller can act on: name the section.
+ * Tool selection can offer the whole registry and routing could decline to
+ * route; an edit with no section is an edit with nothing to send. So it
+ * refuses, with the one thing the caller can act on: name the section.
  */
 const route = async (input: EditCvInput, context: RunContext): Promise<Section> => {
   if (input.section) return input.section;

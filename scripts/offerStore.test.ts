@@ -150,7 +150,13 @@ test('a thin sighting does not overwrite a posting already read in full', () => 
   }
 });
 
-test('rating an offer marks it rated and is readable back whole', () => {
+/**
+ * Nothing writes a score any more — the scorer was never reached and was
+ * removed — but the columns stay and the studio reads `rating` off an offer,
+ * so a score already stored has to come back whole rather than as a row of
+ * nulls or not at all.
+ */
+test('a score already in the columns reads back whole', () => {
   const s = scratch();
   try {
     const store = createOfferStore(s.db);
@@ -166,32 +172,25 @@ test('rating an offer marks it rated and is readable back whole', () => {
       cvFingerprint: 'cv-a',
       prefsFingerprint: 'prefs-a'
     };
-    store.rate('offer-1', rating);
+    s.db
+      .prepare(
+        `UPDATE offers SET eligibility = ?, fit = ?, completeness = ?, score_detail = ?,
+           rated_at = ?, scorer_version = ?, cv_fingerprint = ?, prefs_fingerprint = ?
+         WHERE id = ?`
+      )
+      .run(
+        rating.eligibility,
+        rating.fit,
+        rating.completeness,
+        JSON.stringify(rating.detail),
+        rating.ratedAt,
+        rating.scorerVersion,
+        rating.cvFingerprint,
+        rating.prefsFingerprint,
+        'offer-1'
+      );
 
-    const stored = store.get('offer-1');
-    assert.deepEqual(stored?.rating, rating);
-    assert.equal(stored?.processing, 'rated');
-  } finally {
-    s.dispose();
-  }
-});
-
-/** An unreadable source stays unreadable. Scoring it does not mean it was read. */
-test('rating does not promote a source that could not be read', () => {
-  const s = scratch();
-  try {
-    const store = createOfferStore(s.db);
-    store.sight([{ id: 'offer-1', text: '', processing: 'unreadable' }], AT);
-    store.rate('offer-1', {
-      eligibility: 'unrated',
-      fit: null,
-      completeness: null,
-      ratedAt: AT,
-      scorerVersion: '3',
-      cvFingerprint: 'cv-a',
-      prefsFingerprint: 'prefs-a'
-    });
-    assert.equal(store.get('offer-1')?.processing, 'unreadable');
+    assert.deepEqual(store.get('offer-1')?.rating, rating);
   } finally {
     s.dispose();
   }
@@ -218,7 +217,7 @@ test('re-seeing an offer does not forget that it was already read', () => {
       AT
     );
 
-    // A later round sees the same URL on a board listing: an id, a URL, no body
+    // A later search sees the same URL on a board listing: an id, a URL, no body
     // and nothing to say about state.
     store.sight([{ id: 'offer-1', url: 'https://boards.example/1' }], AT + 1000);
 
@@ -228,86 +227,6 @@ test('re-seeing an offer does not forget that it was already read', () => {
     // A sighting that *does* state a processing state still wins.
     store.sight([{ id: 'offer-1', processing: 'unreadable' }], AT + 2000);
     assert.equal(store.get('offer-1')?.processing, 'unreadable');
-  } finally {
-    s.dispose();
-  }
-});
-
-/**
- * Three things at once, because they are the three ways this query was wrong
- * before it was a query: a dismissed offer is still rescored (only the decision
- * is the user's, the numbers are ours), an unrated offer is not (it needs a
- * fetch and a model, which is a round's work), and a bumped scorer version
- * makes every score stale on its own.
- *
- * The NULL handling is the reason it is `IS NOT` and not `<>`: an unrated row
- * has NULL in all three columns, and `NULL <> 'cv-a'` is NULL rather than true.
- * With `<>` the never-rated rows vanish — which here is the wanted answer, but
- * only by accident, and the same accident hides a row scored by a scorer that
- * wrote no version.
- */
-test('a stale score is one whose inputs moved, dismissed or not', () => {
-  const s = scratch();
-  try {
-    const store = createOfferStore(s.db);
-    store.sight(
-      [
-        { id: 'never-rated', text: 'a' },
-        { id: 'stale-cv', text: 'b' },
-        { id: 'current', text: 'c' },
-        { id: 'dismissed', text: 'd' },
-        { id: 'stale-scorer', text: 'e' }
-      ],
-      AT
-    );
-
-    const base = { fit: 1, completeness: 1, eligibility: 'eligible' } as const;
-    store.rate('stale-cv', {
-      ...base,
-      ratedAt: AT,
-      scorerVersion: '3',
-      cvFingerprint: 'cv-OLD',
-      prefsFingerprint: 'prefs-a'
-    });
-    store.rate('current', {
-      ...base,
-      ratedAt: AT + 1,
-      scorerVersion: '3',
-      cvFingerprint: 'cv-a',
-      prefsFingerprint: 'prefs-a'
-    });
-    store.rate('dismissed', {
-      ...base,
-      ratedAt: AT + 2,
-      scorerVersion: '3',
-      cvFingerprint: 'cv-OLD',
-      prefsFingerprint: 'prefs-a'
-    });
-    store.rate('stale-scorer', {
-      ...base,
-      ratedAt: AT + 3,
-      scorerVersion: '2',
-      cvFingerprint: 'cv-a',
-      prefsFingerprint: 'prefs-a'
-    });
-    store.setDisposition('dismissed', 'dismissed');
-
-    const inputs = { scorerVersion: '3', cvFingerprint: 'cv-a', prefsFingerprint: 'prefs-a' };
-
-    // Oldest score first, so a capped pass makes progress on the worst of it.
-    assert.deepEqual(
-      store.staleRatings(10, inputs).map((o) => o.id),
-      ['stale-cv', 'dismissed', 'stale-scorer']
-    );
-
-    // No inputs: every rated offer, which is the pass to run when the rules
-    // changed in a way the scorer version did not capture.
-    assert.deepEqual(
-      store.staleRatings(10).map((o) => o.id),
-      ['stale-cv', 'current', 'dismissed', 'stale-scorer']
-    );
-
-    assert.equal(store.countRated(), 4);
   } finally {
     s.dispose();
   }

@@ -9,14 +9,14 @@
  * tunes one copy.
  *
  * At the root beside `env.ts` rather than inside either caller. `retrieval/`
- * would be the wrong home now that a capability needs it — a scorer importing
- * from the retrieval tier reads as a mistake — and `contracts/` is vocabulary,
- * which this is not. It imports nothing, so anything may import it.
+ * would be the wrong home now that a capability needs it — offer identity
+ * importing from the retrieval tier reads as a mistake — and `contracts/` is
+ * vocabulary, which this is not. It imports nothing, so anything may import it.
  *
- * Not cryptographic, and does not need to be. Both uses tolerate a collision
- * the same way: a reused embedding for two different strings, or a rating that
- * looks current when it is one revision stale. Neither input is adversarial —
- * they are the user's own documents.
+ * Not cryptographic, and does not need to be. Its inputs are not adversarial —
+ * the user's own documents and the postings they collected — and a collision
+ * costs a reused embedding for two different strings, two URLs sharing an
+ * offer id, or an offer's details that look current when their source moved.
  */
 
 export const fingerprint = (value: string): string => {
@@ -28,30 +28,4 @@ export const fingerprint = (value: string): string => {
   }
 
   return digest.toString(36);
-};
-
-/**
- * Fingerprints a value by its JSON, with object keys sorted.
- *
- * `JSON.stringify` preserves insertion order, so two documents differing only
- * in the order their fields were assigned would hash differently — and every
- * offer on disk would look like it needed rescoring. Sorting makes the hash a
- * function of the content rather than of how the object was built.
- */
-export const fingerprintValue = (value: unknown): string => {
-  const canonical = (input: unknown): unknown => {
-    if (Array.isArray(input)) return input.map(canonical);
-
-    if (input && typeof input === 'object') {
-      return Object.fromEntries(
-        Object.entries(input as Record<string, unknown>)
-          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-          .map(([key, nested]) => [key, canonical(nested)])
-      );
-    }
-
-    return input;
-  };
-
-  return fingerprint(JSON.stringify(canonical(value)));
 };

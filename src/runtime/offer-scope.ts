@@ -57,7 +57,7 @@ export const snapshotInput = (snapshot: OfferSnapshot, capability: string, raw: 
   for (const key of ['document', 'candidate', 'offer', 'offerText', 'url', 'stated']) {
     if (key in input) throw new CvContextError('invalid_input', `Snapshot owns ${key}; omit it from task input.`);
   }
-  if (['extract_cv', 'search_offers', 'rescore_offers'].includes(capability)) {
+  if (capability === 'extract_cv') {
     throw new CvContextError('invalid_input', 'This capability requires live inputs.');
   }
   const facts = { company: snapshot.offer.company ?? '', position: snapshot.offer.position ?? '',

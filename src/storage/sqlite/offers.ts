@@ -8,14 +8,14 @@
  * data and quietly false of the rest. The FTS table beside this one is derived,
  * is populated by triggers, and can be dropped and rebuilt from these rows.
  *
- * `sight` and `rate` are separate writes from `save` for a reason that only
- * shows up under a standing search. `save` is what a person's `analyze_offer`
- * does: here is a posting, store it. `sight` is what a round does forty times a
- * minute: here is a posting you may already have, keep whichever facts about it
- * are older than this sighting. A caller that had to assemble the second out of
- * the first would read the row, merge, and write — and two rounds doing that at
- * once is the lost update the JSONL store had, where nothing was ever corrupt
- * and writes disappeared anyway.
+ * `sight` is a separate write from `save` for a reason that only shows up
+ * under a standing search. `save` is what enrichment does: here is a posting,
+ * store it. `sight` is what discovery does forty times a minute: here is a
+ * posting you may already have, keep whichever facts about it are older than
+ * this sighting. A caller that had to assemble the second out of the first
+ * would read the row, merge, and write — and two searches doing that at once
+ * is the lost update the JSONL store had, where nothing was ever corrupt and
+ * writes disappeared anyway.
  */
 
 import type {
@@ -196,7 +196,7 @@ export const createOfferStore = (db: Db): OfferStore => {
    * a default, so `excluded.processing` on a sighting that omitted it is the
    * literal `'candidate'` — and updating from that demotes every rated offer a
    * standing search re-saw, which means fetching and re-analysing the entire
-   * store on the next round. Every night, silently, forever.
+   * store on the next search. Every night, silently, forever.
    */
   const sightOne = db.prepare(
     `INSERT INTO offers
@@ -239,40 +239,9 @@ export const createOfferStore = (db: Db): OfferStore => {
   );
   const existing = db.prepare<[string]>('SELECT 1 FROM offers WHERE id = ?');
 
-  const applyRating = db.prepare(
-    `UPDATE offers SET
-       eligibility = :eligibility, fit = :fit, completeness = :completeness,
-       score_detail = :detail, rated_at = :ratedAt,
-       scorer_version = :scorerVersion, cv_fingerprint = :cvFingerprint,
-       prefs_fingerprint = :prefsFingerprint,
-       processing = CASE WHEN processing = 'unreadable' THEN processing ELSE 'rated' END
-     WHERE id = :id`
-  );
-
   const applyDisposition = db.prepare<[string, string]>(
     'UPDATE offers SET disposition = ? WHERE id = ?'
   );
-
-  // `IS NOT` rather than `<>`, because a never-rated row holds NULL in both
-  // fingerprints and `NULL <> 'abc'` is NULL, which is not true, which would
-  // filter out exactly the offers that most need a score.
-  // `rated_at IS NOT NULL` in the WHERE and not a `processing = 'rated'` test:
-  // the two agree, and this one is the column the index is built on. An offer
-  // that was rated and later found unreadable keeps its score and its staleness
-  // — `processing` moved on, the numbers did not.
-  const stale = db.prepare<[string, string, string, number]>(
-    `SELECT * FROM offers
-      WHERE rated_at IS NOT NULL
-        AND (scorer_version IS NOT ? OR cv_fingerprint IS NOT ? OR prefs_fingerprint IS NOT ?)
-      ORDER BY rated_at ASC
-      LIMIT ?`
-  );
-
-  const everyRated = db.prepare<[number]>(
-    `SELECT * FROM offers WHERE rated_at IS NOT NULL ORDER BY rated_at ASC LIMIT ?`
-  );
-
-  const ratedCount = db.prepare(`SELECT count(*) AS n FROM offers WHERE rated_at IS NOT NULL`);
 
   const identity = db.prepare<[string, number]>(
     `SELECT o.* FROM offers_fts
@@ -353,38 +322,8 @@ export const createOfferStore = (db: Db): OfferStore => {
       return sightAll(sightings, at);
     },
 
-    rate(id, rating) {
-      applyRating.run({
-        id,
-        eligibility: rating.eligibility,
-        fit: rating.fit,
-        completeness: rating.completeness,
-        detail: packJson(rating.detail),
-        ratedAt: rating.ratedAt,
-        scorerVersion: rating.scorerVersion,
-        cvFingerprint: rating.cvFingerprint,
-        prefsFingerprint: rating.prefsFingerprint
-      });
-    },
-
     setDisposition(id, disposition) {
       applyDisposition.run(disposition, id);
-    },
-
-    staleRatings(limit, staleAgainst) {
-      const rows = staleAgainst
-        ? stale.all(
-            staleAgainst.scorerVersion,
-            staleAgainst.cvFingerprint,
-            staleAgainst.prefsFingerprint,
-            limit
-          )
-        : everyRated.all(limit);
-      return (rows as OfferRow[]).map(toOffer);
-    },
-
-    countRated() {
-      return (ratedCount.get() as { n: number }).n;
     },
 
     byIdentity(company, position) {

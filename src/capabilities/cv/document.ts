@@ -25,8 +25,6 @@
 
 import { z } from 'zod';
 
-import { fingerprintValue } from '../../hash.js';
-
 /** ISO where the source was precise, free-form where it was vague ("2019"). */
 const dateish = z.string();
 
@@ -74,16 +72,14 @@ export const skillGroupSchema = z.object({
  * "every skill this CV claims" can still concatenate the three and get all of
  * them.
  *
- * They are kept rather than dropped because two readers here mean something
- * narrower than "every skill" and would lose it: `offers/queries.ts` and
- * `offers/round.ts` search a board on languages and frameworks *and not tools*,
- * because `sentry` and `riverpod` are not how job postings are indexed. That is
- * a claim about which skills make good search terms, and nothing about an
- * author-named row can answer it.
+ * They are kept rather than dropped because the extractor answers in those
+ * three buckets (`cv/extract.ts`) and every stored body carries them. Every
+ * reader here concatenates the three. The one that did not — a board search
+ * on languages and frameworks *and not tools*, because `sentry` and `riverpod`
+ * are not how job postings are indexed — was never reached and was removed.
  *
  * The cost is stated rather than hidden: a row the author invents folds into
- * `libraries_and_tools`, so a "Blockchain" row does not feed board search even
- * though it survives the round trip intact. Only the fold is lossy; `groups` is
+ * `libraries_and_tools`, whatever it names. Only the fold is lossy; `groups` is
  * not derived from it and never re-read through it.
  */
 export const skillsSchema = z.object({
@@ -252,17 +248,6 @@ export const normaliseCv = (document: CvDocument): CvDocument => ({
  * parameter — a second one would need a way for a caller to say which, and no
  * capability has anything to say about a CV that is not the user's own.
  */
-/**
- * The CV's contribution to a rating's inputs.
- *
- * Whole-document, including fields no criterion reads, because the question is
- * "is this the same CV" and not "would this change the score" — the second one
- * cannot be answered without running the scorer, which is what the fingerprint
- * exists to avoid. Nothing here needs excluding the way preferences exclude
- * `updated_at`: the store holds the timestamp, so the body is content only.
- */
-export const fingerprintCv = (cv: CvDocument): string => fingerprintValue(cv);
-
 export const CV_ID = 'cv';
 export const CV_KIND = 'cv';
 

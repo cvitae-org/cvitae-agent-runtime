@@ -42,9 +42,9 @@ import type { RunContext } from '../contracts/index.js';
  * Within this prompt the verb is the whole of it. Nothing about the schema
  * mattered: a single string in place of the array failed too, under `Choose`.
  *
- * And it is the prompt, not the word. `routeWithModel` opens with `Choose the
- * capability that best fits the request` and answered 6 of 6 correctly on the
- * same model while this was failing 3 of 3. So there is no rule here to carry
+ * And it is the prompt, not the word. `routeWithModel`, since removed, opened
+ * with `Choose the capability that best fits the request` and answered 6 of 6
+ * correctly on the same model while this was failing 3 of 3. So there is no rule here to carry
  * anywhere else — which is the finding, not a caveat on it.
  *
  * The restraint sentence is gone for the same reason, and it is not missed —

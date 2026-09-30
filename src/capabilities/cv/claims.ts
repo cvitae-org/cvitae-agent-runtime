@@ -321,11 +321,6 @@ const escaped = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, 
  * which is the difference between looking for `C#` and looking for `c`. Two of
  * the four names above squash to a single letter, so squashing first would
  * turn the branch that exists to be strict into the loosest one there is.
- *
- * The same split `offers/verify.ts` makes against a posting, for the same
- * reason. It is not shared code because the two are matching different things
- * against different corpora and a common helper would have to be told which,
- * which is the whole of both functions.
  */
 const states = (term: string, text: string, squashedText: string): boolean => {
   const trimmed = term.normalize('NFC').trim();

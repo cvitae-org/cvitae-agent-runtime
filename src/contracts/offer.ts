@@ -111,18 +111,17 @@ export type StatedKey =
 /* ------------------------------------------------------------- discovery -- */
 
 /**
- * How far the round got with an offer.
+ * How far the machinery got with an offer.
  *
- * Written by the search round and by nobody else. It is deliberately not a
- * judgment about the offer — `'rated'` says a score exists, not that it was
- * good — because the two questions have different owners and different
- * lifetimes. A score is recomputed whenever the CV or the criteria change; how
- * far the machinery got is a fact about one attempt.
+ * Written by discovery and enrichment, never by a person. It is deliberately
+ * not a judgment about the offer — `'rated'` says a score exists, not that it
+ * was good — because the two questions have different owners and different
+ * lifetimes.
  *
- * `'unreadable'` earns its place by stopping a retry loop. A board that renders
- * client-side, one that blocks us, one robots.txt forbids: without a state for
- * it the round re-fetches the same dead URL every morning forever. It is the
- * same distinction `RuntimeError` draws with `unreadable_source`.
+ * Two of the four have no writer left. `'rated'` and `'unreadable'` were
+ * written by the search round and its scorer, which nothing reached and which
+ * were removed. They stay because the column's CHECK and the rows already
+ * stored allow them, and enrichment keeps a `'rated'` it finds.
  */
 export const processingStates = ['candidate', 'fetched', 'rated', 'unreadable'] as const;
 
@@ -188,10 +187,14 @@ export type SalaryReading = {
 /**
  * The outcome of scoring one offer against one CV and one set of criteria.
  *
- * The two fingerprints are what make "which offers need rescoring?" an equality
- * check rather than a rescan — the same trick that lets reindexing skip
- * unchanged chunks. A rating is only meaningful relative to its inputs, so the
- * inputs are stored with it.
+ * Read back from the offer's columns, and written by nothing: the scorer and
+ * the rescore that wrote it were never reached and were removed, along with
+ * `OfferStore.rate`. The type stays because the columns do and the studio
+ * reads `rating` off an offer.
+ *
+ * The two fingerprints are what made "which offers need rescoring?" an
+ * equality check rather than a rescan. A rating is only meaningful relative to
+ * its inputs, so the inputs are stored with it.
  *
  * `fit` and `completeness` are separate numbers on purpose. `fit` is match
  * quality over *decided* facts — matched / (matched + unmet), with unknowns
@@ -220,19 +223,6 @@ export type OfferRating = {
 };
 
 /** An offer as it is stored: canonical text plus whatever the board stated. */
-/**
- * The three things a score is a function of besides the posting itself.
- *
- * Named as a triple because they are only ever compared as one: a score is
- * current when all three match, and stale when any differs. Splitting them into
- * three parameters invites a call site that checks two.
- */
-export type RatingInputs = {
-  readonly scorerVersion: string;
-  readonly cvFingerprint: string;
-  readonly prefsFingerprint: string;
-};
-
 export type OfferRecord = {
   readonly id: string;
   readonly url?: string;
@@ -266,7 +256,7 @@ export type OfferRecord = {
 };
 
 /**
- * An offer as the round has just seen it: enough to recognise, not necessarily
+ * An offer as discovery has just seen it: enough to recognise, not necessarily
  * enough to store.
  *
  * A sighting carries no timestamps and no state. Which of those to write is the
@@ -283,7 +273,7 @@ export type OfferSighting = Omit<
   readonly processing?: ProcessingState;
 };
 
-/** What `sight` did, per offer, so the round can report it without re-reading. */
+/** What `sight` did, per offer, so the caller can report it without re-reading. */
 export type SightingResult = {
   readonly id: string;
   /** First time this machine has seen it. The only offers worth announcing. */
@@ -313,46 +303,17 @@ export interface OfferStore {
   search(text: string, limit: number): OfferRecord[];
 
   /**
-   * Record a batch of offers the round just saw, in one transaction.
+   * Record a batch of offers a discovery search just saw, in one transaction.
    *
    * Preserves `firstSeenAt` and every disposition a person set, advances
    * `lastSeenAt`, and reports which were new. Batched rather than per-offer
-   * because a round sights tens of offers at once and each one is a read and a
-   * write that must not interleave with another round's.
+   * because a search sights tens of offers at once and each one is a read and a
+   * write that must not interleave with another search's.
    */
   sight(sightings: readonly OfferSighting[], at: number): SightingResult[];
 
-  /** Attach a score. Separate from `save` because scoring re-runs on its own. */
-  rate(id: string, rating: OfferRating): void;
-
   /** Record what a person decided. The one write a machine never makes. */
   setDisposition(id: string, disposition: Disposition): void;
-
-  /**
-   * Offers already carrying a score that was computed from different inputs
-   * than the ones given — a different scorer, a different CV, different
-   * preferences — oldest score first.
-   *
-   * A WHERE clause rather than a scan the caller filters. The predecessor read
-   * every offer into memory to find the stale ones, which is affordable at a
-   * hundred offers and is the shape that stops being affordable first.
-   *
-   * Three things this deliberately does *not* do. It does not skip dismissed
-   * offers: the numbers should be right whatever the user decided about the
-   * job, and only the decision is theirs. It does not return unrated offers:
-   * they need a model and a fetch, which is a round's work, not a rescore's.
-   * And with no `staleAgainst` it returns every rated offer, which is the pass
-   * to run when the rules changed in a way `scorerVersion` did not capture.
-   */
-  staleRatings(limit: number, staleAgainst?: RatingInputs): OfferRecord[];
-
-  /**
-   * How many offers carry a score at all.
-   *
-   * The denominator a rescore report needs and can no longer count for itself,
-   * now that it only ever sees the stale ones.
-   */
-  countRated(): number;
 
   /**
    * Offers matching a company and position, for recognising the same job posted
