@@ -52,15 +52,17 @@ import {
   cvDocumentSchema
 } from '../src/capabilities/cv/document.js';
 import { createHarness, silentLogger, type Harness } from '../src/runtime/create.js';
+import { open } from '../src/storage/sqlite/open.js';
 import type { CapabilityMap, RunEvent, RunRecord } from '../src/contracts/index.js';
 import { noop, stage, transform, untilAborted } from './support/spine.js';
 
 /* ------------------------------------------------------------------- setup */
 
-const harnessFor = (capabilities: CapabilityMap): { harness: Harness; dispose(): void } => {
+const harnessFor = (capabilities: CapabilityMap): { harness: Harness; databasePath: string; dispose(): void } => {
   const dir = mkdtempSync(join(tmpdir(), 'harness-ipc-'));
+  const databasePath = join(dir, 'harness.db');
   const harness = createHarness({
-    databasePath: join(dir, 'harness.db'),
+    databasePath,
     capabilities,
     logger: silentLogger,
     // Nothing inherited and nothing dialled. These tests are about the
@@ -72,6 +74,7 @@ const harnessFor = (capabilities: CapabilityMap): { harness: Harness; dispose():
 
   return {
     harness,
+    databasePath,
     dispose: () => {
       harness.close();
       rmSync(dir, { recursive: true, force: true });
@@ -194,6 +197,64 @@ test('profile channels distinguish absence and atomically replace the canonical 
     assert.equal(read.record.revision, 2);
     assert.deepEqual(read.record.body, document);
   } finally {
+    dispose();
+  }
+});
+
+test('the index status says what search can read now, and Rebuild starts over', async () => {
+  const { harness, dispose } = harnessFor(capabilities());
+  const dispatch = createDispatch(harness);
+  type IndexState = {
+    pending: { revision: number; attempts: number; errorCode: string | null; parked: boolean } | null;
+    indexed: { chunks: number; keywordOnly: boolean };
+  };
+
+  try {
+    harness.documents.update(CV_ID, CV_KIND, () => cvDocumentSchema.parse({ role_description: 'Engineer' }));
+
+    const queued = data<IndexState>(await dispatch('profile.context.indexStatus', { contextId: CV_ID }));
+    assert.equal(queued.pending?.revision, 1);
+    assert.equal(queued.pending?.parked, false);
+    assert.deepEqual(queued.indexed, { chunks: 0, keywordOnly: false });
+
+    harness.chunks.keepText(CV_ID, [{ id: 'role', kind: 'role', text: 'Engineer', position: 0 }], { expectedRevision: 1 });
+    const keyword = data<IndexState>(await dispatch('profile.context.indexStatus', { contextId: CV_ID }));
+    assert.deepEqual(keyword.indexed, { chunks: 1, keywordOnly: true });
+    assert.ok(keyword.pending, 'keyword rows do not settle the job that owes the vectors');
+
+    const rebuilt = data<IndexState>(await dispatch('profile.context.reindex', { contextId: CV_ID }));
+    assert.deepEqual(
+      rebuilt.pending && { attempts: rebuilt.pending.attempts, errorCode: rebuilt.pending.errorCode, parked: rebuilt.pending.parked },
+      { attempts: 0, errorCode: null, parked: false }
+    );
+    assert.deepEqual(rebuilt.indexed, { chunks: 1, keywordOnly: true });
+  } finally {
+    dispose();
+  }
+});
+
+test('saving a key starts a rebuild that stopped for want of one', async () => {
+  const { harness, databasePath, dispose } = harnessFor(capabilities());
+  const dispatch = createDispatch(harness);
+  const other = open(databasePath);
+
+  try {
+    harness.documents.update(CV_ID, CV_KIND, () => cvDocumentSchema.parse({ role_description: 'Engineer' }));
+    // What the rebuilder leaves behind when the key is refused.
+    other.prepare("UPDATE cv_index_jobs SET attempts = 1, parked = 1, error_code = 'credential_rejected' WHERE document_id = ?")
+      .run(CV_ID);
+    const parked = data<{ pending: { parked: boolean; errorCode: string | null } }>(
+      await dispatch('profile.context.indexStatus', { contextId: CV_ID })
+    );
+    assert.deepEqual(parked.pending && [parked.pending.parked, parked.pending.errorCode], [true, 'credential_rejected']);
+
+    data(await dispatch('secrets.set', { providerId: 'openai', apiKey: 'sk-test-not-a-real-key' }));
+    const resumed = data<{ pending: { parked: boolean; errorCode: string | null; attempts: number } }>(
+      await dispatch('profile.context.indexStatus', { contextId: CV_ID })
+    );
+    assert.deepEqual(resumed.pending && [resumed.pending.parked, resumed.pending.errorCode, resumed.pending.attempts], [false, null, 0]);
+  } finally {
+    other.close();
     dispose();
   }
 });

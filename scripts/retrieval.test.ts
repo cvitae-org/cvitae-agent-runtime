@@ -35,6 +35,7 @@ import type {
   Retriever,
   ScoredChunk
 } from '../src/contracts/index.js';
+import { RuntimeError } from '../src/contracts/index.js';
 import { createRetriever } from '../src/retrieval/search.js';
 import { CHUNKER_VERSION } from '../src/retrieval/fingerprint.js';
 import { createChunkIndex } from '../src/storage/sqlite/chunk-index.js';
@@ -151,6 +152,28 @@ test('lexicalOnly asks no model anything', async () => {
 
   assert.deepEqual(embedder.asked, []);
   assert.deepEqual(hits.map((hit) => hit.id), ['a']);
+});
+
+test('a query the embedder cannot take is searched by keyword; a cancelled one is not searched', async () => {
+  const reader = fakeReader([scored('a', 5)], [scored('b', 0.9)]);
+  const refusing = {
+    embed: async () => { throw new RuntimeError('the provider refused the key', 'credential_rejected'); }
+  } as unknown as AiGateway;
+
+  const hits = await createRetriever({ reader, ai: refusing, traceId: 'trace-1' })
+    .search({ text: 'react', limit: 5 }, signal);
+
+  assert.deepEqual(hits.map((hit) => [hit.id, hit.found]), [['a', ['lexical']]]);
+
+  const cancel = new AbortController();
+  const cancelled = {
+    embed: async () => { cancel.abort(); throw new Error('aborted'); }
+  } as unknown as AiGateway;
+
+  await assert.rejects(
+    createRetriever({ reader, ai: cancelled, traceId: 'trace-1' }).search({ text: 'react', limit: 5 }, cancel.signal),
+    /aborted/
+  );
 });
 
 test('an empty query is not a search', async () => {

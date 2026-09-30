@@ -50,6 +50,9 @@ export type IndexedChunk = {
   readonly vector: Float32Array;
 };
 
+/** A chunk as the keyword half keeps it: the text, and no vector. */
+export type TextChunk = Omit<IndexedChunk, 'vector'>;
+
 /**
  * A raw lexical query. `limit` is a candidate count, not a result count — the
  * fusion above it decides how many survive.
@@ -158,6 +161,25 @@ export interface ChunkIndex extends ChunkReader {
    * queries about text the document no longer contains.
    */
   clear(documentId: string, options?: { readonly expectedRevision: number }): number;
+
+  /**
+   * Makes a document's current text findable by keyword when its vectors could
+   * not be made: a key the provider refused, an embedder that is not running.
+   * Without this a failing embedder costs both halves of retrieval, because the
+   * keyword half reads the same rows and there are none.
+   *
+   * The rows have no vector and no fingerprint, so `neighbours` never returns
+   * them and `fingerprintOf` does not see them. The vectors are still owed: a
+   * queued rebuild stays queued, and its `replace` supersedes these rows.
+   *
+   * Does nothing when the current revision already has rows, which are at
+   * least as good. Returns the number of chunks written.
+   */
+  keepText(
+    documentId: string,
+    chunks: readonly TextChunk[],
+    options: { readonly expectedRevision: number }
+  ): number;
 }
 
 /**

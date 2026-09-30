@@ -117,10 +117,20 @@ export const createRetriever = (options: RetrieverOptions): Retriever => {
         // Embedded here rather than by the caller: the query has to go through
         // the same model as the stored chunks, and the fingerprint that proves
         // it comes from the same call.
-        const embedded = await ai.embed({ ...call(options, signal), values: [text] });
-        const vector = embedded.vectors[0];
+        //
+        // A query that cannot be embedded, because the key was refused or the
+        // embedder is not running, is searched by keyword alone, the way a
+        // model swap already is. The gateway has logged why, and no hit comes
+        // back marked `vector`. Only a cancel is passed on.
+        let embedded: Awaited<ReturnType<AiGateway['embed']>> | undefined;
+        try {
+          embedded = await ai.embed({ ...call(options, signal), values: [text] });
+        } catch (error) {
+          if (signal.aborted) throw error;
+        }
+        const vector = embedded?.vectors[0];
 
-        if (vector) {
+        if (embedded && vector) {
           // A fingerprint the index does not hold matches nothing, so a model
           // swap degrades this search to its lexical half rather than ranking
           // by vectors from a different space. Silent, but visible: no hit

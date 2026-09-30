@@ -38,9 +38,11 @@ export type Embedded = {
  *
  * Throws whatever the gateway raises, and does not catch it. Embedding is not
  * something this layer can degrade: the alternative to a vector is not a worse
- * vector, it is a search with half its evidence missing. A caller that
- * genuinely wants the lexical half alone asks for it, which is what
- * `ChunkQuery.lexicalOnly` is.
+ * vector, it is a search with half its evidence missing. What a caller does
+ * about that is its own choice, and the ones that exist make it out loud: the
+ * index keeps the text without vectors (`ChunkIndex.keepText`), and a search
+ * whose query cannot be embedded reads the keyword half alone, as
+ * `ChunkQuery.lexicalOnly` asks for on purpose.
  */
 export const embedChunks = async (
   chunks: readonly Chunk[],

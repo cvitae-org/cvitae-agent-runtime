@@ -809,12 +809,26 @@ export const extractCv: Capability<ExtractCvInput> = {
                   return { indexed: 0 };
                 }
 
-                const embedded = await embedChunks(chunks, context.effects.ai, {
-                  traceId: context.traceId,
-                  runId: context.runId,
-                  step: context.step.name,
-                  signal: context.signal
-                });
+                let embedded: Awaited<ReturnType<typeof embedChunks>>;
+                try {
+                  embedded = await embedChunks(chunks, context.effects.ai, {
+                    traceId: context.traceId,
+                    runId: context.runId,
+                    step: context.step.name,
+                    signal: context.signal
+                  });
+                } catch (error) {
+                  // The step still degrades, and the queued rebuild still owes
+                  // the vectors. Meanwhile the CV can be found by keyword.
+                  if (!context.signal.aborted) {
+                    try {
+                      context.index.keepText(CV_ID, chunks, { expectedRevision: merged.revision! });
+                    } catch {
+                      // A newer revision owns the index now.
+                    }
+                  }
+                  throw error;
+                }
 
                 if (!embedded) return { indexed: 0 };
 

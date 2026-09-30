@@ -1,8 +1,16 @@
 import type { AiGateway, IndexJob, IndexRecoveryStore } from '../contracts/index.js';
+import { RuntimeError } from '../contracts/index.js';
 import { asCvDocument } from '../capabilities/cv/document.js';
 import { cvPieces } from '../capabilities/cv/pieces.js';
-import { chunkPieces } from '../retrieval/chunk.js';
+import { chunkPieces, type Chunk } from '../retrieval/chunk.js';
 import { embedChunks } from '../retrieval/embed.js';
+
+/**
+ * Failures that trying again cannot fix: the same key, or the same missing
+ * one, gets the same answer. The job waits for a person to change something
+ * (`IndexJobStatus.parked`).
+ */
+const needsAPerson: ReadonlySet<string> = new Set(['credential_rejected', 'misconfigured']);
 
 /** No polling in library/tests unless explicitly started by a host. */
 export const createIndexRebuilder = (jobs: IndexRecoveryStore, ai: AiGateway) => {
@@ -15,13 +23,25 @@ export const createIndexRebuilder = (jobs: IndexRecoveryStore, ai: AiGateway) =>
     const job = jobs.claim();
     if (!job) return;
     active = job;
+    let chunks: readonly Chunk[] | undefined;
     try {
-      const embedded = await embedChunks(chunkPieces(cvPieces(asCvDocument(job.body))), ai, {
+      chunks = chunkPieces(cvPieces(asCvDocument(job.body)));
+      const embedded = await embedChunks(chunks, ai, {
         traceId: `index:${job.documentId}:${job.revision}`, step: 'index_recovery', signal: abort.signal
       });
       if (!stopped) jobs.complete(job, embedded);
     } catch (error) {
-      if (!stopped) jobs.fail(job, String((error as Error)?.message ?? error), Math.min(300_000, 5000 * 2 ** Math.min(job.attempts - 1, 6)));
+      if (!stopped) {
+        const code = error instanceof RuntimeError ? error.code : null;
+        jobs.fail(job, {
+          message: String((error as Error)?.message ?? error),
+          code,
+          retryAfterMs: code !== null && needsAPerson.has(code)
+            ? null
+            : Math.min(300_000, 5000 * 2 ** Math.min(job.attempts - 1, 6)),
+          ...(chunks ? { text: chunks } : {})
+        });
+      }
     } finally { active = undefined; }
   };
   return {
@@ -36,7 +56,7 @@ export const createIndexRebuilder = (jobs: IndexRecoveryStore, ai: AiGateway) =>
       if (stopped) return;
       stopped = true;
       if (timer) clearInterval(timer);
-      if (active) jobs.fail(active, 'Index rebuild interrupted; retry pending.', 0);
+      if (active) jobs.fail(active, { message: 'Index rebuild interrupted; retry pending.', code: null, retryAfterMs: 0 });
       abort.abort();
     }
   };

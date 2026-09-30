@@ -244,11 +244,11 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     'profile.context.reindex': ({ contextId }) => {
       harness.profile.readContext(contextId);
       harness.indexRecovery.enqueue(contextId);
-      return ok({ pending: harness.indexRecovery.status(contextId) ?? null });
+      return ok({ pending: harness.indexRecovery.status(contextId) ?? null, indexed: harness.indexRecovery.indexed(contextId) });
     },
     'profile.context.indexStatus': ({ contextId }) => {
       harness.profile.readContext(contextId);
-      return ok({ pending: harness.indexRecovery.status(contextId) ?? null });
+      return ok({ pending: harness.indexRecovery.status(contextId) ?? null, indexed: harness.indexRecovery.indexed(contextId) });
     },
     'profile.context.clearContent': ({ contextId, expectedRevision, operationId }) =>
       ok(harness.cvLifecycle.clearContent(contextId, expectedRevision, operationId)),

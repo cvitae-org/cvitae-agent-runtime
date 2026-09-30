@@ -12,6 +12,7 @@ import type {
   IndexedChunk,
   LexicalQuery,
   ScoredChunk,
+  TextChunk,
   VectorQuery
 } from '../../contracts/index.js';
 import { DocumentConflictError, fingerprintKey } from '../../contracts/index.js';
@@ -66,6 +67,14 @@ const toMatchExpression = (text: string): string =>
     .filter((token) => token.length > 0)
     .map((token) => `"${token}"`)
     .join(' OR ');
+
+/**
+ * What `keepText` writes in place of a fingerprint. It has none of the `·`
+ * separated parts of a real one, so no vector query can name it and
+ * `fingerprintOf` reads it as absent.
+ */
+const TEXT_ONLY = 'text-only';
+const NO_VECTOR = Buffer.alloc(0);
 
 /** Both vectors are unit length when the fingerprint says `'l2'`, so this is cosine. */
 const dot = (a: Float32Array, b: Float32Array): number => {
@@ -156,8 +165,40 @@ export const createChunkIndex = (db: Db, now: () => number = Date.now): ChunkInd
     }
   ).immediate;
 
+  const keepText = db.transaction(
+    (documentId: string, chunks: readonly TextChunk[], options: { readonly expectedRevision: number }): number => {
+      const revision = revisionOf(documentId, options.expectedRevision);
+      if (db.prepare('SELECT 1 FROM chunks WHERE document_id = ? AND source_revision = ? LIMIT 1').get(documentId, revision)) {
+        return 0;
+      }
+      // What is left belongs to an older revision, which no query reads.
+      deleteForDocument.run(documentId);
+
+      const at = now();
+      for (const chunk of chunks) {
+        insertChunk.run(
+          JSON.stringify([documentId, chunk.id]),
+          documentId,
+          chunk.kind,
+          chunk.text,
+          foldForSearch(chunk.text),
+          JSON.stringify(chunk.meta ?? {}),
+          chunk.position,
+          TEXT_ONLY,
+          0,
+          NO_VECTOR,
+          at,
+          revision,
+          chunk.id
+        );
+      }
+      return chunks.length;
+    }
+  ).immediate;
+
   return {
     clear,
+    keepText,
 
     lexical(query: LexicalQuery) {
       const match = toMatchExpression(query.text);

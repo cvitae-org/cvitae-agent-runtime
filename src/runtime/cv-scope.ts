@@ -43,7 +43,8 @@ export const bindCvScope = (
       replace: (id, fingerprint, chunks, options) => {
         if (!options) throw new CvContextError('invalid_input', 'Index publication requires its source revision.');
         return guard(() => ports.index.replace(destination(id), fingerprint, chunks, options));
-      }
+      },
+      keepText: (id, chunks, options) => guard(() => ports.index.keepText(destination(id), chunks, options))
     }
   };
 };

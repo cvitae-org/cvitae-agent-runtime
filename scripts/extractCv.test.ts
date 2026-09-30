@@ -546,7 +546,7 @@ test('a second import replaces the index rather than adding to it', async () => 
   });
 });
 
-test('an embedder that is down costs search, not the import', async () => {
+test('an embedder that is down costs the vector half of search, not the import', async () => {
   await harness(
     {
       embed: async () => {
@@ -565,7 +565,12 @@ test('an embedder that is down costs search, not the import', async () => {
 
       // `null` rather than `0`. A broken embedder is not an empty CV.
       assert.equal(result.data.indexed, null);
-      assert.deepEqual(indexed(s), []);
+
+      // What it costs is the vector half. The passages are kept for keyword
+      // search until the queued rebuild can embed them, and nothing claims a
+      // model they were never embedded by.
+      assert.equal(indexed(s).length, 2);
+      assert.equal(s.chunks.fingerprintOf(CV_ID), undefined);
     }
   );
 });

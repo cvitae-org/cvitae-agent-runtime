@@ -124,8 +124,13 @@ bullet embedded with the job it was written under so a query can ask about work
 at a kind of company. Everything a caller reads off the document instead — names,
 dates, contact details, certificate issuers — stays out of the index, where it
 would only crowd better answers. Indexing is not critical: an embedder that is
-down costs search over that import, not the import, and the result says so in
-`indexed` — a count when it ran, `null` when nothing tried.
+down costs the vector half of search over that import, not the import, and the
+result says so in `indexed` — a count when it ran, `null` when nothing tried.
+The passages are kept for keyword search meanwhile, and a rebuild queued with
+the new revision embeds them in the background. It backs off on a failure that
+may pass and stops on one a person has to fix, a refused or missing key, until
+the key or the settings change or `profile.context.reindex` asks again.
+`profile.context.indexStatus` says which of these the index is in.
 
 `translate_cv` takes the stored CV into another language:
 

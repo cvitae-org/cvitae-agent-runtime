@@ -251,7 +251,7 @@ export type Harness = {
   readonly cvContexts: CvContextStore;
   readonly cvCopies: ReturnType<typeof createCvCopies>;
   readonly cvLifecycle: Pick<CvLifecycle, 'clearContent' | 'list' | 'accept' | 'discard'>;
-  readonly indexRecovery: Pick<IndexRecoveryStore, 'enqueue' | 'status'>;
+  readonly indexRecovery: Pick<IndexRecoveryStore, 'enqueue' | 'status' | 'indexed'>;
   /**
    * The canonical CV boundary used by trusted hosts.
    *
@@ -664,7 +664,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
         return cvContexts.assignLanguage(id, language, revision);
       }).immediate
     },
-    indexRecovery: { enqueue: indexJobs.enqueue, status: indexJobs.status },
+    indexRecovery: { enqueue: indexJobs.enqueue, status: indexJobs.status, indexed: indexJobs.indexed },
     cvLifecycle: { clearContent: cvLifecycle.clearContent, list: cvLifecycle.list, accept: cvLifecycle.accept, discard: cvLifecycle.discard },
     chunks,
     offers,
@@ -704,6 +704,8 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
       secret: (providerId, apiKey) => {
         environment.secret(providerId, apiKey);
         resolver.clearCache();
+        // A rebuild parked on a missing or refused key may work with this one.
+        indexJobs.resume();
       },
       status: () =>
         providerStatus(resolver, environment, {

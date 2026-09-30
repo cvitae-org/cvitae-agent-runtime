@@ -30,7 +30,7 @@ export const bindOfferScope = (snapshot: OfferSnapshot, effects: EffectSet): {
     },
     neighbours: (query) => { check(query.documentId); return []; },
     fingerprintOf: (id) => { check(id); return undefined; },
-    replace: reject, clear: reject
+    replace: reject, clear: reject, keepText: reject
   };
   return {
     contextGeneration: snapshot.context.generation, contextRevision: snapshot.document.revision,
