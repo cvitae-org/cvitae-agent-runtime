@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { OperationError } from '../../contracts/operation-error.js';
-import { preparationSteps, type BoardEntry, type BoardSummary, type BoardWrite, type BoardCv, type BoardRunInput, type BoardChatMessage, type BoardSubmission, type BoardArtifact } from '../../contracts/board.js';
+import { preparationSteps, type BoardEntry, type BoardSummary, type BoardWrite, type BoardCv, type BoardRunInput, type BoardSubmission, type BoardArtifact } from '../../contracts/board.js';
 import type { OfferStore } from '../../contracts/index.js';
 import type { Db } from './open.js';
 
@@ -106,14 +106,6 @@ export const createBoardStore = (db: Db, offers: OfferStore, resolve: (ids: stri
     const row = db.prepare('SELECT body FROM board_run_inputs WHERE run_id=?').get(id) as {body: string} | undefined;
     return row ? JSON.parse(row.body) as BoardRunInput : undefined;
   };
-  const chatMessages = (id: string): BoardChatMessage[] => {
-    requireEntry(id);
-    return (db.prepare('SELECT body FROM board_chat_messages WHERE entry_id=? ORDER BY rowid').all(id) as {body: string}[]).map(row => JSON.parse(row.body) as BoardChatMessage);
-  };
-  const appendChat = (id: string, message: BoardChatMessage) => {
-    requireEntry(id);
-    return db.prepare('INSERT OR IGNORE INTO board_chat_messages VALUES (?,?,?,?,?)').run(message.id, id, message.runId, message.role, JSON.stringify(message));
-  };
   const removal = (id: string) => {
     const row = db.prepare('SELECT offer_id FROM board_removals WHERE entry_id=?').get(id) as {offer_id: string} | undefined;
     return row ? {id, offerId: row.offer_id, archived: true as const, removed: true as const} : undefined;
@@ -128,7 +120,6 @@ export const createBoardStore = (db: Db, offers: OfferStore, resolve: (ids: stri
     // request hashes so a delayed write cannot resurrect a deleted workspace.
     db.prepare("UPDATE board_operations SET result=? WHERE json_extract(result,'$.id')=?").run(JSON.stringify(result), entry.id);
     db.prepare('DELETE FROM board_artifacts WHERE entry_id=?').run(entry.id);
-    db.prepare('DELETE FROM board_chat_messages WHERE entry_id=?').run(entry.id);
     db.prepare('DELETE FROM runs WHERE id IN (SELECT run_id FROM board_run_inputs WHERE entry_id=?)').run(entry.id);
     db.prepare('DELETE FROM board_run_authorizations WHERE run_id IN (SELECT run_id FROM board_run_inputs WHERE entry_id=?)').run(entry.id);
     db.prepare('DELETE FROM board_run_inputs WHERE entry_id=?').run(entry.id);
@@ -138,7 +129,7 @@ export const createBoardStore = (db: Db, offers: OfferStore, resolve: (ids: stri
     return result;
   })).immediate();
   return {
-    get, requireEntry, all, add, drop, mutate, internal, addCv, storeRun, getRun, chatMessages, appendChat,
+    get, requireEntry, all, add, drop, mutate, internal, addCv, storeRun, getRun,
     updateWorkspace(id: string, change: (entry: BoardEntry) => void): BoardEntry {
       return db.transaction(() => {const entry=requireEntry(id);change(entry);return publish(entry);}).immediate();
     },

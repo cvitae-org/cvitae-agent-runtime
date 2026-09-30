@@ -16,13 +16,12 @@ const profileId='11111111-1111-4111-8111-111111111111';
 const waitFor = async (check:()=>boolean) => { for(let i=0;i<500;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('Timed out waiting for Board'); };
 const mutate = (entry: BoardEntry) => ({entryId:entry.id,expectedRevision:entry.revision,operationId:randomUUID()});
 const capability = (name:string, run:(context:StepContext)=>Promise<Record<string,unknown>>):CapabilityMap[string] => ({name,describe:name,input:z.record(z.string(),z.unknown()),plan:()=>({capability:name,source:'declared',stages:[{name:'fixture',concurrency:1,steps:[{name:'fixture',kind:'transform',critical:true,run}]}]})});
-const setup = (options: {language?:string; languageUncertain?:boolean; detect?:(context:StepContext)=>Promise<Record<string,unknown>>; reader?:OfferReader; summary?:(context:StepContext)=>Promise<Record<string,unknown>>; databasePath?:string; chat?:(context:StepContext)=>Promise<Record<string,unknown>>}={}) => {
+const setup = (options: {language?:string; languageUncertain?:boolean; detect?:(context:StepContext)=>Promise<Record<string,unknown>>; reader?:OfferReader; summary?:(context:StepContext)=>Promise<Record<string,unknown>>; databasePath?:string}={}) => {
  const calls: string[]=[];
  const capabilities:CapabilityMap={
   detect_offer_language:capability('detect_offer_language',async(context)=>{calls.push('language');if(options.detect)return options.detect(context);return {detected:options.language ?? 'en',uncertain:options.languageUncertain ?? false,reason:'fixture'};}),
   analyze_offer:capability('analyze_offer',async()=>{calls.push('analyze');return {position:'Engineer',company:'Example',required_skills:['TypeScript'],responsibilities:['Build software']};}),
-  generate_evidence_summary:capability('generate_evidence_summary',async context=>{calls.push('summary');assert.equal(context.documents.read('cv')?.body.role_description,'Original facts');assert.throws(()=>context.documents.update('cv','cv',()=>({})));return options.summary?options.summary(context):{summary:'A tailored, evidence-backed Summary.',claims:[],warnings:[]};}),
-  ask_profile:capability('ask_profile',async context=>{calls.push('chat');assert.equal(context.documents.read('cv')?.body.role_description,'A tailored, evidence-backed Summary.');return options.chat ? options.chat(context) : {answer:JSON.stringify(context.input)};})
+  generate_evidence_summary:capability('generate_evidence_summary',async context=>{calls.push('summary');assert.equal(context.documents.read('cv')?.body.role_description,'Original facts');assert.throws(()=>context.documents.update('cv','cv',()=>({})));return options.summary?options.summary(context):{summary:'A tailored, evidence-backed Summary.',claims:[],warnings:[]};})
  };
  const harness=createHarness({databasePath:options.databasePath ?? ':memory:',env:{},scraperUrl:'',capabilities,boardReader:options.reader ?? {resolve:async(url)=>({url,finalUrl:url,text:'English job requirements. '.repeat(1400),stated:{title:'Engineer',required_skills:['TypeScript']}})}});
  if(!harness.cvContexts.get(profileId))harness.cvContexts.create(profileId,'en');
@@ -112,19 +111,6 @@ test('restart recovers successful run receipts after the Summary checkpoint was 
  first.harness.close();closed=true;
  const second=setup({databasePath:path});try{entry=await ready(second.harness,entry.id);assert.equal(entry.cvs.length,2);assert.deepEqual(second.calls,[]);}finally{second.harness.close();}
  }finally{if(!closed)first.harness.close();rmSync(root,{recursive:true,force:true});}
-});
-test('Board chat captures answers and uses the copied CV',async()=>{
- const {harness,add}=setup();try{
- let entry=await ready(harness,add().id);entry=harness.board.saveAnswers({...mutate(entry),answers:[{id:'availability',label:'Availability',value:'November'}]});
- harness.profile.replaceContext(profileId,cvDocumentSchema.parse({role_description:'Changed Profile'}),harness.documents.read(profileId)!.revision,randomUUID());
- const runId=randomUUID();harness.board.chatSend({entryId:entry.id,runId,question:'What did I provide?'});
- await waitFor(()=>harness.board.chatGet(entry.id).messages.length===2);
- const result=harness.board.chatGet(entry.id);assert.match(result.messages[1]!.text,/November/);
- assert.match(result.messages[1]!.text,/preparationCompleted/);
- harness.board.saveAnswers({...mutate(harness.board.requireEntry(entry.id)),answers:[{id:'availability',label:'Availability',value:'December'}]});
- assert.equal(harness.board.getRun(runId)!.application!.answers[0]!.value,'November');
- assert.throws(()=>harness.board.chatSend({entryId:entry.id,runId,question:'A different question'}));
- }finally{harness.close();}
 });
 test('IPC enforces revisions, independent stages, and protocol support',async()=>{
  const {harness,add}=setup();try{
@@ -287,15 +273,12 @@ test('removing an offer purges its workspace and run data, survives restart, and
   entry = harness.board.addNote({...mutate(entry),text:'REMOVED PRIVATE NOTE',at:100});
   entry = harness.board.putArtifact({...mutate(entry),name:'private.pdf',mime:'application/pdf',base64:Buffer.from('REMOVED FILE').toString('base64'),cvVersionId:entry.currentCvId});
   entry = harness.board.recordSubmission({...mutate(entry),kind:'application',submittedAt:100,destination:'Employer',channel:'website',answers:entry.answers,note:'REMOVED APPLICATION',artifactId:entry.artifacts[0]!.id,cvVersionId:entry.currentCvId});
-  harness.board.chatSend({entryId:entry.id,runId:randomUUID(),question:'REMOVED CHAT QUESTION'});
-  await waitFor(() => harness.board.chatGet(entry.id).messages.length === 2);
   const runs = harness.board.runsFor(entry.id).map(run => run.runId);
   const request = mutate(entry);
   const removed = harness.board.drop(request);
   assert.deepEqual(removed,{id:entry.id,offerId:'one',archived:true,removed:true});
   assert.equal(harness.board.get(entry.id),undefined);
   assert.equal(harness.board.internal(entry.id,entry.preparation.generation,()=>assert.fail('Late work must not commit')),undefined);
-  assert.throws(() => harness.board.chatGet(entry.id), /unavailable/);
   assert.throws(() => harness.board.artifact(entry.id,entry.artifacts[0]!.id), /unavailable/);
   for (const runId of runs) assert.equal(harness.runs.get(runId),undefined);
   assert.deepEqual(harness.board.requireEntry(other.id),other);
@@ -307,7 +290,7 @@ test('removing an offer purges its workspace and run data, survives restart, and
   const {default:Database} = await import('better-sqlite3');
   const db = new Database(databasePath,{readonly:true});
   try {
-   for (const table of ['board_artifacts','board_run_inputs','board_chat_messages']) {
+   for (const table of ['board_artifacts','board_run_inputs']) {
     assert.equal((db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE entry_id=?`).get(entry.id) as {count:number}).count,0);
    }
    for (const runId of runs) assert.equal(db.prepare('SELECT 1 FROM board_run_authorizations WHERE run_id=?').get(runId),undefined);
@@ -324,7 +307,6 @@ test('removing an offer purges its workspace and run data, survives restart, and
   assert.equal(fresh.applicationStage,'notApplied');
   for (const key of ['cvs','answers','artifacts','submissions','postings'] as const) assert.deepEqual(fresh[key],[]);
   assert.equal(fresh.history.length,1);
-  assert.deepEqual(harness.board.chatGet(fresh.id).messages,[]);
   assert.deepEqual(harness.board.drop(request),removed);
   assert.ok(harness.board.get(fresh.id));
   await ready(harness,fresh.id);
@@ -353,21 +335,22 @@ test('removal cancels active preparation and rejects late model results without 
 });
 
 
-test('removal cancels active chat and does not persist its late answer', async () => {
- let release!:()=>void;
- const held = new Promise<void>(resolve => {release=resolve;});
- const {harness,add,calls} = setup({chat:async()=>{await held;return {answer:'Late private answer'};}});
+test('the board keeps no conversation: its channels are gone and migration 39 drops its messages', async () => {
+ const { open } = await import('../src/storage/sqlite/open.js');
+ const { migrate, migrations } = await import('../src/storage/sqlite/migrate.js');
+ const db = open(':memory:');
  try {
-  const entry=await ready(harness,add().id);
-  const runId=randomUUID();
-  harness.board.chatSend({entryId:entry.id,runId,question:'Private question'});
-  await waitFor(()=>calls.includes('chat'));
-  harness.board.drop(mutate(entry));
-  release();
-  await new Promise(resolve=>setTimeout(resolve,50));
-  assert.equal(harness.board.get(entry.id),undefined);
-  assert.equal(harness.runs.get(runId),undefined);
-  assert.deepEqual(harness.board.runsFor(entry.id),[]);
-  assert.throws(()=>harness.board.chatGet(entry.id), /unavailable/);
- } finally {release();await new Promise(resolve=>setTimeout(resolve,20));harness.close();}
+  migrate(db, migrations.filter(m => m.version <= 38));
+  db.prepare("INSERT INTO board_chat_messages VALUES ('m','entry','run','user','{}')").run();
+  migrate(db);
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'board_chat%'").get(), undefined);
+ } finally { db.close(); }
+ const {harness}=setup();
+ try {
+  const dispatch=createDispatch(harness);
+  for (const channel of ['board.chat.start','board.chat.get','board.chat.cancel']) {
+   const response=await dispatch(channel,{entryId:'entry'});
+   assert.ok(!response.ok && response.error.code==='unknown_channel',channel);
+  }
+ } finally { harness.close(); }
 });

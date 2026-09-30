@@ -12,7 +12,7 @@ type Ports = {
   reader: OfferReader; contexts: () => readonly CvContext[];
   captureCv: (contextId: string) => Omit<BoardCv, 'id' | 'createdAt' | 'reason'>;
   emptyCv: Record<string, unknown>;
-  execute: (input: BoardRunInput, signal: AbortSignal, onText?: (text: string) => void) => RunHandle;
+  execute: (input: BoardRunInput, signal: AbortSignal) => RunHandle;
   run: (id: string) => RunRecord | undefined;
   now?: () => number;
   onDrop?: (entryId: string) => void;
@@ -28,7 +28,6 @@ export const createBoardService = (store: ReturnType<typeof createBoardStore>, p
     const running = active.get(entryId);
     if (running && running.generation !== store.requireEntry(entryId).preparation.generation) running.controller.abort();
   };
-  const chats = new Map<string, {controller: AbortController; text: string; entryId: string}>();
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   store.recover();
@@ -159,23 +158,6 @@ export const createBoardService = (store: ReturnType<typeof createBoardStore>, p
     }
     schedule();
   };
-  const recoverChats = (entryId: string) => {
-    const messages = store.chatMessages(entryId);
-    for (const input of store.runsFor(entryId).filter(input => input.step === 'chat')) {
-      const run = ports.run(input.runId);
-      if (run?.status === 'succeeded' && !messages.some(message => message.runId === input.runId && message.role === 'assistant')) {
-        store.appendChat(entryId,{id:randomUUID(),role:'assistant',text:String(run.result?.answer ?? ''),createdAt:run.endedAt ?? now(),runId:run.id,contextRevision:input.generation});
-      }
-    }
-  };
-  const launchChat = (input: BoardRunInput) => {
-    if(chats.has(input.runId)) return;
-    const state={controller:new AbortController(),text:'',entryId:input.entryId};chats.set(input.runId,state);
-    try {
-      const handle=ports.execute(input,state.controller.signal,text=>{state.text=(state.text+text).slice(0,100000);});
-      void handle.settled.then(()=>{if(!closed && !state.controller.signal.aborted && store.get(input.entryId))recoverChats(input.entryId);}).catch(()=>undefined).finally(()=>chats.delete(input.runId));
-    } catch(error) {chats.delete(input.runId);throw error;}
-  };
   schedule();
   return {
     ...store,
@@ -226,35 +208,8 @@ export const createBoardService = (store: ReturnType<typeof createBoardStore>, p
       const result = store.drop(request);
       ports.onDrop?.(request.entryId);
       active.get(request.entryId)?.controller.abort();
-      for (const chat of chats.values()) if (chat.entryId === request.entryId) chat.controller.abort();
       return result;
     },
-    chatSend(request: {entryId: string; runId: string; question: string}) {
-      if(closed) throw new OperationError('unavailable','Board chat is closed.');
-      const previous=store.getRun(request.runId);
-      if(previous) {
-        if(previous.entryId!==request.entryId || previous.step!=='chat' || previous.input.question!==request.question) throw new OperationError('operation_conflict','This run ID belongs to another question.');
-        if(!ports.run(previous.runId)) launchChat(previous);
-        return {runId:request.runId};
-      }
-      if([...chats.values()].some(chat=>chat.entryId===request.entryId)) throw new OperationError('board_busy','Wait for the current reply before sending another question.');
-      recoverChats(request.entryId);
-      const entry=store.requireEntry(request.entryId), captured=snapshot(entry);
-      const history=store.chatMessages(entry.id).slice(-16).map(message=>({role:message.role,text:message.text}));
-      const application={applicationStage:entry.applicationStage,answers:entry.answers,submissions:entry.submissions,history:entry.history,artifacts:entry.artifacts};
-      const input: BoardRunInput={runId:request.runId,entryId:entry.id,generation:entry.revision,step:'chat',capability:'ask_profile',snapshot:captured,application,
-        input:{question:request.question,history,summary:'',offerText:captured.offer.text.slice(0,100000),boardContext:JSON.stringify({...application,history:entry.history.slice(-100),omittedHistoryEvents:Math.max(0,entry.history.length-100),notes:entry.history.filter(event=>event.type==='note')}).slice(0,150000)}};
-      store.transaction(()=>{store.storeRun(input);store.appendChat(entry.id,{id:randomUUID(),role:'user',text:request.question,createdAt:now(),runId:request.runId,contextRevision:entry.revision});});
-      launchChat(input);
-      return {runId:request.runId};
-    },
-    chatGet(entryId: string) {
-      recoverChats(entryId);
-      const inputs=store.runsFor(entryId).filter(input=>input.step==='chat');
-      const last=inputs.at(-1);const run=last?ports.run(last.runId):undefined;const streaming=last?chats.get(last.runId):undefined;
-      return {messages:store.chatMessages(entryId),runId:last?.runId,status:streaming?'running':run?.status ?? (last?'failed':undefined),error:run?.errorMessage ?? (last && !run ? 'The previous question was interrupted before it started. Send it again.' : undefined),streamText:streaming?.text ?? ''};
-    },
-    chatCancel(entryId: string, runId: string) {if(store.getRun(runId)?.entryId!==entryId)throw new OperationError('board_conflict','This run belongs to another offer.');chats.get(runId)?.controller.abort();},
-    close() {closed=true;if(timer)clearTimeout(timer);for(const running of active.values())running.controller.abort();for(const chat of chats.values())chat.controller.abort();}
+    close() {closed=true;if(timer)clearTimeout(timer);for(const running of active.values())running.controller.abort();}
   };
 };

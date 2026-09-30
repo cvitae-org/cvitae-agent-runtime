@@ -1,3 +1,4 @@
+import { boardChatRemoval0039 } from './migrations/0039-board-chat-removal.js';
 import { indexParking0038 } from './migrations/0038-index-parking.js';
 import { integrationDirectories0037 } from './migrations/0037-integration-directories.js';
 import { integrationSettings0036 } from './migrations/0036-integration-settings.js';
@@ -89,7 +90,8 @@ export const migrations: readonly Migration[] = [
   { version: 35, sql: integrationAcquisitions0035 },
   { version: 36, sql: integrationSettings0036 },
   { version: 37, sql: integrationDirectories0037 },
-  { version: 38, sql: indexParking0038 }
+  { version: 38, sql: indexParking0038 },
+  { version: 39, sql: boardChatRemoval0039 }
 ];
 
 export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.version), 0);

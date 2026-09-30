@@ -22,8 +22,5 @@ export const boardPayloads = {
   'board.stage.set': write.extend({stage:z.enum(applicationStages),note:z.string().max(30000).optional()}).strict(),
   'board.submissions.record': write.extend({kind:z.enum(['application','followup','correction']),correctsId:id.optional(),submittedAt:time,destination:z.string().max(4000),channel:z.string().max(1000),answers,note:z.string().max(30000),cvVersionId:id.optional(),artifactId:id.optional()}).strict(),
   'board.artifacts.put': write.extend({name:z.string().min(1).max(1000),mime:z.string().min(1).max(200),base64:z.string().max(28000000),cvVersionId:id.optional()}).strict(),
-  'board.artifacts.get': z.object({entryId:id,artifactId:id}).strict(),
-  'board.chat.start': z.object({entryId:id,runId:z.string().uuid(),question:z.string().trim().min(1).max(30000)}).strict(),
-  'board.chat.get': z.object({entryId:id}).strict(),
-  'board.chat.cancel': z.object({entryId:id,runId:z.string().uuid()}).strict()
+  'board.artifacts.get': z.object({entryId:id,artifactId:id}).strict()
 };

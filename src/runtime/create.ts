@@ -581,12 +581,11 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   const detailQueue = createDetailQueue(createDetailQueueStore(db), enrichment, discoverySearches);
 
   const boardStore = createBoardStore(db, offers, ids => new Map(opportunities.resolve(ids).identities.map(item => [item.id,item.opportunityId])), options.now);
-  const executeBoardRun = (input: BoardRunInput, signal: AbortSignal, onText?: (text: string) => void) => {
+  const executeBoardRun = (input: BoardRunInput, signal: AbortSignal) => {
     boardStore.authorizeRun(input.runId,validateInput(route(deps.capabilities,input.capability),input.input));
     const bound = bindOfferScope(input.snapshot,effects);
     return beginRun({...deps,...bound,scopeLegacy:()=>undefined,
-      finish: (_runId,result,commit)=>{commit(result);return result;},
-      deltas: delta=>{onText?.(delta.text);deps.deltas?.(delta);}
+      finish: (_runId,result,commit)=>{commit(result);return result;}
     }, {runId:input.runId,capability:input.capability,input:input.input,signal});
   };
   const applicationAgent = createApplicationAgent(boardStore, {

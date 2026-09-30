@@ -30,5 +30,4 @@ export type BoardEntry = {
 };
 export type BoardSummary = Pick<BoardEntry, 'id' | 'offerId' | 'opportunityId' | 'addedAt' | 'updatedAt' | 'revision' | 'applicationStage' | 'preparation' | 'currentCvId' | 'languageOverride'> & { title: string; company: string; url: string; board: string; language?: string; archived: boolean };
 export type BoardWrite = { entryId: string; operationId: string; expectedRevision: number };
-export type BoardRunInput = { runId: string; entryId: string; generation: number; step: string; capability: string; input: Record<string, unknown>; snapshot: OfferSnapshot; application?: Pick<BoardEntry, 'applicationStage' | 'answers' | 'submissions' | 'history' | 'artifacts'> };
-export type BoardChatMessage = { id: string; role: 'user' | 'assistant'; text: string; createdAt: number; runId: string; contextRevision: number };
+export type BoardRunInput = { runId: string; entryId: string; generation: number; step: string; capability: string; input: Record<string, unknown>; snapshot: OfferSnapshot };
