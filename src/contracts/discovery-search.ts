@@ -1,4 +1,5 @@
 import { discoveryBoardIdSchema, maxDiscoveryBoards } from './discovery-board.js';
+import { integrationProvenanceSchema, integrationAcquisitionSchema } from './integration.js';
 import { fieldEvidenceMapSchema } from './field-evidence.js';
 import { z } from 'zod';
 import { publishedSalarySchema } from './published-salary.js';
@@ -36,6 +37,7 @@ export const discoveryFiltersSchema = z.object({
 // Strip all unknown fields at every level. In particular rating, run IDs, notes
 // and candidate/profile facts must never enter Discover's public evidence store.
 export const discoveryEvidenceSchema = z.object({
+  acquisitions: z.array(integrationAcquisitionSchema).max(1000).optional(),
   offer: z.object({
     id, url: optionalText, finalUrl: optionalText, board: optionalText,
     position: optionalText, company: optionalText, location: optionalText,
@@ -58,6 +60,7 @@ export const discoveryEvidenceSchema = z.object({
       responsibilities: strings.optional(), required_skills: strings.optional() }).optional()
   }),
   listing: z.object({ board: board.optional(), url: optionalText, title: optionalText,
+    provenance: integrationProvenanceSchema.optional(),
     titleSource: z.enum(['board', 'slug', 'unavailable']).optional(), external_id: optionalText,
     description: z.string().max(500000).optional(), apply_url: z.string().url().max(4000).optional(),
     work_mode: z.enum(['remote','hybrid','onsite','unknown']).optional(), adapter_id: text.optional(), adapter_version: text.optional(),

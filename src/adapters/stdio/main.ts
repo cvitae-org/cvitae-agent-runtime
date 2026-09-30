@@ -17,6 +17,7 @@
 import '../../env.js';
 import {createBrowserBridge,defaultBridgeDirectory} from '../browser/bridge.js';
 import { createHost } from './host.js';
+import { startupRefusal } from './refusals.js';
 import { createHarness } from '../../runtime/create.js';
 import type { AiLogEntry, AiLogger } from '../../contracts/index.js';
 
@@ -35,19 +36,30 @@ const stderrLogger: AiLogger = {
   }
 };
 
-const host = createHost({
-  open: (deltas) => {
-    const harness=createHarness({logger:stderrLogger,deltas,indexRecovery:true});
-    const bridge=createBrowserBridge(defaultBridgeDirectory(),(session,method,payload)=>harness.browser.dispatch(session,method,payload),session=>harness.browser.disconnect(session),{extensionPath:process.env.CVITAE_BROWSER_EXTENSION_PATH});
-    harness.browser.attach(bridge);return harness;
-  },
-  input: process.stdin,
-  output: process.stdout
-});
+try {
+  const host = createHost({
+    open: (deltas) => {
+      const harness=createHarness({logger:stderrLogger,deltas,indexRecovery:true});
+      const bridge=createBrowserBridge(defaultBridgeDirectory(),(session,method,payload)=>harness.browser.dispatch(session,method,payload),session=>harness.browser.disconnect(session),{extensionPath:process.env.CVITAE_BROWSER_EXTENSION_PATH});
+      harness.browser.attach(bridge);return harness;
+    },
+    input: process.stdin,
+    output: process.stdout
+  });
 
-// `exitCode` rather than `process.exit`, so Node flushes what is still queued
-// on stdout. The last thing written is usually the reply to `bridge.shutdown`,
-// and a parent that never sees it cannot tell a clean stop from a crash.
-void host.closed.then(() => {
-  process.exitCode = 0;
-});
+  // `exitCode` rather than `process.exit`, so Node flushes what is still queued
+  // on stdout. The last thing written is usually the reply to `bridge.shutdown`,
+  // and a parent that never sees it cannot tell a clean stop from a crash.
+  void host.closed.then(() => {
+    process.exitCode = 0;
+  });
+} catch (error) {
+  // A refusal a restart cannot fix (a database from a newer build, no room for
+  // the backup an upgrade needs) ends with a status of its own, so the parent
+  // stops instead of retrying. Anything else is a crash and stays one.
+  const refusal = startupRefusal(error);
+  if (!refusal) throw error;
+  process.stderr.write(`cvitae-runtime: ${refusal.code}: ${refusal.message}\n`, () => {
+    process.exit(refusal.status);
+  });
+}

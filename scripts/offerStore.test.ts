@@ -41,7 +41,7 @@ test('a saved offer comes back with every field it went in with', () => {
     const store = createOfferStore(s.db);
     const written = record({
       finalUrl: 'https://boards.example/offer-1?utm=x',
-      board: 'justjoin',
+      board: 'vacancies',
       location: 'Kraków',
       workMode: 'hybrid',
       seniority: 'senior',

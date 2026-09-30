@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "type": "string",
+      "const": "job-integrations"
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 2
+    },
+    "providerId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "website": {
+      "type": "string",
+      "maxLength": 4000,
+      "format": "uri"
+    },
+    "resolveUrl": {
+      "type": "string",
+      "maxLength": 4000,
+      "format": "uri"
+    },
+    "authentication": {
+      "type": "string",
+      "enum": [
+        "none",
+        "bearer"
+      ]
+    },
+    "capabilities": {
+      "maxItems": 128,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+      }
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "categories": {
+          "maxItems": 128,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+          }
+        },
+        "markets": {
+          "maxItems": 128,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+          }
+        }
+      },
+      "required": [
+        "categories",
+        "markets"
+      ],
+      "additionalProperties": false
+    },
+    "signing": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "Ed25519"
+        },
+        "publicKeys": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "algorithm",
+        "publicKeys"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "protocol",
+    "schemaVersion",
+    "providerId",
+    "name",
+    "website",
+    "resolveUrl",
+    "authentication",
+    "capabilities",
+    "scope",
+    "signing"
+  ],
+  "additionalProperties": false
+}

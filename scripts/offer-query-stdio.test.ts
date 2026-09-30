@@ -48,7 +48,7 @@ test('real stdio query schema/context/start/page/cancel and restart', { skip: !q
             supported: boolean;
         }).supported, true);
         const identity = { id: 's', importKey: 'i' };
-        await host.call('discovery.searches.import.begin', { ...identity, phrase: 'React', boards: ['justjoin'], filters: {}, rowCount: 50 });
+        await host.call('discovery.searches.import.begin', { ...identity, phrase: 'React', boards: ['vacancies'], filters: {}, rowCount: 50 });
         await host.call('discovery.searches.import.append', { ...identity, offset: 0, items: Array.from({ length: 50 }, (_, i) => ({ offer: { id: `s-${i}`, text: 'Published React', stated: { title: 'React' } } })) });
         await host.call('discovery.searches.import.finish', identity);
         const scope = { kind: 'search', searchId: 's' }, ctx = await host.call('offers.query.context', { ownerSearchId: 's', scope });

@@ -15,7 +15,7 @@ const directory=mkdtempSync(join(tmpdir(),'discover-facts-live-'));
 const h=createHarness({databasePath:join(directory,'runtime.sqlite'),env:process.env,scraperUrl:'',timeoutMs:60000});
 try {
  const id='synthetic',identity={id,importKey:'smoke'};
- h.discoverySearches.begin({...identity,phrase:'React',boards:['justjoin'],filters:{},rowCount:3});
+ h.discoverySearches.begin({...identity,phrase:'React',boards:['vacancies'],filters:{},rowCount:3});
  h.discoverySearches.append({...identity,offset:0,items:[0,1,2].map(i=>({offer:{id:`synthetic-${i}`,text:i===0?'You will join an engineering team of 4 developers.':i===1?'Our company has 4 employees. The engineering team size is not specified.':'You will join an engineering team of 12 developers.',stated:{title:'React Engineer',work_mode:i===2?'onsite':'remote'}}}))});h.discoverySearches.finish(identity);
  const captured=await h.offerQueries.context(id,{kind:'search',searchId:id});
  h.discoveryChat.send({version:2,searchId:id,conversationId:h.discoveryChat.get(id).conversationId,runId:'smoke',question:'Use selective AI extraction to identify the number of developers in each engineering team, then list offers where that number is at most 5. Company size is not team size. Cite matching offers and report unknowns.',scope:'all',filterRevision:0,language:'en',snapshotId:captured.snapshotId,scopeRevision:captured.scopeRevision});

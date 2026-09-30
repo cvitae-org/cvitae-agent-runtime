@@ -32,6 +32,11 @@ pnpm check
 Typecheck, lint, the boundary rules and the test suite. None of it needs a model
 or a network.
 
+The [independent integration provider client](docs/integration-providers-v2.md)
+supports scoped discovery and browser listing capture, with durable acquisition
+provenance. Enable it through runtime configuration; provider management UI and
+removing legacy integrations remain separate migration milestones.
+
 ## How it is put together
 
 ```
@@ -422,6 +427,63 @@ pnpm cli approve 7f3a9c2 --deny
 
 A denial resumes the run too. The step asked, it has an answer, and what it does
 with a refusal is its own decision.
+
+## The database file
+
+Everything a person keeps — the CV, offers, conversations, settings — is one
+SQLite file: `~/.cvitae/runtime.db`, or wherever `CVITAE_DB` points. Four things
+protect it, and each is a way the file could otherwise be lost or exposed without
+an error.
+
+**It is versioned, and never opened by a build that does not know it.** The
+schema version is `PRAGMA user_version`, and `migrate` applies the steps newer
+than it, each in its own transaction. A file whose version is *newer* than the
+last step this build has was written by a later build, so it is refused with
+`db_newer_than_app` before a single query runs. Running older code against a
+newer schema is how a rolled-back app corrupts what the newer one saved.
+
+**It is copied before it is changed.** When migrations are pending on a file that
+has content, it is first set aside as `runtime.db.bak-<version>`, the version
+being the schema the copy holds. The copy is taken by folding the write-ahead log
+into the file and cloning it (copy-on-write on APFS, so a large database costs
+neither time nor space until one side changes), or by `VACUUM INTO` when another
+connection still holds the file. It is renamed into place only once complete, so
+a process killed half way never leaves something that looks like a backup and is
+not one. The newest two are kept — the one just made, and the newest schema among
+the others — and each is a whole database. If the copy cannot be made the upgrade
+does not start (`db_backup_failed`): migrating anyway would be trading the only
+copy of someone's data for a full disk they can fix in a minute.
+
+To go back: quit the app, move `runtime.db` aside, copy the backup to
+`runtime.db`, delete `runtime.db-wal` and `runtime.db-shm` if they exist, and
+start the build that wrote the backup.
+
+**It is private.** The file and the `-wal` and `-shm` files beside it are created
+readable by their owner only (`0600`), and a directory this process creates is
+`0700`. A `~/.cvitae` from an earlier build, which was readable by every account
+on the machine, is tightened at startup — bits are only ever removed — and with
+it everything inside, including files this runtime no longer reads. A directory
+that already existed and is not `.cvitae` is left as it was, because `CVITAE_DB`
+can name any folder and the folder may hold other things.
+
+**Deleted rows are overwritten.** `secure_delete = FAST` zeroes freed content
+whenever that costs no extra I/O, so a deleted conversation does not sit in the
+file's free pages until the space happens to be reused.
+
+The two refusals are the only startup failures this process reports on purpose.
+It writes one line to stderr, `cvitae-runtime: <code>: <message>`, and exits with
+a status of its own — 78 for `db_newer_than_app`, 73 for `db_backup_failed`,
+after `sysexits.h` — so that a parent that restarts a crashed runtime can tell a
+refusal, which a restart cannot fix, from a crash. The numbers are in
+`src/adapters/stdio/refusals.ts` and are mirrored by the desktop app; anything
+else that goes wrong at startup is a crash and keeps exiting with 1.
+
+Not done: a vacuum policy (`auto_vacuum` is still 0, so the file never shrinks;
+changing it takes one full `VACUUM`, which needs room for a second copy), a
+retention setting for the AI-call log, and removing the legacy `cv.json`,
+`offers.jsonl` and `ai-logs/` that older builds left in `~/.cvitae`. Nothing here
+reads them any more, but nothing has verified that everything in them is in the
+database either, so they are left for the person to delete.
 
 ## Hosting it elsewhere
 

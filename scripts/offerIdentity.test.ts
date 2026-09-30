@@ -1,3 +1,4 @@
+import {boards} from './fixtures/source-catalogue.js';
 /**
  * The board catalogue, URL identity, and query construction.
  *
@@ -10,43 +11,43 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  boardFor,
-  boards,
+  boardFor as classifyBoard,
   hostOf,
-  isFetchable,
-  scrapableBoards,
-  searchableBoards
+  isFetchable as canFetch,
+  scrapableBoards as filterScrapable,
+  searchableBoards as filterSearchable
 } from '../src/capabilities/offers/boards.js';
 import { normaliseUrl, offerId } from '../src/capabilities/offers/identity.js';
 import { buildKeywords, buildQueries, queriesForRound } from '../src/capabilities/offers/queries.js';
 import { emptyPreferences, preferencesSchema } from '../src/capabilities/offers/preferences.js';
 import { emptyDocument, type CvDocument } from '../src/capabilities/cv/document.js';
 
+const boardFor=(url:string)=>classifyBoard(url,boards),isFetchable=(url:string)=>canFetch(url,boards),scrapableBoards=()=>filterScrapable('pl',boards),searchableBoards=()=>filterSearchable('pl',boards);
 /* ------------------------------------------------------------- catalogue -- */
 
 test('a board is named once, and found by any of its URLs', () => {
-  const board = boardFor('https://justjoin.it/offers/some-role');
-  assert.equal(board?.domain, 'justjoin.it');
-  assert.equal(boardFor('https://www.justjoin.it/offers/x')?.domain, 'justjoin.it');
+  const board = boardFor('https://vacancies.example/offers/some-role');
+  assert.equal(board?.domain, 'vacancies.example');
+  assert.equal(boardFor('https://www.vacancies.example/offers/x')?.domain, 'vacancies.example');
   assert.equal(boardFor('https://not-a-board.example/jobs/1'), undefined);
 });
 
 test('hostOf drops the www and keeps everything that distinguishes a board', () => {
-  assert.equal(hostOf('https://www.pracuj.pl/praca/x'), 'pracuj.pl');
-  assert.equal(hostOf('https://it.pracuj.pl/praca/x'), 'it.pracuj.pl');
+  assert.equal(hostOf('https://www.rendered.example/praca/x'), 'rendered.example');
+  assert.equal(hostOf('https://it.rendered.example/praca/x'), 'it.rendered.example');
   assert.equal(hostOf('not a url'), '');
 });
 
 /**
- * The refused list is the load-bearing half of the catalogue. LinkedIn and
- * Indeed ban the account that crawls them, so "we have no adapter yet" and "we
+ * The refused list is the load-bearing half of the catalogue. Manual Jobs and
+ * Manual Two ban the account that crawls them, so "we have no adapter yet" and "we
  * will not fetch this" have to be different answers.
  */
 test('a board we refuse to fetch is not merely one we cannot', () => {
-  const linkedin = boardFor('https://www.linkedin.com/jobs/view/1');
-  assert.equal(linkedin?.fetchable, 'refused');
-  assert.equal(isFetchable('https://www.linkedin.com/jobs/view/1'), false);
-  assert.equal(isFetchable('https://justjoin.it/offers/x'), true);
+  const manual_jobs = boardFor('https://www.manual.example/jobs/view/1');
+  assert.equal(manual_jobs?.fetchable, 'refused');
+  assert.equal(isFetchable('https://www.manual.example/jobs/view/1'), false);
+  assert.equal(isFetchable('https://vacancies.example/offers/x'), true);
 });
 
 test('every board in the catalogue is well formed and unique', () => {
@@ -68,8 +69,8 @@ test('every board in the catalogue is well formed and unique', () => {
 
 test('tracking parameters are stripped and meaningful ones are kept', () => {
   assert.equal(
-    normaliseUrl('https://justjoin.it/offers/role?utm_source=x&gclid=y'),
-    normaliseUrl('https://justjoin.it/offers/role')
+    normaliseUrl('https://vacancies.example/offers/role?utm_source=x&gclid=y'),
+    normaliseUrl('https://vacancies.example/offers/role')
   );
   assert.notEqual(
     normaliseUrl('https://boards.example/view?id=1'),
@@ -78,8 +79,8 @@ test('tracking parameters are stripped and meaningful ones are kept', () => {
 });
 
 test('the same posting under two spellings is one id', () => {
-  const a = offerId('https://www.justjoin.it/offers/role?utm_campaign=spring');
-  const b = offerId('https://justjoin.it/offers/role');
+  const a = offerId('https://www.vacancies.example/offers/role?utm_campaign=spring');
+  const b = offerId('https://vacancies.example/offers/role');
   assert.equal(a, b);
   assert.ok(a.startsWith('offer-'));
 });
@@ -118,7 +119,7 @@ test('keywords come from the CV and the stated requirements', () => {
   assert.ok(keywords.includes('react'), JSON.stringify(keywords));
 
   // The role word survives, minus the part that filters nothing: `developer`
-  // matches 6,000 of justjoin's 9,783 live offers.
+  // matches 6,000 of vacancies's 9,783 live offers.
   assert.ok(keywords.includes('frontend'), JSON.stringify(keywords));
   assert.ok(!keywords.includes('developer'), JSON.stringify(keywords));
 });

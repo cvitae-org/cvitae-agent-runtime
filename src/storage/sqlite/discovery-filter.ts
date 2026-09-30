@@ -3,7 +3,7 @@ import type { discoveryFiltersSchema } from '../../contracts/discovery-search.js
 /** A salary and its contract must match the same published alternative. */
 export const discoveryFilter = (f: z.infer<typeof discoveryFiltersSchema>, units: { currency?: string; period?: string } = {}): { sql: string; args: (string | number)[] } => {
  const clauses: string[]=[]; const args:(string|number)[]=[];
- const source="coalesce(json_extract(e.value,'$.offer.board'),json_extract(e.value,'$.listing.board'),'unknown')";
+ const source="coalesce(json_extract(e.value,'$.listing.provenance.sourceKey'),json_extract(e.value,'$.offer.board'),json_extract(e.value,'$.listing.board'),'unknown')";
  if(f.sources.length){clauses.push(`${source} IN (${f.sources.map(()=>'?').join(',')})`);args.push(...f.sources);}
  if(f.contracts.length || f.minimum!==null || f.maximum!==null || units.currency || units.period){
   const contract="coalesce(json_extract(e.value,'$.offer.stated.contract_type'),json_extract(e.value,'$.offer.contractType'),json_extract(e.value,'$.offer.analysis.contract_type'),json_extract(e.value,'$.listing.contract_type'),'')";

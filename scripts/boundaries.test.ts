@@ -1,3 +1,4 @@
+import {readdirSync} from 'node:fs';
 /**
  * The boundary rules, as a test.
  *
@@ -47,9 +48,7 @@ test('no module crosses a boundary it should not', () => {
 const KEY_VARIABLES = ['OPENROUTER_API_KEY', 'HF_TOKEN', 'OPENAI_API_KEY'];
 
 test('an API key is named in one directory and read in one function', () => {
-  const files = execFileSync('git', ['ls-files', 'src'], { cwd: root, encoding: 'utf8' })
-    .split('\n')
-    .filter((path) => path.endsWith('.ts'));
+  const files = readdirSync(join(root,'src'),{recursive:true}).filter((file):file is string=>typeof file==='string'&&file.endsWith('.ts')).map(file=>'src/'+file);
 
   const offenders = files.filter((path) => {
     if (path.startsWith('src/secrets/') || path === 'src/providers/resolve.ts') return false;

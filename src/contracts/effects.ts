@@ -18,6 +18,7 @@
  */
 
 import type { z } from 'zod';
+import type { IntegrationExecution } from './integration.js';
 import type { StatedFacts, StatedRoutes } from './offer.js';
 
 /* ------------------------------------------------------------------ shared */
@@ -249,6 +250,7 @@ export interface AiGateway {
 /* ----------------------------------------------------------------- offers */
 
 export type ResolvedOffer = {
+  readonly integration?: IntegrationExecution;
   /** The published job description, separate from an archival whole-page capture. */
   readonly descriptionText?: string;
   readonly sourceData?: Readonly<Record<string, unknown>>;
@@ -364,7 +366,10 @@ export type CompanyRequest = {
   readonly hints?: readonly string[];
 };
 
+export type IntegrationHostKind='board'|'ats'|'social'|'directory';
+export type IntegrationSourceInfo = {routing?:readonly {host:string;kind:IntegrationHostKind}[];domain:string;name:string;hosts?:readonly string[];scraperId?:string;fetchable:'ok'|'refused';markets:readonly string[];search:boolean};
 export interface SiteReader {
+  integrationSources?(call: EffectCall): Promise<readonly IntegrationSourceInfo[]>;
   /**
    * One page, with the same SSRF guard and the same politeness as an offer.
    *

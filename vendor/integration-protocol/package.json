@@ -1,0 +1,33 @@
+{
+  "name": "@job-integrations/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Provider-independent contracts for locally executed job integrations.",
+  "exports": {
+    ".": {
+      "types": "./index.d.mts",
+      "import": "./index.mjs"
+    },
+    "./node": {
+      "types": "./node.d.mts",
+      "import": "./node.mjs"
+    },
+    "./directory": {
+      "types": "./directory.d.mts",
+      "import": "./directory.mjs"
+    }
+  },
+  "files": [
+    "*.mjs",
+    "*.d.mts",
+    "schemas",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "zod": "^4.1.12"
+  },
+  "scripts": {
+    "test": "node --test conformance.test.mjs"
+  }
+}

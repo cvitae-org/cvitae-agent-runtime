@@ -21,7 +21,7 @@ export const createOfferDetailsService = (offers: OfferStore, store: EnrichmentS
     const value = state(id);
     if (value.extractorVersion?.startsWith('browser:') && offers.get(id)?.text.trim()) return true;
     if (value.extractorVersion?.startsWith('listing:') && offers.get(id)?.text.trim()) return true;
-    return [publishedExtractorVersion,'reader-v1'].includes(value.extractorVersion ?? '') && !!offers.get(id)?.text.trim() && value.detailsFetchedAt !== undefined && now() - value.detailsFetchedAt < 7 * 24 * 60 * 60 * 1000;
+    return ([publishedExtractorVersion,'reader-v1'].includes(value.extractorVersion ?? '') || value.extractorVersion?.startsWith('integration:')) && !!offers.get(id)?.text.trim() && value.detailsFetchedAt !== undefined && now() - value.detailsFetchedAt < 7 * 24 * 60 * 60 * 1000;
   };
   const release = (id: string, pending: Pending, consumer: symbol) => {
     pending.consumers.delete(consumer);

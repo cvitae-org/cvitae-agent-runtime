@@ -5,6 +5,7 @@ import type { CatalogueItem, DiscoveryCatalogue, DiscoveryListing, OfferStore } 
 import { normaliseUrl, offerId } from '../../capabilities/offers/identity.js';
 import type { Db } from './open.js';
 import type { Enrichment } from '../../contracts/enrichment.js';
+import { createIntegrationAcquisitions } from './integration-acquisitions.js';
 
 type SourceRow = { source_key: string; offer_id: string; listing: string; retrieved_at: string; seen_at: number;
   first_observed_at: number | null; latest_observed_at: number | null; publication_date: string | null;
@@ -27,6 +28,7 @@ const activity = (validThrough: string | undefined, observedAt: number, previous
 };
 
 export const createDiscoveryCatalogue = (db: Db, offers: OfferStore): DiscoveryCatalogue => {
+  const acquisitions = createIntegrationAcquisitions(db);
   const visibility = discoveryVisibility(db);
   const sourceByKey = db.prepare<[string]>('SELECT * FROM discovery_sources WHERE source_key = ?');
   const sourceByUrl = db.prepare<[string, string]>('SELECT * FROM discovery_sources WHERE board = ? AND url = ?');
@@ -44,12 +46,13 @@ export const createDiscoveryCatalogue = (db: Db, offers: OfferStore): DiscoveryC
       publication_date=coalesce(excluded.publication_date,discovery_sources.publication_date),
       publication_precision=CASE WHEN excluded.publication_date IS NULL THEN discovery_sources.publication_precision ELSE excluded.publication_precision END,
       activity=excluded.activity,activity_reason=excluded.activity_reason,activity_checked_at=excluded.activity_checked_at`);
-  const item = (id: string): CatalogueItem => {
-    const source = sourceForOffer.get(id) as SourceRow | undefined;
+  const item = (id: string, boards: string[] = []): CatalogueItem => {
+    const source = (boards.length ? db.prepare(`SELECT * FROM discovery_sources WHERE offer_id=? AND board IN (${boards.map(() => '?').join(',')}) ORDER BY seen_at DESC LIMIT 1`).get(id, ...boards) : sourceForOffer.get(id)) as SourceRow | undefined;
+    const provenance = acquisitions.list(id);
     const enrichment = db.prepare('SELECT value FROM offer_enrichments WHERE offer_id=?').get(id) as { value: string } | undefined;
     const note = db.prepare('SELECT text, revision, updated_at AS updatedAt FROM offer_notes WHERE offer_id=?').get(id) as CatalogueItem['note'];
     const parsedEnrichment = enrichment ? JSON.parse(enrichment.value) as Enrichment : undefined;
-    return { ...(note ? { note } : {}), offer: offers.get(id)!, ...(parsedEnrichment ? { enrichment: parsedEnrichment } : {}), ...(source ? {
+    return { ...(provenance.length ? { acquisitions: provenance } : {}), ...(note ? { note } : {}), offer: offers.get(id)!, ...(parsedEnrichment ? { enrichment: parsedEnrichment } : {}), ...(source ? {
       listing: JSON.parse(source.listing) as DiscoveryListing, retrievedAt: source.retrieved_at,
       freshness: {
         publication: { ...(source.publication_date ? { value: source.publication_date } : {}), precision: source.publication_precision },
@@ -73,7 +76,9 @@ export const createDiscoveryCatalogue = (db: Db, offers: OfferStore): DiscoveryC
         const id = existing?.id ?? offerId(url);
         if (visibility.blacklisted(id)) continue;
         ids.add(id);
-        if (source && Date.parse(source.retrieved_at) > Date.parse(batch.retrievedAt)) continue;
+        if (source && Date.parse(source.retrieved_at) > Date.parse(batch.retrievedAt)) {
+          acquisitions.record(id, batch.integration, batch.board, batch.retrievedAt, seenAt); continue;
+        }
         // Listing sightings can fill gaps, but must never demote a fetched/rated
         // offer, erase its body/analysis, or change the person's disposition.
         const authoritative = !!clean(listing.description) && !!listing.adapter_id;
@@ -89,7 +94,7 @@ export const createDiscoveryCatalogue = (db: Db, offers: OfferStore): DiscoveryC
         const stated = detailed ? {...published,...existing.stated} : {...existing?.stated,...published};
         offers.sight([{
           stated, text: clean(listing.description),
-          id, url, board: batch.board,
+          id, url, board: existing?.board ?? batch.board,
           position: detailed ? existing.position ?? title : (listing.titleSource === 'board' ? title : existing?.position ?? title),
           company: detailed ? existing.company ?? clean(listing.company) : clean(listing.company),
           location: detailed ? existing.location ?? clean(listing.location) : clean(listing.location),
@@ -115,6 +120,7 @@ export const createDiscoveryCatalogue = (db: Db, offers: OfferStore): DiscoveryC
 
         }
         saveAlias.run(batch.board, url, id);
+        acquisitions.record(id, batch.integration, batch.board, batch.retrievedAt, seenAt);
         const previous = source ? JSON.parse(source.listing) as DiscoveryListing : undefined;
         const merged = { ...previous, ...Object.fromEntries(Object.entries(listing).filter(([, value]) => value !== undefined && value !== '' && (!Array.isArray(value) || value.length > 0))) };
         // Provisional labels do not replace an already observed actual title.
@@ -128,7 +134,7 @@ export const createDiscoveryCatalogue = (db: Db, offers: OfferStore): DiscoveryC
           publicationDate: publicationEvidence.value ?? null, publicationPrecision: publicationEvidence.precision,
           activity: sourceActivity.status, activityReason: sourceActivity.reason, activityCheckedAt: sourceActivity.checkedAt ?? null });
       }
-      return [...ids].map(item);
+      return [...ids].map(id => item(id, [batch.board]));
     }).immediate,
     search(query) {
       // Quoted literal terms; user input never becomes FTS operators or SQL.
@@ -141,11 +147,12 @@ export const createDiscoveryCatalogue = (db: Db, offers: OfferStore): DiscoveryC
         ? `position : (${literal})`
         : `{position skills company location text} : (${literal})`;
       const rows = db.prepare(`SELECT o.id FROM discovery_fts JOIN offers o ON o.rowid=discovery_fts.rowid
-        WHERE ${visibility.sql('o.id')} AND discovery_fts MATCH ? AND o.board IN (${query.boards.map(() => '?').join(',')})
+        WHERE ${visibility.sql('o.id')} AND discovery_fts MATCH ? AND (o.board IN (${query.boards.map(() => '?').join(',')})
+          OR EXISTS(SELECT 1 FROM discovery_sources s WHERE s.offer_id=o.id AND s.board IN (${query.boards.map(() => '?').join(',')})))
         ORDER BY bm25(discovery_fts, 8, 6, 3, 2, 1, 1), o.last_seen_at DESC, o.id
-        LIMIT ? OFFSET ?`).all(match, ...query.boards, query.limit + 1, query.offset) as { id: string }[];
+        LIMIT ? OFFSET ?`).all(match, ...query.boards, ...query.boards, query.limit + 1, query.offset) as { id: string }[];
       const hasMore = rows.length > query.limit;
-      return { items: rows.slice(0, query.limit).map((row) => item(row.id)), hasMore, nextOffset: hasMore ? query.offset + query.limit : null };
+      return { items: rows.slice(0, query.limit).map((row) => item(row.id, query.boards)), hasMore, nextOffset: hasMore ? query.offset + query.limit : null };
     }
   };
 };

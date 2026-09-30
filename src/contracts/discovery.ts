@@ -1,6 +1,7 @@
 import type { PublishedSalary } from './published-salary.js';
 import type { OfferRecord } from './offer.js';
 import type { Enrichment } from './enrichment.js';
+import type { IntegrationReference, IntegrationProvenance, IntegrationExecution, IntegrationAcquisition } from './integration.js';
 
 export type DiscoveryBoardId = string;
 export type DiscoveryMatchMode = 'title' | 'anywhere';
@@ -63,6 +64,7 @@ export type DiscoveryQualification = {
 };
 export type ListingTitleSource = 'board' | 'slug' | 'unavailable';
 export type DiscoveryListing = {
+  provenance?: IntegrationProvenance;
   board: DiscoveryBoardId;
   url: string;
   title: string;
@@ -79,6 +81,7 @@ export type DiscoveryListing = {
   posted_at?: string;
 };
 export type DiscoveryBatch = {
+  integration?: IntegrationExecution;
   version: 1;
   /** False when acquisition hit a source page/request cap before the last page. */
   sourceExhausted?: boolean;
@@ -95,6 +98,8 @@ export type DiscoveryBatch = {
   limitations: string[];
 };
 export type DiscoveryBoard = {
+  presentation?: { icon?: {url:string;sha256:string;mimeType:'image/png'|'image/webp';byteLength:number}; attribution:{text:string;url?:string}[] };
+  integration?: IntegrationReference & { providerName: string };
   id: DiscoveryBoardId;
   label: string;
   adapterId?: string; adapterVersion?: string; markets?: string[]; iconKey?: string;
@@ -122,6 +127,7 @@ export interface DiscoverySource {
   search(query: { board: DiscoveryBoardId; keyword: string; pageSize: number; cursor?: string; requestLimit?: number }, signal: AbortSignal): Promise<{ status: 'ok'; data: DiscoveryBatch } | DiscoveryFailure>;
 }
 export type CatalogueItem = {
+  acquisitions?: IntegrationAcquisition[];
   offer: OfferRecord;
   enrichment?: Enrichment;
   note?: { text: string; revision: number; updatedAt: number };

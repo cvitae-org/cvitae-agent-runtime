@@ -34,7 +34,7 @@
  */
 
 import type { Disposition, Eligibility, OfferRecord } from '../../contracts/index.js';
-import { boardFor } from './boards.js';
+import { boardFor, type Board } from './boards.js';
 import type { CriterionVerdict, ScoreDetail, Verdict } from './criteria.js';
 
 const verdicts: readonly string[] = ['pass', 'fail', 'unknown'];
@@ -115,7 +115,7 @@ export type OfferView = {
   ratedAt: number | null;
 };
 
-export const offerView = (record: OfferRecord): OfferView => {
+export const offerView = (record: OfferRecord, boards:readonly Board[]=[]): OfferView => {
   const rawDetail = record.rating?.detail ?? {};
   const detail = readScoreDetail(rawDetail);
   const url = record.url ?? '';
@@ -126,9 +126,8 @@ export const offerView = (record: OfferRecord): OfferView => {
     url,
     // The board table's display name wins over the stored value, which is a
     // bare domain. Not cosmetic: `unreadByBoard` groups by the same name, and
-    // one payload calling the same board `justjoin.it` in one field and `Just
     // Join IT` in another cannot be filtered on.
-    board: boardFor(url)?.name || (record.board ?? ''),
+    board: boardFor(url,boards)?.name || (record.board ?? ''),
     position: record.position ?? '',
     company: record.company ?? '',
     location: record.location ?? '',
@@ -219,7 +218,7 @@ const isShortlisted = (record: OfferRecord): boolean =>
  */
 export const shortlist = (
   records: readonly OfferRecord[],
-  options: { scope?: Scope; limit?: number } = {}
+  options: { scope?: Scope; limit?: number;boards?:readonly Board[] } = {}
 ): Shortlist => {
   const { scope = 'shortlist', limit } = options;
 
@@ -244,12 +243,12 @@ export const shortlist = (
   // name would aim the next round at a request it does not have to make.
   for (const record of unread) {
     if (record.processing !== 'candidate') continue;
-    const board = boardFor(record.url ?? '')?.name ?? 'elsewhere';
+    const board = boardFor(record.url ?? '',options.boards)?.name ?? 'elsewhere';
     byBoard.set(board, (byBoard.get(board) ?? 0) + 1);
   }
 
   return {
-    offers: (limit === undefined ? ranked : ranked.slice(0, limit)).map(offerView),
+    offers: (limit === undefined ? ranked : ranked.slice(0, limit)).map(record=>offerView(record,options.boards)),
     tally: {
       total: records.length,
       shortlisted: shortlisted.length,

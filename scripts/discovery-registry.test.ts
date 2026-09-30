@@ -8,7 +8,6 @@ import { migrate, migrations } from '../src/storage/sqlite/migrate.js';
 import { createOfferStore } from '../src/storage/sqlite/offers.js';
 import { createDiscoveryCatalogue } from '../src/storage/sqlite/discovery.js';
 import { withDiscoveryMetadata } from '../src/storage/sqlite/discovery-registry.js';
-import { createDiscoverySource } from '../src/effects/discovery.js';
 import type { DiscoveryBoard, DiscoveryBatch } from '../src/contracts/discovery.js';
 import { discoveryEvidenceSchema } from '../src/contracts/discovery-search.js';
 import { projectOffer } from '../src/storage/sqlite/offer-query-projection.js';
@@ -23,20 +22,6 @@ const batch = (url = 'https://jobs.example/one'): DiscoveryBatch => ({
  work_mode: 'remote', adapter_id: 'fixture', adapter_version: '1', apply_url: 'https://employer.example/apply' }],
  nextCursor: null, hasMore: false, coverage: 'first-page', retrievedAt: '2026-09-21T10:00:00Z',
  expiresAt: '2026-09-21T11:00:00Z', effectiveFilters: [], unsupportedFilters: [], limitations: [] });
-
-test('registered fourth source is validated by trusted hosts; arbitrary IDs cannot collect', async () => {
- const source = createDiscoverySource({ url: 'http://127.0.0.1:8787', token: 'x'.repeat(32),
- registrations: [{ id: board.id, label: board.label, hosts: ['jobs.example'] }],
- fetch: (async (url) => new Response(JSON.stringify(String(url).endsWith('/boards')
-   ? { version: 1, boards: [board] } : { status: 'ok', data: batch() }))) as typeof fetch });
- assert.equal((await source.boards(new AbortController().signal)).boards[0]?.label, board.label);
- assert.throws(() => source.validateBoard!('uninstalled'));
- assert.equal((await source.search({ board: board.id, keyword: 'react', pageSize: 30 }, new AbortController().signal)).status, 'ok');
- const invalid = createDiscoverySource({ url: 'http://127.0.0.1:8787', token: 'x'.repeat(32),
- registrations: [{ id: board.id, label: board.label, hosts: ['jobs.example'] }],
- fetch: (async () => new Response(JSON.stringify({ status: 'ok', data: batch('https://other.example/one') }))) as typeof fetch });
- assert.equal((await invalid.search({ board: board.id, keyword: 'react', pageSize: 30 }, new AbortController().signal)).status, 'error');
-});
 
 test('new-board metadata survives unavailable or removed adapters without authorizing collection', async () => {
  const db = open(':memory:'); migrate(db);
@@ -155,29 +140,6 @@ test('waiting sources do not cancel a worker holding the remaining reservation',
  } finally { release(); service.close(); db.close(); }
 });
 
-test('Polish registrations validate source hosts and reserve paginated acquisition', async () => {
- const entries = [
-  ['bulldogjob', 'bulldogjob-html', 'https://bulldogjob.pl/companies/jobs/1-react'],
-  ['theprotocol', 'theprotocol-html', 'https://theprotocol.it/szczegoly/praca/react,oferta,01000000-57a3-50db-4ff2-08df0a53ccfa'],
-  ['solidjobs', 'solidjobs-api', 'https://solid.jobs/o/one/cvitae-studio'],
-  ['adzuna', 'adzuna-api-excerpt', 'https://www.adzuna.pl/jobs/land/ad/1'],
-  ['jooble', 'jooble-api-excerpt', 'https://pl.jooble.org/jdp/1'],
-  ['careerjet', 'careerjet-api-excerpt', 'https://jobviewtrack.com/v2/one']
- ];
- for (const [id, adapterId, url] of entries) {
-  let wrongHost = false;
-  const source = createDiscoverySource({ token: 'x'.repeat(32), fetch: (async target => Response.json(
-   String(target).endsWith('/boards') ? { version: 1, boards: [{ ...board, id, adapterId }] } :
-   { status: 'ok', data: { ...batch(), board: id, items: [{ ...batch().items[0], board: id, url: wrongHost ? 'https://evil.example/job' : url }] } }
-  )) as typeof fetch });
-  await source.boards(new AbortController().signal);
-  assert.equal(source.requestCost?.(id!), ['solidjobs', 'bulldogjob', 'theprotocol'].includes(id!) ? 10 : 1);
-  assert.equal((await source.search({ board: id!, keyword: 'React', pageSize: 30 }, new AbortController().signal)).status, 'ok');
-  wrongHost = true;
-  assert.equal((await source.search({ board: id!, keyword: 'React', pageSize: 30 }, new AbortController().signal)).status, 'error');
- }
-});
-
 
 test('a capped source snapshot remains bounded after the final local page', async () => {
  const db = open(':memory:'); migrate(db);
@@ -192,49 +154,4 @@ test('a capped source snapshot remains bounded after the final local page', asyn
   assert.equal(state.status, 'exhausted'); assert.equal(state.completion, 'bounded');
   assert.equal(state.stopReason, 'page_budget');
  } finally { service.close(); db.close(); }
-});
-
-
-test('optional source availability distinguishes an unreachable scraper from explicit disablement and recovers', async () => {
- let state: 'offline'|'disabled'|'ready' = 'offline'; let searches = 0;
- const source = createDiscoverySource({ token: 'x'.repeat(32), registrations: [{id: board.id, label: board.label, hosts: ['jobs.example'], optIn: true}],
-  fetch: (async url => {
-   if(state === 'offline') throw new Error('ECONNREFUSED');
-   if(String(url).endsWith('/boards')) return Response.json({version:1,boards:[{...board,enabled:state==='ready',unavailableReason:state==='disabled'?'Paused after a source refusal.':undefined}]});
-   searches++; return Response.json({status:'ok',data:batch()});
-  }) as typeof fetch });
- assert.throws(()=>source.validateBoard!(board.id),{code:'unavailable'});
- assert.equal((await source.boards(new AbortController().signal)).boards.find(value=>value.id===board.id)?.enabled,false);
- assert.throws(()=>source.validateBoard!(board.id),/collector could not be reached/);
- assert.equal((await source.search({board:board.id,keyword:'React',pageSize:30},new AbortController().signal)).status,'unavailable');
- assert.equal(searches,0);
- state='disabled';await source.boards(new AbortController().signal);
- assert.throws(()=>source.validateBoard!(board.id),/Fixture Jobs: Paused after a source refusal/);
- assert.equal((await source.search({board:board.id,keyword:'React',pageSize:30},new AbortController().signal)).status,'unsupported');
- assert.equal(searches,0);
- state='ready';await source.boards(new AbortController().signal);source.validateBoard!(board.id);
- assert.equal((await source.search({board:board.id,keyword:'React',pageSize:30},new AbortController().signal)).status,'ok');
- state='offline';assert.equal((await source.boards(new AbortController().signal)).boards.find(value=>value.id===board.id)?.enabled,false);
- assert.throws(()=>source.validateBoard!(board.id),{code:'unavailable'});
-});
-
-test('IPC live search refreshes availability after scraper recovery; cached search stays offline', async () => {
- const {createHarness}=await import('../src/runtime/create.js');
- const {createDispatch}=await import('../src/adapters/ipc/dispatch.js');
- let state:'ready'|'offline'|'disabled'='ready';let boardReads=0;let searches=0;
- const source=createDiscoverySource({token:'x'.repeat(32),registrations:[{id:board.id,label:board.label,hosts:['jobs.example'],optIn:true}],fetch:(async url=>{
-  if(String(url).endsWith('/boards')){boardReads++;if(state==='offline')throw new Error('offline');return Response.json({version:1,boards:[{...board,enabled:state==='ready',unavailableReason:'Disabled by configuration'}]});}
-  searches++;return Response.json({status:'ok',data:batch()});
- }) as typeof fetch});
- const h=createHarness({databasePath:':memory:',env:{},discoverySource:source});const dispatch=createDispatch(h);
- try {
-  await dispatch('discovery.boards',{});state='offline';
-  const request={schemaVersion:2,keyword:'React',boards:[board.id],sourceMode:'live'};
-  const failed=await dispatch('discovery.start',request);assert.equal(failed.ok,false);if(!failed.ok)assert.equal(failed.error.code,'unavailable');assert.equal(searches,0);
-  const reads=boardReads;assert.equal((await dispatch('discovery.start',{...request,sourceMode:'cache'})).ok,true);assert.equal(boardReads,reads);
-  state='ready';assert.equal((await dispatch('discovery.start',request)).ok,true);
-  await new Promise<void>(resolve=>setImmediate(resolve));assert.equal(searches,1);
-  state='disabled';const disabled=await dispatch('discovery.start',request);assert.equal(disabled.ok,false);if(!disabled.ok)assert.equal(disabled.error.code,'unsupported_source');assert.equal(searches,1);
-  state='ready';assert.equal((await dispatch('discovery.start',request)).ok,true);
- }finally{h.close();}
 });

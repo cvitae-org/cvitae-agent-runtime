@@ -274,7 +274,7 @@ test('what the board stated comes back uninterpreted, and only the declared fiel
       JSON.stringify({
         status: 'ok',
         data: {
-          board: 'justjoin',
+          board: 'vacancies',
           source_url: 'https://board.example/offer/1?ref=canonical',
           extraction: 'jsonld',
           title: 'Senior TypeScript Engineer',
@@ -292,7 +292,7 @@ test('what the board stated comes back uninterpreted, and only the declared fiel
   const reader = createWebReader({ scraperUrl, scraperToken: SCRAPER_TOKEN, fetch, resolveHost: resolver });
   const offer = await reader.resolve('https://board.example/offer/1', callFor());
 
-  assert.equal(offer.board, 'justjoin');
+  assert.equal(offer.board, 'vacancies');
   assert.equal(offer.finalUrl, 'https://board.example/offer/1?ref=canonical');
 
   // Verbatim: `work_mode` is the board's Polish phrase, not a `WorkMode`.
@@ -508,8 +508,8 @@ test('a board is asked for rows only, and rows missing a URL are dropped', async
       JSON.stringify({
         status: 'ok',
         data: [
-          { board: 'justjoin', url: 'https://justjoin.it/o/acme-1', title: 'Backend Engineer' },
-          { board: 'justjoin', title: 'Frontend Engineer' }
+          { board: 'vacancies', url: 'https://vacancies.example/o/acme-1', title: 'Backend Engineer' },
+          { board: 'vacancies', title: 'Frontend Engineer' }
         ]
       })
     )
@@ -523,7 +523,7 @@ test('a board is asked for rows only, and rows missing a URL are dropped', async
 
   const reader = createWebReader({ scraperUrl, scraperToken: SCRAPER_TOKEN, fetch: recording, resolveHost: resolver });
   const outcome = await reader.listBoard(
-    { board: 'justjoin', keyword: 'backend', limit: 200 },
+    { board: 'vacancies', keyword: 'backend', limit: 200 },
     callFor()
   );
 
@@ -534,7 +534,7 @@ test('a board is asked for rows only, and rows missing a URL are dropped', async
   );
   // Fetching every result would spend the budget on other companies' postings.
   assert.deepEqual(sent, [
-    { board: 'justjoin', keyword: 'backend', limit: 200, listingOnly: true }
+    { board: 'vacancies', keyword: 'backend', limit: 200, listingOnly: true }
   ]);
   assert.deepEqual(authorizations, [`Bearer ${SCRAPER_TOKEN}`]);
   assert.doesNotMatch(String(scraperUrl), new RegExp(SCRAPER_TOKEN));

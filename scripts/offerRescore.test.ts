@@ -40,7 +40,7 @@ const demanding = (): Preferences =>
 const seed = (store: OfferStore, over: Partial<OfferRecord> = {}): OfferRecord => {
   const record: OfferRecord = {
     id: 'offer-1',
-    url: 'https://justjoin.it/offers/offer-1',
+    url: 'https://vacancies.example/offers/offer-1',
     company: 'Kowalski',
     position: 'Senior Flutter Developer',
     location: 'Kraków',
@@ -228,7 +228,7 @@ test('a store larger than one page is walked to the end, once each', () => {
     // 250 rows against a page size of 200: the second read must return the
     // remainder rather than the same first page, and the loop must stop.
     for (let n = 0; n < 250; n++) {
-      seed(store, { id: `offer-${n}`, url: `https://justjoin.it/offers/${n}` });
+      seed(store, { id: `offer-${n}`, url: `https://vacancies.example/offers/${n}` });
       rate(store, `offer-${n}`, { ratedAt: AT + n });
     }
 

@@ -163,14 +163,7 @@ const clean = (value: string | undefined): string | undefined => {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 };
 
-/**
- * Merges two skill lists without duplicating case variants.
- *
- * Neither source is a superset. A board's tag list is canonical but short —
- * nofluffjobs lists ten technologies — while the model reads requirements
- * written in prose that never became tags. Both are "what the offer asks for",
- * so both go in, board first because those are the offer's own words.
- */
+
 const mergeSkills = (
   fromBoard: readonly string[] | undefined,
   fromModel: unknown

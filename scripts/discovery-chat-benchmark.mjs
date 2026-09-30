@@ -19,11 +19,11 @@ const directory=mkdtempSync(join(tmpdir(),'discovery-scale-')), path=join(direct
 const h=createHarness({databasePath:path,env:{AI_PROVIDER:'local'},scraperUrl:''});
 const baseline=process.memoryUsage().rss, started=performance.now();
 try {
- h.discoverySearches.create('scope','engineering',['justjoin']);
+ h.discoverySearches.create('scope','engineering',['vacancies']);
  for(let offset=0;offset<count;offset+=100) {
   const batch=Array.from({length:Math.min(100,count-offset)},(_,j)=>{
    const i=offset+j,frontend=i%2===0;
-   return {id:'synthetic-'+i,board:'justjoin',position:frontend?'Frontend Engineer':'Backend Engineer',company:'Synthetic company '+(i%73),workMode:i%3?'remote':'onsite',location:i%2?'Warsaw':'Krakow',skills:frontend?['React','TypeScript','Accessibility']:['Python','PostgreSQL','Docker'],text:(frontend?'Build accessible React interfaces using TypeScript. ':'Maintain Python services and PostgreSQL databases. ').repeat(35),salaryReading:i%7?{min:10000+i%15000,max:20000+i%15000,currency:i%5?'PLN':'EUR',period:i%5?'month':'year'}:{min:null,max:null,currency:'',period:''}};
+   return {id:'synthetic-'+i,board:'vacancies',position:frontend?'Frontend Engineer':'Backend Engineer',company:'Synthetic company '+(i%73),workMode:i%3?'remote':'onsite',location:i%2?'Warsaw':'Krakow',skills:frontend?['React','TypeScript','Accessibility']:['Python','PostgreSQL','Docker'],text:(frontend?'Build accessible React interfaces using TypeScript. ':'Maintain Python services and PostgreSQL databases. ').repeat(35),salaryReading:i%7?{min:10000+i%15000,max:20000+i%15000,currency:i%5?'PLN':'EUR',period:i%5?'month':'year'}:{min:null,max:null,currency:'',period:''}};
   });
   h.offers.sight(batch,Date.now());h.discoverySearches.add('scope',batch.map(o=>({offer:h.offers.get(o.id)})));
  }

@@ -19,7 +19,7 @@ const search='synthetic-live-smoke', run='synthetic-live-question';
 let timedOut=false;
 const timeout=setTimeout(()=>{timedOut=true;try{h.discoveryChat.cancel(search,run);}catch { /* The turn may already have settled. */ }},60000);
 try {
- h.discoverySearches.create(search,'frontend',['justjoin']);
+ h.discoverySearches.create(search,'frontend',['vacancies']);
  const offers=[{id:'synthetic-a',position:'Frontend Engineer',company:'Synthetic Cedar',workMode:'remote',text:'Public synthetic fixture: remote frontend role.',salary:'10000–20000 PLN/month',salaryReading:{min:10000,max:20000,currency:'PLN',period:'month'}},{id:'synthetic-b',position:'Frontend Engineer',company:'Synthetic Birch',workMode:'remote',text:'Public synthetic fixture: remote frontend role.',salary:'20000–30000 PLN/month',salaryReading:{min:20000,max:30000,currency:'PLN',period:'month'}},{id:'synthetic-c',position:'Frontend Engineer',company:'Synthetic Elm',workMode:'onsite',text:'Public synthetic fixture: onsite frontend role.',salary:'1000–2000 EUR/month',salaryReading:{min:1000,max:2000,currency:'EUR',period:'month'}}];
  h.offers.sight(offers,Date.now());h.discoverySearches.add(search,offers.map(o=>({offer:h.offers.get(o.id)})));
  const {conversationId}=h.discoveryChat.get(search);

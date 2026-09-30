@@ -1,3 +1,4 @@
+import {boards} from './fixtures/source-catalogue.js';
 /**
  * The report half of the hunt: ranking, the tally around it, and the one
  * narrowing of a stored `rating.detail`.
@@ -11,8 +12,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { OfferRecord, OfferRating } from '../src/contracts/index.js';
-import { offerView, readScoreDetail, shortlist } from '../src/capabilities/offers/shortlist.js';
+import { offerView as renderOffer, readScoreDetail, shortlist as rankShortlist } from '../src/capabilities/offers/shortlist.js';
 
+const offerView=(record:OfferRecord)=>renderOffer(record,boards);
+const shortlist=(records:readonly OfferRecord[],options:Parameters<typeof rankShortlist>[1]={})=>rankShortlist(records,{...options,boards});
 const AT = 1_760_000_000_000;
 
 const rating = (over: Partial<OfferRating> = {}): OfferRating => ({
@@ -74,8 +77,8 @@ test('the tally counts the work that is not on the list', () => {
     record({ id: 'a', rating: rating() }),
     record({ id: 'b', rating: rating({ eligibility: 'provisional' }) }),
     record({ id: 'c', rating: rating({ eligibility: 'ineligible' }) }),
-    record({ id: 'd', processing: 'candidate', url: 'https://justjoin.it/offers/d' }),
-    record({ id: 'e', processing: 'candidate', url: 'https://justjoin.it/offers/e' }),
+    record({ id: 'd', processing: 'candidate', url: 'https://vacancies.example/offers/d' }),
+    record({ id: 'e', processing: 'candidate', url: 'https://vacancies.example/offers/e' }),
     record({ id: 'f', processing: 'candidate', url: 'https://elsewhere.example/f' }),
     record({ id: 'g', processing: 'fetched' }),
     record({ id: 'h', processing: 'unreadable' }),
@@ -100,7 +103,7 @@ test('the tally counts the work that is not on the list', () => {
   // model call, and filing it under a board would aim the next round at a
   // request it does not have to make.
   assert.deepEqual(result.unreadByBoard, [
-    { board: 'Just Join IT', count: 2 },
+    { board: 'Vacancies', count: 2 },
     { board: 'elsewhere', count: 1 }
   ]);
 });
@@ -118,12 +121,12 @@ test('a dismissed offer leaves the shortlist without leaving the count', () => {
 
 test('the board name shown is the catalogue name, not the stored domain', () => {
   const view = offerView(
-    record({ url: 'https://justjoin.it/offers/x', board: 'justjoin.it', rating: rating() })
+    record({ url: 'https://vacancies.example/offers/x', board: 'vacancies.example', rating: rating() })
   );
 
   // `unreadByBoard` groups by this same name. One payload calling a board
-  // `justjoin.it` in one field and `Just Join IT` in another cannot be filtered.
-  assert.equal(view.board, 'Just Join IT');
+  // `vacancies.example` in one field and `Vacancies` in another cannot be filtered.
+  assert.equal(view.board, 'Vacancies');
 });
 
 test('an unknown field is empty in the view, never undefined', () => {

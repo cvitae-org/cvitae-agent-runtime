@@ -9,7 +9,8 @@
   },
   "types": "./dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "vendor/integration-protocol"
   ],
   "exports": {
     ".": {

@@ -353,8 +353,8 @@ const SEARCH_HITS = [
     snippet: 'Apply online.'
   },
   {
-    title: 'Acme on JustJoin',
-    url: 'https://justjoin.it/offers/acme-sp-z-o-o',
+    title: 'Acme on Vacancies',
+    url: 'https://vacancies.example/offers/acme-sp-z-o-o',
     snippet: 'Board listing.'
   }
 ];

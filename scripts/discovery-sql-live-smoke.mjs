@@ -12,7 +12,7 @@ const directory=mkdtempSync(join(tmpdir(),'discover-sql-live-'));
 const h=createHarness({databasePath:join(directory,'runtime.sqlite'),env:process.env,scraperUrl:'',timeoutMs:60000});
 try {
  const id='synthetic',identity={id,importKey:'smoke'};
- h.discoverySearches.begin({...identity,phrase:'React',boards:['justjoin'],filters:{},rowCount:3});
+ h.discoverySearches.begin({...identity,phrase:'React',boards:['vacancies'],filters:{},rowCount:3});
  h.discoverySearches.append({...identity,offset:0,items:[0,1,2].map(i=>({offer:{id:`synthetic-${i}`,text:'Synthetic public job.',stated:{title:'React Engineer',work_mode:i===2?'onsite':'remote'}}}))});h.discoverySearches.finish(identity);
  const captured=await h.offerQueries.context(id,{kind:'search',searchId:id});
  h.discoveryChat.send({version:2,searchId:id,conversationId:h.discoveryChat.get(id).conversationId,runId:'smoke',question:process.env.DISCOVER_SQL_QUESTION || 'How many saved roles explicitly offer remote work? Return the exact count.',scope:'all',filterRevision:0,language:'en',snapshotId:captured.snapshotId,scopeRevision:captured.scopeRevision});

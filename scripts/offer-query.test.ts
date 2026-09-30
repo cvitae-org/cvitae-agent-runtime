@@ -16,9 +16,9 @@ import { migrate, migrations } from '../src/storage/sqlite/migrate.js';
 import { createOfferStore } from '../src/storage/sqlite/offers.js';
 import { createDiscoverySearchStore } from '../src/storage/sqlite/discovery-searches.js';
 import type { QueryScope } from '../src/contracts/offer-query.js';
-const fixture = (id: string, title = 'Published React') => ({ offer: { id, url: `https://example.test/${id}`, board: 'justjoin', position: 'AI title', company: 'AI company', text: 'C++ C# .NET React engineer in Kraków and Łódź.', stated: { title, company: 'Published Co', location: 'Kraków', work_mode: 'remote', company_type: 'Fintech', company_size: '50–100', engagement_length: '6 months', start_date: 'ASAP', salary: '20000–25000 PLN/month', salary_ranges: [{ min: 20000, max: 25000, currency: 'PLN', period: 'month', contractType: 'B2B', rawText: '20–25k PLN' }], required_skills: ['React', 'C++'] }, analysis: { company: 'SECRET AI', position: 'SECRET AI' } }, listing: { board: 'justjoin', title: 'slug-only', titleSource: 'slug' } });
+const fixture = (id: string, title = 'Published React') => ({ offer: { id, url: `https://example.test/${id}`, board: 'vacancies', position: 'AI title', company: 'AI company', text: 'C++ C# .NET React engineer in Kraków and Łódź.', stated: { title, company: 'Published Co', location: 'Kraków', work_mode: 'remote', company_type: 'Fintech', company_size: '50–100', engagement_length: '6 months', start_date: 'ASAP', salary: '20000–25000 PLN/month', salary_ranges: [{ min: 20000, max: 25000, currency: 'PLN', period: 'month', contractType: 'B2B', rawText: '20–25k PLN' }], required_skills: ['React', 'C++'] }, analysis: { company: 'SECRET AI', position: 'SECRET AI' } }, listing: { board: 'vacancies', title: 'slug-only', titleSource: 'slug' } });
 function setup(path = ':memory:') { const h = createHarness({ databasePath: path, env: {}, scraperUrl: '' }); return h; }
-function seed(h: ReturnType<typeof setup>, id = 's', n = 3) { const identity = { id, importKey: 'fixture' }; h.discoverySearches.begin({ ...identity, phrase: 'React', boards: ['justjoin'], filters: {}, rowCount: n }); for (let i = 0; i < n; i += 50)
+function seed(h: ReturnType<typeof setup>, id = 's', n = 3) { const identity = { id, importKey: 'fixture' }; h.discoverySearches.begin({ ...identity, phrase: 'React', boards: ['vacancies'], filters: {}, rowCount: n }); for (let i = 0; i < n; i += 50)
     h.discoverySearches.append({ ...identity, offset: i, items: Array.from({ length: Math.min(50, n - i) }, (_, j) => fixture(`${id}-${i + j}`)) }); h.discoverySearches.finish(identity); }
 async function execute(h: ReturnType<typeof setup>, sql: string, scope: QueryScope = { kind: 'search', searchId: 's' }, ownerSearchId = 's', params: {
     name: string;
@@ -138,7 +138,7 @@ test('migration/backfill preserves old filters and notes; evidence GC retains qu
     try {
         migrate(db, migrations.filter(m => m.version <= 22));
         const offers = createOfferStore(db), searches = createDiscoverySearchStore(db, offers);
-        searches.begin({ id: 's', importKey: 'i', phrase: 'React', boards: ['justjoin'], filters: { minimum: 20000, contracts: ['b2b'] }, rowCount: 1 });
+        searches.begin({ id: 's', importKey: 'i', phrase: 'React', boards: ['vacancies'], filters: { minimum: 20000, contracts: ['b2b'] }, rowCount: 1 });
         searches.append({ id: 's', importKey: 'i', offset: 0, items: [fixture('x')] });
         searches.finish({ id: 's', importKey: 'i' });
         db.prepare("INSERT INTO offer_notes VALUES('x','private',1,1)").run();
@@ -239,9 +239,9 @@ test('legacy filter translation preserves published interval/alternative matchin
     const h = setup();
     try {
         const identity = { id: 's', importKey: 'i' };
-        h.discoverySearches.begin({ ...identity, phrase: 'React', boards: ['justjoin'], filters: { minimum: 21000, maximum: 23000, contracts: ['b2b'], currency: 'PLN', period: 'month' }, rowCount: 2 });
+        h.discoverySearches.begin({ ...identity, phrase: 'React', boards: ['vacancies'], filters: { minimum: 21000, maximum: 23000, contracts: ['b2b'], currency: 'PLN', period: 'month' }, rowCount: 2 });
         const published = fixture('p');
-        const ai = { offer: { id: 'ai', text: 'No stated salary', board: 'justjoin', salaryReading: { min: 22000, max: 23000, currency: 'PLN', period: 'month' }, contractType: 'B2B', analysis: { salary: '22000 PLN/month', contract_type: 'B2B' } } };
+        const ai = { offer: { id: 'ai', text: 'No stated salary', board: 'vacancies', salaryReading: { min: 22000, max: 23000, currency: 'PLN', period: 'month' }, contractType: 'B2B', analysis: { salary: '22000 PLN/month', contract_type: 'B2B' } } };
         h.discoverySearches.append({ ...identity, offset: 0, items: [published, ai] });
         h.discoverySearches.finish(identity);
         const old = h.discoverySearches.read({ id: 's', filtered: true, limit: 100 }).items.map(x => x.offer.id);
@@ -261,7 +261,7 @@ test('catalogue chooses latest captured evidence and excludes non-Discover offer
         seed(h);
         h.offers.sight([{ id: 'private-board-only', text: 'Do not query' }], 1);
         const identity = { id: 'other', importKey: 'i' };
-        h.discoverySearches.begin({ ...identity, phrase: 'React', boards: ['justjoin'], filters: {}, rowCount: 1 });
+        h.discoverySearches.begin({ ...identity, phrase: 'React', boards: ['vacancies'], filters: {}, rowCount: 1 });
         h.discoverySearches.append({ ...identity, offset: 0, items: [fixture('s-0', 'New public title')] });
         h.discoverySearches.finish(identity);
         const r = await execute(h, 'SELECT o.offer_id,o.role FROM offers o ORDER BY o.offer_id', { kind: 'catalogue' });
@@ -307,7 +307,7 @@ test('unreferenced result expiry retains idempotency tombstones and historical e
     try {
         migrate(db);
         const offers = createOfferStore(db), searches = createDiscoverySearchStore(db, offers);
-        searches.begin({ id: 's', importKey: 'i', phrase: 'React', boards: ['justjoin'], filters: {}, rowCount: 1 });
+        searches.begin({ id: 's', importKey: 'i', phrase: 'React', boards: ['vacancies'], filters: {}, rowCount: 1 });
         searches.append({ id: 's', importKey: 'i', offset: 0, items: [fixture('x')] });
         searches.finish({ id: 's', importKey: 'i' });
         let at = 1;
@@ -348,7 +348,7 @@ test('oversized single projection fails explicitly before IPC transfer', integra
     migrate(db);
     const offers = createOfferStore(db), searches = createDiscoverySearchStore(db, offers);
     offers.sight([{ id: 'huge', text: '' }], 1);
-    searches.create('s', 'React', ['justjoin']);
+    searches.create('s', 'React', ['vacancies']);
     const value = JSON.stringify({ offer: { id: 'huge', text: 'Published', stated: { required_skills: Array.from({ length: 400 }, (_, i) => `${i}-${'x'.repeat(9000)}`) } } });
     db.prepare('INSERT INTO discovery_offer_evidence VALUES(?,?,?)').run('huge-evidence', 'huge', value);
     db.prepare('INSERT INTO discovery_search_members VALUES(?,?,?,?)').run('s', 'huge', 0, 'huge-evidence');

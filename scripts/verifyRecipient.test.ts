@@ -1,3 +1,4 @@
+import {boards} from './fixtures/source-catalogue.js';
 /**
  * What `verify_recipient` concludes, and what it refuses to conclude.
  *
@@ -140,6 +141,7 @@ const build = (world: World = {}) => {
       }
     },
     sites: {
+      integrationSources:async()=>boards.map(board=>({...board,routing:[{host:'recruitee.com',kind:'ats' as const}]})),
       readPage: async (url) => {
         seen.pages.push(url);
 

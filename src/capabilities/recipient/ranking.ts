@@ -264,7 +264,7 @@ export const rankRecipients = ({
    * too, because the company's site vouched for it.
    *
    * It also quietly handles the third-party ATS case. A careers page that says
-   * "apply at jobs@lever.co" is the employer telling you to apply there.
+   * "apply at jobs@apply.example" is the employer telling you to apply there.
    */
   const attested = new Set<string>();
 

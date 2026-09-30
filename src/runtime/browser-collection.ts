@@ -1,8 +1,8 @@
-import { recipeListingContext, recipeNextUrl } from '@cvitae/job-pages';
+import { browserRecipeContext, browserRecipeNextUrl } from '@cvitae/job-pages';
 import type { BrowserRecipePin } from '../effects/browser-recipes.js';
 import {randomUUID,createHash} from 'node:crypto';
 import {z} from 'zod';
-import {listingContext,validateCapture,type BrowserCapture} from '@cvitae/job-pages';
+import {validateCapture,type BrowserCapture} from '@cvitae/job-pages';
 import {OperationError} from '../contracts/operation-error.js';
 import {normaliseUrl} from '../capabilities/offers/identity.js';
 import type {createBrowserImportStore} from '../storage/sqlite/browser-imports.js';
@@ -25,19 +25,19 @@ export const createBrowserCollection=(store:ReturnType<typeof createBrowserImpor
    prune();
    if(!session.startsWith('studio:'))throw new OperationError('unsupported_operation','Collection requires the built-in Cvitae Browser.');
    if(method==='collection.start'){
-    const p=z.object({target,recipeToken:z.string().uuid().optional()}).strict().parse(payload),context=pin?recipeListingContext(pin.recipe,p.target.url):listingContext(p.target.url);
-    if(!context)throw new OperationError('unsupported_listing','Open Bulldogjob or the:protocol search results to collect pages.');
+    const p=z.object({target,recipeToken:z.string().uuid().optional()}).strict().parse(payload),context=pin?browserRecipeContext(pin.recipe,p.target.url):null;
+    if(!context)throw new OperationError('unsupported_listing','Open a search with a verified provider recipe to collect pages.');
     cancel(session);if(drafts.size>=20)throw new OperationError('collection_capacity','Close another collection first.');
     const id=randomUUID(),d:Draft={pin,session,targetSearchId,scope:context.scope,tabId:p.target.tabId,expiresAt:now()+limits.lifetimeMs,pages:[],jobs:[],keys:new Map(),bytes:0};
     drafts.set(id,d);return {...summary(id,d),...(pin?{recipeScope:d.scope}:{})};
    }
    if(method==='collection.append'){
     const p=idSchema.extend({capture:z.unknown(),target}).parse(payload),d=requireDraft(p.collectionId,session),capture=validateCapture(p.capture,d.pin?.recipe);
-    if(capture.kind!=='listing'||capture.url!==p.target.url||d.tabId!==p.target.tabId||(d.pin?recipeListingContext(d.pin.recipe,capture.url):listingContext(capture.url))?.scope!==d.scope)throw new OperationError('collection_scope','The search or page changed. Collected jobs are retained; return to the same results to continue.');
+    if(capture.kind!=='listing'||capture.url!==p.target.url||d.tabId!==p.target.tabId||(d.pin?browserRecipeContext(d.pin.recipe,capture.url):null)?.scope!==d.scope)throw new OperationError('collection_scope','The search or page changed. Collected jobs are retained; return to the same results to continue.');
     const digest=hash(capture),previous=d.pages.find(page=>page.hash===digest&&page.documentId===p.target.documentId);
     if(previous)return {...summary(p.collectionId,d),added:0,replayed:true};
     if(d.pin && d.pages.length){
-     const prior=d.pages.at(-1)!.capture.url, a=recipeListingContext(d.pin.recipe,prior)!, b=recipeListingContext(d.pin.recipe,capture.url)!;
+     const prior=d.pages.at(-1)!.capture.url, a=browserRecipeContext(d.pin.recipe,prior)!, b=browserRecipeContext(d.pin.recipe,capture.url)!;
      if(b.page!==a.page+1)throw new OperationError('collection_scope','Recipe collection must advance exactly one page without repeats.');
     }
     const bytes=Buffer.byteLength(JSON.stringify(capture));
@@ -58,7 +58,7 @@ export const createBrowserCollection=(store:ReturnType<typeof createBrowserImpor
    if(method==='collection.navigation'){
     const p=idSchema.extend({from:z.string().max(2048),to:z.string().max(2048)}).parse(payload),d=requireDraft(p.collectionId,session);
     const latest=d.pages.at(-1)?.capture.url;
-    if(!d.pin||!latest||latest!==p.from||recipeNextUrl(d.pin.recipe,p.from,9999)!==p.to)throw new OperationError('collection_scope','Navigation must be the next page of the pinned search.');
+    if(!d.pin||!latest||latest!==p.from||browserRecipeNextUrl(d.pin.recipe,p.from,9999)!==p.to)throw new OperationError('collection_scope','Navigation must be the next page of the pinned search.');
     return {allowed:true,url:p.to};
    }
    if(method==='collection.preview'){
@@ -74,7 +74,7 @@ export const createBrowserCollection=(store:ReturnType<typeof createBrowserImpor
     const d=requireDraft(p.collectionId,session);
     if(d.targetSearchId!==targetSearchId)throw new OperationError('browser_destination_mismatch','The import destination changed. Start collecting again.');
     if(new Set(p.selected).size!==p.selected.length)throw new OperationError('invalid_selection','A job was selected twice.');
-    const pages=d.pages.map(p=>({capture:p.capture,capturedAt:p.capturedAt,recipe:d.pin?.recipe,indices:[] as number[]}));
+    const pages=d.pages.map(p=>({capture:p.capture,capturedAt:p.capturedAt,recipe:d.pin?.recipe,integration:d.pin?.integration,indices:[] as number[]}));
     for(const index of p.selected){const ref=d.jobs[index];if(!ref)throw new OperationError('invalid_selection','The selection is not in this collection.');pages[ref.page]!.indices.push(ref.index);}
     const receipt=store.commitBatch(p.operationId,pages.filter(p=>p.indices.length),requestHash,d.targetSearchId);drafts.delete(p.collectionId);return receipt;
    }

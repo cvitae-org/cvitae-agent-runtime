@@ -1,52 +1,8 @@
-/**
- * Turning a CV and a set of preferences into things to type into a search box.
- *
- * Deterministic, and deliberately so. A model asked for "good search queries"
- * produces a different list every run, which makes a standing search
- * unrepeatable: two rounds cannot tell whether they are covering new ground or
- * re-asking yesterday's question in different words. A fixed list derived from
- * fixed inputs can be *sliced* — round one takes the first few, round two the
- * next — and that slicing is the third dedupe, the one that stops a round from
- * spending its search budget on queries a previous round already ran.
- *
- * It also keeps the model out of a place it has no advantage. The useful
- * queries are the user's own role titles and the technologies they asked for;
- * knowing which those are is a lookup, not a judgement.
- *
- * ## Scoped to a board first
- *
- * The most productive query is not a cleverer phrase, it is a smaller haystack.
- * `site:justjoin.it react remote` returns postings; the same words unqualified
- * return conference talks, blog posts and somebody's GitHub. So the list opens
- * with one query per board in `boards.ts`, and the open-web tiers follow to
- * catch what is posted on a company's own careers page.
- *
- * A useful side effect: a board-scoped query needs only a technology, not a
- * role title. A CV that has not been imported yet still produces real queries,
- * where the open-web tiers would produce almost nothing.
- *
- * ## What goes into a query
- *
- * A role in quotes, one technology, and the market qualifiers the preferences
- * state. The quoting matters: unquoted, `senior frontend developer react`
- * matches any page with those five words on it, which on a job board is most of
- * them. Quoted, it matches postings for that role.
- *
- * One technology per query rather than all of them, because a search engine
- * ANDs its terms — a query naming six technologies finds the postings that list
- * all six, which is a much smaller and stranger set than the one wanted.
- *
- * ## Why the preferences come before the CV
- *
- * The technologies the user asked for lead, and the ones merely on their CV
- * follow. The CV says what they have done; `preferences.json` says what they
- * want to do next, and a search built from the CV alone finds more of the job
- * they are trying to leave.
- */
+
 
 import type { CvDocument } from '../cv/document.js';
 import type { Preferences } from './preferences.js';
-import { searchableBoards } from './boards.js';
+import { searchableBoards, type Board } from './boards.js';
 
 /**
  * Market qualifiers, per preference value.
@@ -139,7 +95,7 @@ const qualifiers = (preferences: Preferences): string => {
 export const buildQueries = (
   cv: CvDocument,
   preferences: Preferences,
-  options: { market?: string } = {}
+  options: { market?: string; boards?:readonly Board[] } = {}
 ): string[] => {
   const roleList = roles(cv);
   const techList = technologies(cv, preferences);
@@ -158,7 +114,7 @@ export const buildQueries = (
       [primaryRole ? `"${primaryRole}"` : '', primaryTech ?? '', suffix].join(' ')
     );
 
-    for (const board of searchableBoards(options.market)) {
+    for (const board of searchableBoards(options.market, options.boards)) {
       queries.push(`site:${board.domain} ${terms}`);
     }
   }
@@ -204,10 +160,7 @@ export const queriesForRound = (all: string[], round: number, size: number): str
   });
 };
 
-/**
- * Generic enough to appear in nearly every offer slug, and therefore useless
- * as a filter. `developer` matches 6,000 of justjoin's 9,783 live offers.
- */
+
 const GENERIC_ROLE_WORDS = new Set([
   'developer',
   'engineer',
@@ -234,26 +187,7 @@ const slugToken = (skill: string): string => {
   return first.length >= 3 ? first : '';
 };
 
-/**
- * Search terms for a board's own listing, which is a different thing from a
- * web query.
- *
- * `buildQueries` writes for a search engine: quoted phrases, bilingual market
- * qualifiers, `site:` scoping. None of that survives a board listing, where
- * matching is a substring test against the offer's URL slug and every term must
- * appear in it. `site:justjoin.it "Frontend Developer" React remote praca
- * zdalna` matches exactly nothing.
- *
- * So these are short. One or two words, drawn from the same places — the
- * skills asked for first, then the CV's own stack and role — because what
- * changes is the syntax, not what is being looked for.
- *
- * Deliberately *not* included: work mode, contract type, salary. A slug carries
- * none of them reliably — about one justjoin slug in a hundred says `remote` —
- * and adding a term the slug does not carry does not narrow the search, it
- * empties it. Those are the scorer's job, on facts read from the page. See the
- * note at the top of `boardSearch.ts`.
- */
+
 export const buildKeywords = (cv: CvDocument, preferences: Preferences): string[] => {
   // Capped after tokenising, not before, which `technologies` cannot do because
   // it also feeds `buildQueries` — an engine is happy with `React Query` as a
@@ -293,7 +227,6 @@ export const buildKeywords = (cv: CvDocument, preferences: Preferences): string[
   const keywords: string[] = [];
 
   // The technology alone, first and broadest. On a board this is already a
-  // strong filter — `react` takes justjoin from 9,783 offers to 196.
   keywords.push(...techTokens);
 
   // Then paired with a role word, for the case one technology is too broad.

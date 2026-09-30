@@ -10,10 +10,10 @@ import { createDiscoverySearchStore } from '../src/storage/sqlite/discovery-sear
 import { createHarness } from '../src/runtime/create.js';
 import { createDispatch } from '../src/adapters/ipc/dispatch.js';
 
-const manifest = (id = 'search-a', rowCount = 2) => ({ id, importKey: 'legacy-1', phrase: 'react', boards: ['justjoin'],
+const manifest = (id = 'search-a', rowCount = 2) => ({ id, importKey: 'legacy-1', phrase: 'react', boards: ['vacancies'],
   filters: { minimum: 20000, maximum: 25000, includeUnknown: true }, selectedId: 'a', rowCount });
-const item = (id: string, position = 'React Engineer') => ({ offer: { id, position, url: `https://justjoin.it/job-offer/${id}`,
-  text: 'Public description', board: 'justjoin', salary: '20000 PLN/month',
+const item = (id: string, position = 'React Engineer') => ({ offer: { id, position, url: `https://vacancies.example/job-offer/${id}`,
+  text: 'Public description', board: 'vacancies', salary: '20000 PLN/month',
   analysis: { company_type: 'Fintech', candidate_match: 'SECRET PROFILE' }, rating: { detail: 'SECRET PROFILE' },
   firstSeenAt: 100, lastSeenAt: 200 }, note: { text: 'PRIVATE NOTE' },
   enrichment: { analyzedAt: 123, runId: 'private-run', provenance: { salary: { source: 'ai', at: 123, runId: 'private-run' } } } });

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "maxItems": 8,
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "url": {
+        "type": "string",
+        "maxLength": 4000,
+        "format": "uri"
+      },
+      "enabled": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "id",
+      "name",
+      "url",
+      "enabled"
+    ],
+    "additionalProperties": false
+  }
+}

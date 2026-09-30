@@ -4,6 +4,7 @@ import type { OfferStore, ResolvedOffer, RunResult } from '../../contracts/index
 import { isWorkMode, OperationError } from '../../contracts/index.js';
 import { applyStated } from '../../capabilities/analyzeOffer.js';
 import { parseSalary } from '../../capabilities/offers/salary.js';
+import { createIntegrationAcquisitions } from './integration-acquisitions.js';
 import type { Db } from './open.js';
 
 const present = (value: unknown): boolean => typeof value === 'string'
@@ -11,6 +12,7 @@ const present = (value: unknown): boolean => typeof value === 'string'
   : Array.isArray(value) && value.length > 0;
 const fields = ['company','company_type','company_size','team','position','role_profile','seniority','ideal_candidate','salary','contract_type','engagement_length','location','work_mode','start_date','how_to_apply','responsibilities','required_skills'];
 export const createEnrichmentStore = (db: Db, offers: OfferStore): EnrichmentStore => {
+  const acquisitions = createIntegrationAcquisitions(db);
   const read = db.prepare<[string]>('SELECT value FROM offer_enrichments WHERE offer_id=?');
   const put = db.prepare('INSERT INTO offer_enrichments(offer_id,value) VALUES(?,?) ON CONFLICT(offer_id) DO UPDATE SET value=excluded.value');
   const get = (id: string): Enrichment | undefined => {
@@ -57,6 +59,7 @@ export const createEnrichmentStore = (db: Db, offers: OfferStore): EnrichmentSto
       for (const key of ['salary_ranges','employment_type','posted_at','valid_through']) {
         if (present((source.stated as Record<string,unknown> | undefined)?.[key])) provenance[key] = { source: 'board', at: value.updatedAt };
       }
+      acquisitions.record(value.offerId, source.integration, source.integration?.provenance.sourceKey ?? offer.board ?? 'browser', new Date(value.updatedAt).toISOString(), value.updatedAt);
       write({ ...value, provenance });
       return saved;
     }).immediate,

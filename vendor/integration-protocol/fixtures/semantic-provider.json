@@ -1,0 +1,107 @@
+{
+  "recipe": {
+    "kind": "dom-detail-v2",
+    "sourceId": "vacancies",
+    "revision": "r2",
+    "hosts": [
+      "careers.example"
+    ],
+    "offer": {
+      "pathPrefix": "/position/"
+    },
+    "identity": {
+      "part": "segment",
+      "format": "slug"
+    },
+    "root": "main",
+    "exclude": [
+      "aside",
+      ".suggestions"
+    ],
+    "fields": {
+      "title": {
+        "rules": [
+          {
+            "selector": "h1"
+          }
+        ]
+      },
+      "company": {
+        "rules": [
+          {
+            "selector": ".company",
+            "omit": [
+              "span"
+            ]
+          }
+        ]
+      },
+      "location": {
+        "rules": [
+          {
+            "selector": ".city"
+          }
+        ],
+        "multiple": true
+      },
+      "work_mode": {
+        "rules": [
+          {
+            "selector": ".mode"
+          }
+        ],
+        "values": {
+          "Flexible": "hybrid"
+        }
+      },
+      "seniority": {
+        "rules": [
+          {
+            "selector": "dt",
+            "text": [
+              "Experience"
+            ],
+            "steps": [
+              "next"
+            ]
+          }
+        ]
+      },
+      "contract_type": {
+        "rules": [
+          {
+            "selector": ".contract"
+          }
+        ],
+        "values": {
+          "Employment": "UoP"
+        }
+      }
+    },
+    "sections": [
+      [
+        {
+          "selector": "#responsibilities"
+        }
+      ],
+      [
+        {
+          "selector": "#requirements"
+        }
+      ]
+    ],
+    "skills": [
+      {
+        "selector": ".skills li"
+      }
+    ],
+    "salaries": [
+      {
+        "selector": ".salary"
+      }
+    ],
+    "jsonLd": true
+  },
+  "url": "https://careers.example/position/research-1",
+  "html": "<!doctype html><html><head><title>Research Engineer</title></head><body><main><h1>Research Engineer</h1><p class=\"company\"><span>Employer:</span>Example Laboratory</p><p class=\"city\">Toronto</p><p class=\"city\">Ottawa</p><dl><dt>Experience</dt><dd>Senior</dd></dl><p class=\"mode\">Flexible</p><p class=\"contract\">Employment</p><section id=\"responsibilities\"><p>Design scientific instruments and maintain reliable laboratory services with a team of researchers.</p><form><input value=\"private-cookie\"><p>Private application notes</p></form></section><section id=\"requirements\"><p>Plan careful experiments, review the evidence, and document results with colleagues.</p></section><ul class=\"skills\"><li>Python</li><li>Experimental design</li></ul><div class=\"salary\">90000 - 110000 USD gross per year - Employment contract</div><aside><h1>Recommendation poison</h1><div class=\"salary\">999999 - 9999999 USD per month</div></aside></main></body></html>"
+}

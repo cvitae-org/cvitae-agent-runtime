@@ -16,13 +16,13 @@ const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const setup = () => {
   const db = open(':memory:'); migrate(db);
   const offers = createOfferStore(db);
-  offers.save({ id: 'a', url: 'https://justjoin.it/job-offer/a', board: 'justjoin', text: '',
+  offers.save({ id: 'a', url: 'https://vacancies.example/job-offer/a', board: 'vacancies', text: '',
     company: 'Existing company', salary: 'Original salary', analysis: { company_size: '50–200' },
     firstSeenAt: 1, lastSeenAt: 2, processing: 'candidate', disposition: 'active' });
   const store = createEnrichmentStore(db, offers);
   return { db, offers, store };
 };
-const source: ResolvedOffer = { url: 'https://justjoin.it/job-offer/a', finalUrl: 'https://justjoin.it/job-offer/a',
+const source: ResolvedOffer = { url: 'https://vacancies.example/job-offer/a', finalUrl: 'https://vacancies.example/job-offer/a',
   text: 'React role. Fintech company with 50–200 employees. Salary 100 PLN/hour.',
   stated: { title: 'React Engineer', salary: '100 PLN/hour', company: 'Board company' } };
 const result = (data: Record<string, unknown>, degraded: string[] = []): RunResult => ({
@@ -48,7 +48,7 @@ test('enrichment keeps board facts and user state, merges partial results, and u
     assert.equal(store.get('a')?.status, 'partial');
     assert.equal(store.get('a')?.provenance?.salary?.source, 'board');
     assert.equal(store.get('a')?.provenance?.company_type?.source, 'ai');
-    const cached = createDiscoveryCatalogue(db, offers).search({ keyword: 'react fintech', boards: ['justjoin'], limit: 10, offset: 0 });
+    const cached = createDiscoveryCatalogue(db, offers).search({ keyword: 'react fintech', boards: ['vacancies'], limit: 10, offset: 0 });
     assert.equal(cached.items[0]?.enrichment?.status, 'partial');
   } finally { service.close(); db.close(); }
 });

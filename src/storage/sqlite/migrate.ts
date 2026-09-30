@@ -1,3 +1,5 @@
+import { integrationDirectories0037 } from './migrations/0037-integration-directories.js';
+import { integrationSettings0036 } from './migrations/0036-integration-settings.js';
 import { boardRemoval0034 } from './migrations/0034-board-removal.js';
 import { browserCompanion0033 } from './migrations/0033-browser-companion.js';
 import { discoveryRegistry0032 } from './migrations/0032-discovery-registry.js';
@@ -31,6 +33,8 @@ import { offerNotes0018 } from './migrations/0018-offer-notes.js';
 import { discoverySearches0019 } from './migrations/0019-discovery-searches.js';
 import { discoveryChat0020 } from './migrations/0020-discovery-chat.js';
 import type { Db } from './open.js';
+import { OperationError } from '../../contracts/operation-error.js';
+import { backUp } from './backup.js';
 import { init0001 } from './migrations/0001-init.js';
 import { stepStopped0002 } from './migrations/0002-step-stopped.js';
 import { offerDiscovery0003 } from './migrations/0003-offer-discovery.js';
@@ -80,7 +84,10 @@ export const migrations: readonly Migration[] = [
   { version: 31, sql: boardWorkspaces0031 },
   { version: 32, sql: discoveryRegistry0032 },
   { version: 33, sql: browserCompanion0033 },
-  { version: 34, sql: boardRemoval0034 }
+  { version: 34, sql: boardRemoval0034 },
+  { version: 35, sql: integrationAcquisitions0035 },
+  { version: 36, sql: integrationSettings0036 },
+  { version: 37, sql: integrationDirectories0037 }
 ];
 
 export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.version), 0);
@@ -96,9 +103,35 @@ export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.versi
  * way through a series should leave the file at the last version that fully
  * applied, not roll back work that succeeded. Either way the file is at a
  * version that some code in this repo was written against.
+ *
+ * Two things happen before the first migration, and both protect a file that
+ * holds the only copy of someone's data:
+ *
+ *   - A file whose version is *newer* than any step here is refused with
+ *     `db_newer_than_app`. It was written by a later build, and running this
+ *     one's queries against a schema it has never seen is how a rolled-back app
+ *     corrupts what a newer one saved. Nothing in the file is changed.
+ *   - When migrations are pending on a file that has content, the file is first
+ *     set aside as `<file>.bak-<version>` (see `backup.ts`). If that cannot be
+ *     done, `db_backup_failed` stops the upgrade before it starts.
+ *
+ * An in-memory database has no file to protect and is never backed up.
  */
 export const migrate = (db: Db, steps: readonly Migration[] = migrations): number => {
   let current = db.pragma('user_version', { simple: true }) as number;
+
+  const head = steps.reduce((max, step) => Math.max(max, step.version), 0);
+  if (current > head) {
+    throw new OperationError(
+      'db_newer_than_app',
+      `The database is at schema ${current}, and this build understands up to ${head}. `
+        + 'It was written by a newer version of the app.'
+    );
+  }
+
+  if (current > 0 && !db.memory && steps.some((step) => step.version > current)) {
+    backUp(db, current);
+  }
 
   for (const step of steps) {
     if (step.version <= current) continue;
@@ -121,3 +154,4 @@ export const migrate = (db: Db, steps: readonly Migration[] = migrations): numbe
 
   return current;
 };
+import { integrationAcquisitions0035 } from './migrations/0035-integration-acquisitions.js';

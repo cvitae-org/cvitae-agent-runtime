@@ -9,22 +9,21 @@ import { createOfferStore } from '../src/storage/sqlite/offers.js';
 import { createDiscoveryCatalogue } from '../src/storage/sqlite/discovery.js';
 import { createDiscoverySearchStore } from '../src/storage/sqlite/discovery-searches.js';
 import { createDiscoveryService } from '../src/runtime/discovery.js';
-import { createDiscoverySource } from '../src/effects/discovery.js';
 import { createHarness } from '../src/runtime/create.js';
 import { createDispatch } from '../src/adapters/ipc/dispatch.js';
 import type { CatalogueItem, DiscoveryBatch, DiscoveryBoardId, DiscoveryListing, DiscoverySource } from '../src/contracts/discovery.js';
 
-const row = (slug: string, title = 'React Developer', board: DiscoveryBoardId = 'justjoin'): DiscoveryListing => ({
-  board, url: `https://${board === 'justjoin' ? 'justjoin.it' : 'nofluffjobs.com'}/job-offer/${slug}`,
+const row = (slug: string, title = 'React Developer', board: DiscoveryBoardId = 'vacancies'): DiscoveryListing => ({
+  board, url: `https://${board === 'vacancies' ? 'vacancies.example' : 'html.example'}/job-offer/${slug}`,
   title, titleSource: 'board', external_id: slug, company: 'Example', required_skills: ['React']
 });
 const batch = (items: DiscoveryListing[], nextCursor: string | null = null): DiscoveryBatch => ({
-  version: 1, board: items[0]?.board ?? 'justjoin', items, nextCursor, hasMore: !!nextCursor,
+  version: 1, board: items[0]?.board ?? 'vacancies', items, nextCursor, hasMore: !!nextCursor,
   coverage: 'sitemap', retrievedAt: '2026-09-11T12:00:00.000Z', expiresAt: '2026-09-11T12:30:00.000Z',
   effectiveFilters: [{ id:'keyword' as const, support:'local' as const, stage:'source' as const, requested:'react', applied:true, detail:'Slug match.' }], unsupportedFilters: [], limitations: []
 });
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
-const searchQuery = { keyword: 'react', boards: ['justjoin'] as DiscoveryBoardId[], limit: 30, offset: 0 };
+const searchQuery = { keyword: 'react', boards: ['vacancies'] as DiscoveryBoardId[], limit: 30, offset: 0 };
 const setup = () => {
   const db = open(':memory:'); migrate(db);
   const offers = createOfferStore(db);
@@ -59,7 +58,7 @@ test('migration indexes existing offers and searches technical tokens without co
     migrate(db, migrations.filter((step) => step.version <= 15));
     const offers = createOfferStore(db);
     for (const [id, position] of [['c', 'C Developer'], ['cpp', 'C++ Developer'], ['cs', 'C# Developer'], ['net', '.NET Engineer']]) {
-      offers.save({ id: id!, position, board: 'justjoin', text: '', firstSeenAt: 1, lastSeenAt: 1, processing: 'candidate', disposition: 'active' });
+      offers.save({ id: id!, position, board: 'vacancies', text: '', firstSeenAt: 1, lastSeenAt: 1, processing: 'candidate', disposition: 'active' });
     }
     migrate(db);
     const catalogue = createDiscoveryCatalogue(db, offers);
@@ -78,7 +77,7 @@ test('ingestion deduplicates source IDs across URL changes and never erases rich
     const first = catalogue.ingest(batch([row('a')]), 10)[0]!;
     offers.save({ ...first.offer, text: 'Full React posting', position: 'Verified React Engineer', salary: '100 PLN/hour',
       stated: { company: 'Verified' }, analysis: { company_type: 'fintech' }, processing: 'rated', disposition: 'applied' });
-    const changed = { ...row('a', 'URL title'), url: 'https://justjoin.it/job-offer/renamed', titleSource: 'slug' as const, salary: '', required_skills: [] };
+    const changed = { ...row('a', 'URL title'), url: 'https://vacancies.example/job-offer/renamed', titleSource: 'slug' as const, salary: '', required_skills: [] };
     catalogue.ingest(batch([changed, changed]), 20);
     const all = offers.recent(20);
     assert.equal(all.length, 1);
@@ -101,7 +100,7 @@ test('literal multi-field search ranks title matches, scopes boards, and paginat
   const { db, catalogue } = setup();
   try {
     catalogue.ingest(batch([row('title'), { ...row('skill', 'Developer'), company: 'React' }, row('last')]), 1);
-    catalogue.ingest(batch([row('other', 'React Developer', 'nofluffjobs')]), 1);
+    catalogue.ingest(batch([row('other', 'React Developer', 'html_jobs')]), 1);
     const page = catalogue.search({ ...searchQuery, limit: 1 });
     assert.equal(page.items.length, 1); assert.equal(page.hasMore, true); assert.equal(page.nextOffset, 1);
     assert.equal(page.items[0]?.offer.position, 'React Developer');
@@ -137,7 +136,7 @@ test('unknown title evidence is separated from qualified membership and explicit
     { ...row('unknown', 'Untitled'), titleSource: 'unavailable' }
   ]) })), () => Date.parse('2026-09-17T12:00:00.000Z'), searches);
   try {
-    const { id } = service.start({ searchId: 'tri-state', keyword: 'react', boards: ['justjoin'], pageSize: 30, sourceMode: 'live', matchMode: 'title' });
+    const { id } = service.start({ searchId: 'tri-state', keyword: 'react', boards: ['vacancies'], pageSize: 30, sourceMode: 'live', matchMode: 'title' });
     await tick(); await tick();
     assert.equal(searches.read({ id: 'tri-state' }).count, 1);
     const review = searches.read({ id: 'tri-state', group: 'review' });
@@ -175,12 +174,12 @@ test('catalogue persists across restart and searches offline through the harness
   let harness = createHarness({ databasePath, env: {}, discoverySource: source(async () => ({ status: 'ok', data: batch([row('persist')]) })) });
   try {
     const dispatch = createDispatch(harness);
-    const started = await dispatch('discovery.start', { keyword: 'react', boards: ['justjoin'] });
+    const started = await dispatch('discovery.start', { keyword: 'react', boards: ['vacancies'] });
     assert.equal(started.ok, true);
     await tick();
     harness.close();
     harness = createHarness({ databasePath, env: {}, scraperUrl: '' });
-    const offline = await createDispatch(harness)('discovery.cached', { keyword: 'React', boards: ['justjoin'] });
+    const offline = await createDispatch(harness)('discovery.cached', { keyword: 'React', boards: ['vacancies'] });
     assert.equal(offline.ok, true);
     if (offline.ok) assert.equal((offline.data as { items: unknown[] }).items.length, 1);
     const unavailable = await createDispatch(harness)('discovery.boards');
@@ -188,7 +187,7 @@ test('catalogue persists across restart and searches offline through the harness
     if (unavailable.ok) {
       const catalogue = unavailable.data as { boards: Array<{ enabled: boolean; browserSearch?: { enabled: boolean } }>; collectionUnavailableReason?: string };
       assert.ok(catalogue.boards.every(board => !board.enabled));
-      assert.ok(catalogue.boards.some(board => board.browserSearch?.enabled));
+      assert.ok(catalogue.boards.every(board => !board.browserSearch?.enabled));
       assert.ok(catalogue.collectionUnavailableReason);
     }
   } finally { harness.close(); rmSync(directory, { recursive: true, force: true }); }
@@ -197,30 +196,30 @@ test('catalogue persists across restart and searches offline through the harness
 test('boards deliver independently with separate cursors and bounded concurrent requests', async () => {
   const { db, catalogue } = setup();
   let release: (value: Awaited<ReturnType<DiscoverySource['search']>>) => void = () => undefined;
-  let justjoinReads = 0;
+  let vacanciesReads = 0;
   const service = createDiscoveryService(catalogue, source(async (query) => {
-    if (query.board === 'nofluffjobs') return new Promise((resolve) => { release = resolve; });
-    justjoinReads++;
+    if (query.board === 'html_jobs') return new Promise((resolve) => { release = resolve; });
+    vacanciesReads++;
     await tick();
     return { status: 'ok', data: batch([row(query.cursor ? 'second' : 'first')], query.cursor ? null : 'next') };
   }));
   try {
-    const { id } = service.start({ keyword: 'react', boards: ['justjoin', 'nofluffjobs'], pageSize: 2 });
+    const { id } = service.start({ keyword: 'react', boards: ['vacancies', 'html_jobs'], pageSize: 2 });
     await tick(); await tick();
     const first = service.poll(id);
-    assert.ok(first.events.some((event) => event.kind === 'batch' && event.board === 'justjoin'));
-    assert.equal(first.boards.find((state) => state.board === 'nofluffjobs')?.status, 'loading');
+    assert.ok(first.events.some((event) => event.kind === 'batch' && event.board === 'vacancies'));
+    assert.equal(first.boards.find((state) => state.board === 'html_jobs')?.status, 'loading');
     service.next(id); service.next(id);
     await tick(); await tick();
     // Continuation waits until every selected source has had its first chance.
-    assert.equal(justjoinReads, 1);
+    assert.equal(vacanciesReads, 1);
     release({ status: 'blocked', detail: 'Source refusal' }); await tick();
     await tick();
-    assert.equal(justjoinReads, 2);
-    assert.equal(service.poll(id).boards.find((state) => state.board === 'justjoin')?.status, 'exhausted');
+    assert.equal(vacanciesReads, 2);
+    assert.equal(service.poll(id).boards.find((state) => state.board === 'vacancies')?.status, 'exhausted');
     const later = service.poll(id, first.after);
     assert.ok(later.events.every((event) => event.seq > first.after));
-    assert.equal(later.boards.find((state) => state.board === 'nofluffjobs')?.error?.status, 'blocked');
+    assert.equal(later.boards.find((state) => state.board === 'html_jobs')?.error?.status, 'blocked');
     assert.equal(catalogue.search(searchQuery).items.length, 2);
   } finally { service.close(); db.close(); }
 });
@@ -231,7 +230,7 @@ test('saved interactive searches collect every cached match, not only the first 
   try {
     catalogue.ingest(batch(Array.from({ length: 75 }, (_, i) => row(`cached-${i}`))), 1);
     const service = createDiscoveryService(catalogue, source(async () => ({ status: 'unavailable', detail: 'Offline' })), Date.now, saved.store);
-    const { id } = service.start({ searchId: 'saved', keyword: 'react', boards: ['justjoin'], pageSize: 30, sourceMode: 'hybrid' });
+    const { id } = service.start({ searchId: 'saved', keyword: 'react', boards: ['vacancies'], pageSize: 30, sourceMode: 'hybrid' });
     assert.equal(saved.searches.get('saved')?.items.size, 75);
     const cached = service.poll(id).events[0];
     assert.equal(cached?.kind, 'cached');
@@ -251,7 +250,7 @@ test('accepted target counts the complete cached membership after fair live cove
     return { status: 'ok', data: batch([row('live-target')], 'next') };
   }), Date.now, saved.store);
   try {
-    const { id } = service.start({ sourceMode: 'hybrid', searchId: 'cached-target', keyword: 'react', boards: ['justjoin'], pageSize: 30,
+    const { id } = service.start({ sourceMode: 'hybrid', searchId: 'cached-target', keyword: 'react', boards: ['vacancies'], pageSize: 30,
       budget: { targetAcceptedTotal: 50, maxCandidatesTotal: 100, maxPagesPerSource: 10, maxRequestsTotal: 10, deadlineMs: 60000, maxConcurrentRequests: 1 } });
     await tick(); await tick();
     assert.equal(calls, 1);
@@ -269,7 +268,7 @@ test('saved interactive searches automatically exhaust every source cursor', asy
     return { status: 'ok', data: batch([row(`source-${index}`)], index < 2 ? String(index + 1) : null) };
   }), Date.now, saved.store);
   try {
-    const { id } = service.start({ searchId: 'saved', keyword: 'react', boards: ['justjoin'], pageSize: 30 });
+    const { id } = service.start({ searchId: 'saved', keyword: 'react', boards: ['vacancies'], pageSize: 30 });
     for (let i = 0; i < 10 && service.poll(id).boards[0]?.status !== 'exhausted'; i++) await tick();
     assert.deepEqual(cursors, [undefined, '1', '2']);
     assert.equal(service.poll(id).boards[0]?.status, 'exhausted');
@@ -284,15 +283,15 @@ test('accepted target waits for fair first-source coverage and honors concurrenc
   let active = 0, maximumActive = 0;
   const service = createDiscoveryService(catalogue, source(async (query) => {
     calls.push(query.board); active++; maximumActive = Math.max(maximumActive, active); await tick(); active--;
-    return { status: 'ok', data: batch([row(`${query.board}-${calls.length}`, 'React Engineer', query.board)], query.board === 'justjoin' ? 'next' : null) };
+    return { status: 'ok', data: batch([row(`${query.board}-${calls.length}`, 'React Engineer', query.board)], query.board === 'vacancies' ? 'next' : null) };
   }), Date.now, saved.store);
   try {
-    const { id } = service.start({ searchId: 'fair-target', keyword: 'react', boards: ['justjoin', 'nofluffjobs'], pageSize: 2,
+    const { id } = service.start({ searchId: 'fair-target', keyword: 'react', boards: ['vacancies', 'html_jobs'], pageSize: 2,
       sourceMode: 'live', matchMode: 'title', budget: { targetAcceptedTotal: 1, maxCandidatesTotal: 20, maxPagesPerSource: 10, maxRequestsTotal: 10, deadlineMs: 60000, maxConcurrentRequests: 1 } });
     for (let i = 0; i < 10 && service.poll(id).boards.some((state) => !['exhausted','error','cancelled'].includes(state.status)); i++) await tick();
-    assert.deepEqual(calls, ['justjoin', 'nofluffjobs']);
+    assert.deepEqual(calls, ['vacancies', 'html_jobs']);
     assert.equal(maximumActive, 1);
-    assert.equal(service.poll(id).boards.find((state) => state.board === 'justjoin')?.stopReason, 'target_reached');
+    assert.equal(service.poll(id).boards.find((state) => state.board === 'vacancies')?.stopReason, 'target_reached');
   } finally { service.close(); db.close(); }
 });
 
@@ -308,7 +307,7 @@ test('page, candidate, repeated-cursor and no-new guards report deterministic bo
     const saved = savedSearches();
     const service = createDiscoveryService(catalogue, source(scenario.search), Date.now, saved.store);
     try {
-      const { id } = service.start({ searchId: scenario.name, keyword: 'react', boards: ['justjoin'], pageSize: 2, sourceMode: 'live', matchMode: 'title',
+      const { id } = service.start({ searchId: scenario.name, keyword: 'react', boards: ['vacancies'], pageSize: 2, sourceMode: 'live', matchMode: 'title',
         budget: { targetAcceptedTotal: null, maxCandidatesTotal: scenario.budget.maxCandidatesTotal, maxPagesPerSource: scenario.budget.maxPagesPerSource, maxRequestsTotal: 10, deadlineMs: 60000, maxConcurrentRequests: 1 } });
       for (let i = 0; i < 10 && service.poll(id).boards[0]?.status !== 'exhausted'; i++) await tick();
       const state = service.poll(id).boards[0]!;
@@ -322,7 +321,7 @@ test('source refusals explicitly leave completeness unknown', async () => {
   const { db, catalogue } = setup();
   const service = createDiscoveryService(catalogue, source(async () => ({ status: 'blocked', detail: 'Denied' })));
   try {
-    const { id } = service.start({ keyword: 'react', boards: ['justjoin'], pageSize: 2 });
+    const { id } = service.start({ keyword: 'react', boards: ['vacancies'], pageSize: 2 });
     await tick();
     assert.deepEqual({ completion: service.poll(id).boards[0]?.completion, reason: service.poll(id).boards[0]?.stopReason }, { completion: 'unknown', reason: 'blocked' });
     assert.deepEqual(service.poll(id).boards[0]?.filterReport?.effective[0], {
@@ -341,7 +340,7 @@ test('request budget stops a source before another page is scheduled', async () 
     return { status: 'ok', data: batch([row(`request-${calls}`)], `cursor-${calls}`) };
   }), Date.now, saved.store);
   try {
-    const { id } = service.start({ searchId: 'request-budget', keyword: 'react', boards: ['justjoin'], pageSize: 2, sourceMode: 'live',
+    const { id } = service.start({ searchId: 'request-budget', keyword: 'react', boards: ['vacancies'], pageSize: 2, sourceMode: 'live',
       budget: { targetAcceptedTotal: null, maxCandidatesTotal: 20, maxPagesPerSource: 10, maxRequestsTotal: 1, deadlineMs: 60000, maxConcurrentRequests: 1 } });
     await tick(); await tick();
     assert.equal(calls, 1);
@@ -361,7 +360,7 @@ test('versioned title mode applies the same qualification to cache and live cand
       row('live-title', 'Senior Frontend Engineer'),
       { ...row('live-description', 'Java Engineer'), company: 'Frontend Labs' }
     ]) })), Date.now, saved.store);
-    const { id } = service.start({ searchId: 'qualified', keyword: 'frontend', boards: ['justjoin'], pageSize: 30, sourceMode: 'hybrid', matchMode: 'title' });
+    const { id } = service.start({ searchId: 'qualified', keyword: 'frontend', boards: ['vacancies'], pageSize: 30, sourceMode: 'hybrid', matchMode: 'title' });
     for (let i = 0; i < 10 && service.poll(id).boards[0]?.status !== 'exhausted'; i++) await tick();
     assert.deepEqual([...saved.searches.get('qualified')!.items.keys()].sort(), [
       catalogue.search({ ...searchQuery, keyword: 'frontend', matchMode: 'title' }).items[0]!.offer.id,
@@ -384,12 +383,12 @@ test('live mode excludes cache-only matches and cache mode performs no source re
     return { status: 'ok', data: batch([row('fresh', 'Frontend Engineer')]) };
   }), Date.now, saved.store);
   try {
-    const live = service.start({ searchId: 'live', keyword: 'frontend', boards: ['justjoin'], pageSize: 30, sourceMode: 'live', matchMode: 'title' });
+    const live = service.start({ searchId: 'live', keyword: 'frontend', boards: ['vacancies'], pageSize: 30, sourceMode: 'live', matchMode: 'title' });
     for (let i = 0; i < 10 && service.poll(live.id).boards[0]?.status !== 'exhausted'; i++) await tick();
     assert.equal(saved.searches.get('live')?.items.size, 1);
     assert.ok([...saved.searches.get('live')!.items.values()].every(item => item.qualification?.origin === 'live'));
     const before = calls;
-    const cache = service.start({ searchId: 'cache', keyword: 'frontend', boards: ['justjoin'], pageSize: 30, sourceMode: 'cache', matchMode: 'title' });
+    const cache = service.start({ searchId: 'cache', keyword: 'frontend', boards: ['vacancies'], pageSize: 30, sourceMode: 'cache', matchMode: 'title' });
     assert.equal(calls, before);
     assert.equal(service.poll(cache.id).boards[0]?.stopReason, 'cache_only');
     assert.ok([...saved.searches.get('cache')!.items.values()].every(item => item.qualification?.origin === 'cache'));
@@ -402,7 +401,7 @@ test('cancellation ignores late results even when a reader ignores its abort sig
   let signal: AbortSignal | undefined;
   const service = createDiscoveryService(catalogue, source((_query, provided) => { signal = provided; return new Promise((resolve) => { release = resolve; }); }));
   try {
-    const { id } = service.start({ keyword: 'react', boards: ['justjoin'], pageSize: 2 });
+    const { id } = service.start({ keyword: 'react', boards: ['vacancies'], pageSize: 2 });
     service.cancel(id); assert.equal(signal?.aborted, true);
     release({ status: 'ok', data: batch([row('late')]) }); await tick();
     assert.equal(catalogue.search(searchQuery).items.length, 0);
@@ -419,7 +418,7 @@ test('expired source cursors do not restart at page one or retry on scroll', asy
     return query.cursor ? { status: 'expired_cursor', detail: 'Expired' } : { status: 'ok', data: batch([row('a')], 'cursor') };
   }));
   try {
-    const { id } = service.start({ keyword: 'react', boards: ['justjoin'], pageSize: 2 });
+    const { id } = service.start({ keyword: 'react', boards: ['vacancies'], pageSize: 2 });
     await tick(); service.next(id); await tick(); service.next(id); await tick();
     assert.equal(calls, 2);
     assert.equal(service.poll(id).boards[0]?.error?.status, 'expired_cursor');
@@ -430,14 +429,14 @@ test('IPC rejects bad search inputs and preserves session error codes', async ()
   const harness = createHarness({ databasePath: ':memory:', env: {}, scraperUrl: '' });
   try {
     const dispatch = createDispatch(harness);
-    for (const payload of [{ keyword: '', boards: ['justjoin'] }, { keyword: 'react', boards: [] }, { keyword: 'react', boards: ['linkedin'] }]) {
+    for (const payload of [{ keyword: '', boards: ['vacancies'] }, { keyword: 'react', boards: [] }, { keyword: 'react', boards: ['manual_jobs'] }]) {
       assert.equal((await dispatch('discovery.start', payload)).ok, false);
     }
-    const unsupported = await dispatch('discovery.start', { keyword: 'react', boards: ['justjoin', 'pracuj'], workMode: 'remote' });
+    const unsupported = await dispatch('discovery.start', { keyword: 'react', boards: ['vacancies', 'rendered_jobs'], workMode: 'remote' });
     assert.equal(unsupported.ok, false);
     if (!unsupported.ok) {
       assert.equal(unsupported.error.code, 'unsupported_filter');
-      assert.match(unsupported.error.message, /justjoin, pracuj/);
+      assert.match(unsupported.error.message, /vacancies, rendered_jobs/);
     }
     const expired = await dispatch('discovery.poll', { id: '00000000-0000-4000-8000-000000000000' });
     assert.equal(expired.ok, false);
@@ -465,8 +464,8 @@ test('replacing a query cancels its old session and ignores old results', async 
     return { status: 'ok', data: batch([row('new', 'New Developer')]) };
   }));
   try {
-    const previous = service.start({ keyword: 'old', boards: ['justjoin'], pageSize: 2 });
-    const current = service.start({ keyword: 'new', boards: ['justjoin'], pageSize: 2, replaceSessionId: previous.id });
+    const previous = service.start({ keyword: 'old', boards: ['vacancies'], pageSize: 2 });
+    const current = service.start({ keyword: 'new', boards: ['vacancies'], pageSize: 2, replaceSessionId: previous.id });
     release({ status: 'ok', data: batch([row('old', 'Old Developer')]) }); await tick();
     assert.throws(() => service.poll(previous.id), { code: 'search_expired' });
     assert.equal(service.poll(current.id).events.find((event) => event.kind === 'batch')?.items?.[0]?.listing?.external_id, 'new');
@@ -479,7 +478,7 @@ test('explicit hybrid search delivers cached rows before reporting its source fa
   catalogue.ingest(batch([row('cached')]), 1);
   const service = createDiscoveryService(catalogue, source(async () => ({ status: 'unavailable', detail: 'Offline' })));
   try {
-    const { id } = service.start({ sourceMode: 'hybrid', keyword: 'react', boards: ['justjoin'], pageSize: 2 });
+    const { id } = service.start({ sourceMode: 'hybrid', keyword: 'react', boards: ['vacancies'], pageSize: 2 });
     await tick();
     const result = service.poll(id);
     assert.equal(result.events[0]?.kind, 'cached');
@@ -487,41 +486,6 @@ test('explicit hybrid search delivers cached rows before reporting its source fa
     assert.equal(result.boards[0]?.error?.status, 'unavailable');
     assert.equal(catalogue.search(searchQuery).items.length, 1);
   } finally { service.close(); db.close(); }
-});
-
-test('scraper client validates response identity, URLs, status and continuation', async () => {
-  const query = { board: 'justjoin' as const, keyword: 'react', pageSize: 2 };
-  const signal = new AbortController().signal;
-  const token = '0123456789abcdef0123456789abcdef';
-  const client = (body: unknown, status = 200) => createDiscoverySource({ token, fetch: async () => new Response(JSON.stringify(body), { status }) });
-  const good = { status: 'ok', data: batch([row('a')]) };
-  assert.equal((await client(good).search(query, signal)).status, 'ok');
-  for (const data of [
-    { ...good.data, board: 'nofluffjobs' },
-    batch([{ ...row('a'), url: 'https://justjoin.it.evil.example/job' }]),
-    { ...good.data, hasMore: true },
-    { ...good.data, version: 2 }
-  ]) assert.equal((await client({ status: 'ok', data }).search(query, signal)).status, 'error');
-  assert.equal((await client(good, 500).search(query, signal)).status, 'error');
-  assert.equal((await client({ status: 'disallowed', detail: 'No' }, 403).search(query, signal)).status, 'disallowed');
-  assert.throws(() => createDiscoverySource({ url: 'https://example.com' }));
-});
-
-test('scraper client authenticates in a header without putting the token in the URL', async () => {
-  const token = '0123456789abcdef0123456789abcdef';
-  let seenUrl = '';
-  let seenAuthorization = '';
-  const client = createDiscoverySource({
-    token,
-    fetch: async (input, init) => {
-      seenUrl = String(input);
-      seenAuthorization = new Headers(init?.headers).get('authorization') ?? '';
-      return Response.json({ version: 1, boards: [] });
-    }
-  });
-  await client.boards(new AbortController().signal);
-  assert.equal(seenAuthorization, `Bearer ${token}`);
-  assert.doesNotMatch(seenUrl, new RegExp(token));
 });
 
 
@@ -535,7 +499,7 @@ test('new searches default to live and never substitute catalogue matches', asyn
     return {status:'unavailable',detail:'Offline'};
   }), Date.now, searches);
   try {
-    const {id} = service.start({searchId:'fresh',keyword:'react',boards:['justjoin'],pageSize:30});
+    const {id} = service.start({searchId:'fresh',keyword:'react',boards:['vacancies'],pageSize:30});
     await tick();
     assert.equal(calls, 1);
     assert.equal(searches.get('fresh').sourceMode, 'live');
@@ -548,8 +512,8 @@ test('refetch keeps the same owner, renews its budget, and reset affects only it
   const {db, offers, catalogue} = setup();
   const searches = createDiscoverySearchStore(db, offers);
   const old = catalogue.ingest(batch([row('old')]), 1);
-  searches.create('owner','react',['justjoin']); searches.add('owner',old);
-  searches.create('other','react',['justjoin']); searches.add('other',old);
+  searches.create('owner','react',['vacancies']); searches.add('owner',old);
+  searches.create('other','react',['vacancies']); searches.add('other',old);
   db.prepare("INSERT INTO offer_notes VALUES (?, 'keep note', 1, 1)").run(old[0]!.offer.id);
   db.prepare("INSERT INTO conversations(id,subject_kind,subject_id,created_at,updated_at) VALUES('chat','discovery','owner',1,1)").run();
   let calls = 0;
@@ -559,7 +523,7 @@ test('refetch keeps the same owner, renews its budget, and reset affects only it
   }), Date.now, searches);
   try {
     while(searches.reserveRequest('owner','search')) { /* Exhaust the old run. */ }
-    const request = {searchId:'owner',keyword:'unsubmitted edit',boards:['nofluffjobs'] as DiscoveryBoardId[],pageSize:30};
+    const request = {searchId:'owner',keyword:'unsubmitted edit',boards:['html_jobs'] as DiscoveryBoardId[],pageSize:30};
     service.start({...request,refetch:'append'}); await tick();
     assert.equal(searches.get('owner').count,2);
     assert.equal(searches.requestUsage('owner').search,1);
@@ -576,11 +540,4 @@ test('refetch keeps the same owner, renews its budget, and reset affects only it
     assert.ok(db.prepare("SELECT 1 FROM offer_notes WHERE text='keep note'").get());
     assert.throws(()=>searches.read({id:'owner',offset:1,pageRevision:beforeReset}),{code:'search_results_changed'});
   } finally {service.close();db.close();}
-});
-
-test('missing scraper authentication reports a configuration error without making a request', async () => {
-  const client = createDiscoverySource({token:'',fetch:async()=>assert.fail('must not request')});
-  const result = await client.search({board:'justjoin',keyword:'UX Designer',pageSize:30},new AbortController().signal);
-  assert.equal(result.status,'unavailable');
-  assert.match(result.detail,/SCRAPER_API_TOKEN/);
 });

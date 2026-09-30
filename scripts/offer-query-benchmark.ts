@@ -14,10 +14,10 @@ for (const count of [1000, 10000, 50000]) {
     let captureStarted: number | undefined;
     try {
         const identity = { id: 'bench', importKey: 'synthetic' };
-        h.discoverySearches.begin({ ...identity, phrase: 'React', boards: ['justjoin'], filters: {}, rowCount: count });
+        h.discoverySearches.begin({ ...identity, phrase: 'React', boards: ['vacancies'], filters: {}, rowCount: count });
         const description = 'Published React, TypeScript, C++, C# and .NET role in Kraków. Build interfaces, maintain services and collaborate with a distributed engineering team. '.repeat(8);
         for (let i = 0; i < count; i += 50) {
-            h.discoverySearches.append({ ...identity, offset: i, items: Array.from({ length: Math.min(50, count - i) }, (_, j) => ({ offer: { id: `offer-${String(i + j).padStart(6, '0')}`, board: 'justjoin', text: description, stated: { title: 'React Developer', company: `Company ${(i + j) % 100}`, location: 'Kraków', work_mode: 'remote', required_skills: ['React', 'C++'], salary_ranges: [{ min: 20000, max: 25000, currency: 'PLN', period: 'month', contractType: 'B2B', rawText: '20–25k PLN' }, { min: 15000, max: 18000, currency: 'PLN', period: 'month', contractType: 'UoP', rawText: '15–18k PLN' }] } } })) });
+            h.discoverySearches.append({ ...identity, offset: i, items: Array.from({ length: Math.min(50, count - i) }, (_, j) => ({ offer: { id: `offer-${String(i + j).padStart(6, '0')}`, board: 'vacancies', text: description, stated: { title: 'React Developer', company: `Company ${(i + j) % 100}`, location: 'Kraków', work_mode: 'remote', required_skills: ['React', 'C++'], salary_ranges: [{ min: 20000, max: 25000, currency: 'PLN', period: 'month', contractType: 'B2B', rawText: '20–25k PLN' }, { min: 15000, max: 18000, currency: 'PLN', period: 'month', contractType: 'UoP', rawText: '15–18k PLN' }] } } })) });
             await delay(0);
         }
         h.discoverySearches.finish(identity);

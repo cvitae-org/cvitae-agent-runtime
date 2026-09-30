@@ -26,8 +26,8 @@ const source:FactSource={offerId:'o0',evidenceId:'e',text:'Our team has 4 engine
 const fact:StoredFact={criterionKey:criterion.key,status:'stated',value:4,evidenceQuote:source.text,...source,criterion,criterionHash:criterionHash(criterion),modelVersion:'test',extractorVersion,extractedAt:1};
 function fixture(count=3) {
  const s=spine({}),offers=createOfferStore(s.db),searches=createDiscoverySearchStore(s.db,offers),qs=createOfferQueryStore(s.db),q=createOfferQueryService(qs),facts=createOfferFactStore(s.db);
- searches.create('s','engineers',['justjoin']);
- for(let i=0;i<count;i++){offers.sight([{id:`o${i}`,text:i===1?'We are a company of 100 people.':'Our team has 4 engineers.'}],1);searches.add('s',[{offer:offers.get(`o${i}`)!,listing:{url:'https://example.test/job',title:'Engineer',titleSource:'board',board:'justjoin'}}]);}
+ searches.create('s','engineers',['vacancies']);
+ for(let i=0;i<count;i++){offers.sight([{id:`o${i}`,text:i===1?'We are a company of 100 people.':'Our team has 4 engineers.'}],1);searches.add('s',[{offer:offers.get(`o${i}`)!,listing:{url:'https://example.test/job',title:'Engineer',titleSource:'board',board:'vacancies'}}]);}
  return {s,offers,searches,qs,q,facts,close(){q.close();s.dispose();}};
 }
 test('criteria and quote validation preserve unknown, enforce types and reject fabricated quotes',()=>{

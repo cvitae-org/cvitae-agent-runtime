@@ -542,6 +542,21 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
       return ok({ approvalId, status });
     },
 
+    'directories.list': () => ok(harness.integrationDirectories.list()),
+    'directories.save': input => ok(harness.integrationDirectories.save(input)),
+    'directories.remove': ({id}) => ok(harness.integrationDirectories.remove(id)),
+    'directories.search': async input => ok(await harness.integrationDirectories.search(input)),
+    'directories.inspect': async input => ok(await harness.integrationDirectories.inspect(input)),
+    'integrations.list': () => ok(harness.integrations.list()),
+    'integrations.inspect': async (input) => ok(await harness.integrations.inspect(input)),
+    'integrations.save': (input) => ok(harness.integrations.save(input)),
+    'integrations.configure': (input) => ok(harness.integrations.configure(input)),
+    'integrations.enabled': ({id,enabled}) => ok(harness.integrations.enabled(id,enabled)),
+    'integrations.secret': ({id,token}) => ok(harness.integrations.secret(id,token)),
+    'integrations.refresh': async ({id}) => ok(await harness.integrations.refresh(id)),
+    'integrations.remove': async ({id}) => ok(await harness.integrations.remove(id)),
+    'integrations.icon': async ({sourceKey}) => ok(await harness.integrations.icon(sourceKey)),
+
     'settings.get': () => ok({ settings: harness.settings.read() }),
 
     /**

@@ -12,7 +12,7 @@ import type {DiscoverySource,DiscoveryBoardId} from '../src/contracts/discovery.
 import type {DiscoveryAnswerContext} from '../src/contracts/discovery-chat.js';
 import type {CollectionCoverage} from '../src/contracts/offer-collection.js';
 
-function fixture(source:DiscoverySource['search'],boards:DiscoveryBoardId[]=['justjoin'],fetchDetails: (id:string,signal:AbortSignal)=>Promise<unknown>=async()=>{},timing={searchMs:2000,detailsMs:1000}) {
+function fixture(source:DiscoverySource['search'],boards:DiscoveryBoardId[]=['vacancies'],fetchDetails: (id:string,signal:AbortSignal)=>Promise<unknown>=async()=>{},timing={searchMs:2000,detailsMs:1000}) {
  const s=spine({}),offers=createOfferStore(s.db),searches=createDiscoverySearchStore(s.db,offers),queries=createOfferQueryStore(s.db);
  searches.create('s','Original phrase',boards);
  const calls:Parameters<DiscoverySource['search']>[0][]=[];
@@ -24,15 +24,15 @@ function fixture(source:DiscoverySource['search'],boards:DiscoveryBoardId[]=['ju
  };
  return {s,searches,queries,port,calls,context,close:()=>{discovery.close();s.dispose();}};
 }
-const batch=(q:Parameters<DiscoverySource['search']>[0],hasMore=false,n=1)=>({status:'ok' as const,data:{version:1 as const,board:q.board,items:Array.from({length:n},(_,i)=>({board:q.board,url:`https://justjoin.it/offers/${q.board}-${q.cursor??'first'}-${i}`,title:'React engineer',titleSource:'board' as const})),nextCursor:hasMore?`${q.cursor??'first'}-next`:null,hasMore,coverage:'sitemap' as const,retrievedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+60000).toISOString(),effectiveFilters:[{id:'keyword' as const,support:'local' as const,stage:'source' as const,requested:q.keyword,applied:true,detail:'Slug match.'}],unsupportedFilters:[],limitations:[]}});
+const batch=(q:Parameters<DiscoverySource['search']>[0],hasMore=false,n=1)=>({status:'ok' as const,data:{version:1 as const,board:q.board,items:Array.from({length:n},(_,i)=>({board:q.board,url:`https://vacancies.example/offers/${q.board}-${q.cursor??'first'}-${i}`,title:'React engineer',titleSource:'board' as const})),nextCursor:hasMore?`${q.cursor??'first'}-next`:null,hasMore,coverage:'sitemap' as const,retrievedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+60000).toISOString(),effectiveFilters:[{id:'keyword' as const,support:'local' as const,stage:'source' as const,requested:q.keyword,applied:true,detail:'Slug match.'}],unsupportedFilters:[],limitations:[]}});
 
 test('collection persists through existing ingestion, changes snapshot, preserves manifest and reports selected sources',async()=>{
- const f=fixture(async q=>batch(q),['justjoin','pracuj']);try {
+ const f=fixture(async q=>batch(q),['vacancies','rendered_jobs']);try {
   const c=await f.context(),progress:CollectionCoverage[]=[];
   const result=await f.port.run(c,'React',new AbortController().signal,v=>progress.push(v));
   assert.equal(result.scopeCount,2);assert.notEqual(result.queryContext!.snapshotId,c.queryContext!.snapshotId);
   assert.equal(f.queries.members('s',c.queryContext!.snapshotId).length,0);
-  assert.equal(f.searches.get('s').phrase,'Original phrase');assert.deepEqual(f.calls.map(c=>c.board),['justjoin','pracuj']);
+  assert.equal(f.searches.get('s').phrase,'Original phrase');assert.deepEqual(f.calls.map(c=>c.board),['vacancies','rendered_jobs']);
   assert.equal(result.collection!.added,2);assert.equal(result.collection!.detailsCompleted,2);
   const repeated=await f.port.run(c,'React',new AbortController().signal,()=>{});
   assert.equal(repeated.collection!.added,0);assert.equal(repeated.scopeCount,2);
@@ -41,7 +41,7 @@ test('collection persists through existing ingestion, changes snapshot, preserve
  }finally{f.close();}
 });
 test('two batches per source and sixty offers bound even sources with unlimited pagination',async()=>{
- const f=fixture(async q=>batch(q,true,10),['justjoin','pracuj','nofluffjobs']);try {
+ const f=fixture(async q=>batch(q,true,10),['vacancies','rendered_jobs','html_jobs']);try {
   const result=await f.port.run(await f.context(),'React',new AbortController().signal,()=>{});
   assert.equal(f.calls.length,6);assert.equal(result.scopeCount,60);assert.equal(result.collection!.partial,true);
   assert.ok(result.collection!.sources.every(s=>s.attempts===2 && s.batches===2 && s.received===20));
@@ -71,18 +71,18 @@ test('parent cancellation aborts source, rejects result and ignores late non-coo
  }finally{f.close();}
 });
 test('deadline reports partial and aborts slow source; failed or timed-out details remain unknown',async()=>{
- let aborted=false;const f=fixture(async(q,signal)=>{await delay(500,undefined,{signal}).catch(()=>{aborted=true;});return batch(q);},['justjoin'],async()=>{}, {searchMs:25,detailsMs:25});try {
+ let aborted=false;const f=fixture(async(q,signal)=>{await delay(500,undefined,{signal}).catch(()=>{aborted=true;});return batch(q);},['vacancies'],async()=>{}, {searchMs:25,detailsMs:25});try {
   const result=await f.port.run(await f.context(),'React',new AbortController().signal,()=>{});
   await delay(5);assert.equal(aborted,true);assert.equal(result.scopeCount,0);assert.ok(result.collection!.limitations.includes('collection_deadline'));
  }finally{f.close();}
- const g=fixture(async q=>batch(q,false,5),['justjoin'],async(_id,signal)=>{await delay(500,undefined,{signal});},{searchMs:1000,detailsMs:25});try {
+ const g=fixture(async q=>batch(q,false,5),['vacancies'],async(_id,signal)=>{await delay(500,undefined,{signal});},{searchMs:1000,detailsMs:25});try {
   const result=await g.port.run(await g.context(),'React',new AbortController().signal,()=>{});
   assert.equal(result.collection!.detailsCompleted,0);assert.equal(result.collection!.detailsUnavailable,5);assert.equal(result.collection!.partial,true);
  }finally{g.close();}
 });
 test('detail stage uses two consumers; cancel preserves collected membership but publishes no final context',async()=>{
  let active=0,peak=0,aborted=0;
- const f=fixture(async q=>batch(q,false,5),['justjoin'],async(_id,signal)=>{active++;peak=Math.max(peak,active);try{await delay(500,undefined,{signal});}catch{aborted++;throw Error('cancelled');}finally{active--;}});try {
+ const f=fixture(async q=>batch(q,false,5),['vacancies'],async(_id,signal)=>{active++;peak=Math.max(peak,active);try{await delay(500,undefined,{signal});}catch{aborted++;throw Error('cancelled');}finally{active--;}});try {
   const controller=new AbortController();const pending=f.port.run(await f.context(),'React',controller.signal,()=>{});
   await delay(40);controller.abort();await assert.rejects(pending);assert.equal(peak,2);assert.equal(aborted,2);assert.equal(f.searches.get('s').count,5);
  }finally{f.close();}

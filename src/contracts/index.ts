@@ -28,3 +28,4 @@ export * from './settings.js';
 export * from './tools.js';
 
 export * from './board.js';
+export * from './integration.js';

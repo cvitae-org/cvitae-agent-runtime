@@ -71,7 +71,7 @@ import type {
 import { isWorkMode } from '../../contracts/index.js';
 import { fingerprintCv } from '../cv/document.js';
 import type { CvDocument } from '../cv/document.js';
-import { boardFor, hostOf, isFetchable } from './boards.js';
+import { boardFor, hostOf, isFetchable, type Board } from './boards.js';
 import { evaluate, SCORER_VERSION } from './criteria.js';
 import { normaliseUrl, offerId } from './identity.js';
 import { fingerprintPreferences } from './preferences.js';
@@ -127,6 +127,7 @@ export const fromWebSearch =
   };
 
 export type RoundOptions = {
+  readonly boards?: readonly Board[];
   readonly store: OfferStore;
   readonly cv: CvDocument;
   readonly preferences: Preferences;
@@ -264,7 +265,7 @@ const readingFor = (
  * queue is a nuisance at worst, and the same text choosing its own rating would
  * be the injection this design exists to prevent.
  */
-const rank = (hit: SearchHit, cv: CvDocument, preferences: Preferences): number => {
+const rank = (hit: SearchHit, cv: CvDocument, preferences: Preferences, boards:readonly Board[]=[]): number => {
   const haystack = `${hit.title} ${hit.snippet}`.toLowerCase();
   let score = 0;
 
@@ -286,7 +287,7 @@ const rank = (hit: SearchHit, cv: CvDocument, preferences: Preferences): number 
   // A posting on a known board is more likely to be a posting than a listing
   // page, an aggregator, or somebody's blog about the role. The list is
   // `boards.ts`; one worth searching outranks one merely recognised.
-  const board = boardFor(hit.url);
+  const board = boardFor(hit.url, boards);
   if (board) score += board.search ? 3 : 1;
 
   return score;
@@ -355,7 +356,7 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
 
   const queries =
     options.queries ??
-    queriesForRound([...(options.terms ?? buildQueries(cv, preferences))], round, queriesPerRound);
+    queriesForRound([...(options.terms ?? buildQueries(cv, preferences, {boards:options.boards}))], round, queriesPerRound);
 
   /* ------------------------------------------------------------ search -- */
 
@@ -408,10 +409,10 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
   // Without this the round rediscovers them every time and spends a fetch
   // learning what `boards.ts` already knows — and the refusal is a term of use,
   // not a rate limit, so retrying is not a matter of waiting longer.
-  const refused = candidates.filter((candidate) => !isFetchable(candidate.hit.url));
+  const refused = candidates.filter((candidate) => !isFetchable(candidate.hit.url,options.boards));
 
   const actionable = candidates
-    .filter((candidate) => isFetchable(candidate.hit.url))
+    .filter((candidate) => isFetchable(candidate.hit.url,options.boards))
     .map((candidate) => ({ ...candidate, intent: intentFor(candidate.record) }))
     .filter((candidate) => candidate.intent !== 'skip')
     .sort((left, right) => {
@@ -419,7 +420,7 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
       // already paid for, so finishing one costs strictly less than starting a
       // new one and leaves less half-done work behind.
       if (left.intent !== right.intent) return left.intent === 'analyse' ? -1 : 1;
-      return rank(right.hit, cv, preferences) - rank(left.hit, cv, preferences);
+      return rank(right.hit, cv, preferences,options.boards) - rank(left.hit, cv, preferences,options.boards);
     });
 
   const reading = actionable.slice(0, fetchLimit);
@@ -437,7 +438,7 @@ export const runRound = async (options: RoundOptions): Promise<RoundReport> => {
       board: hostOf(candidate.hit.url),
       // Marked at the point it is known, so the state means "this will not be
       // read" rather than "this has not been read yet".
-      ...(isFetchable(candidate.hit.url) ? {} : { processing: 'unreadable' as const })
+      ...(isFetchable(candidate.hit.url,options.boards) ? {} : { processing: 'unreadable' as const })
     }));
 
   /* ------------------------------------------------- read, verify, store -- */

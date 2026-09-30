@@ -1,3 +1,4 @@
+import {boards} from './fixtures/source-catalogue.js';
 /**
  * A discovery round, end to end, with no network and no model.
  *
@@ -105,7 +106,7 @@ const extracts = async (): Promise<Record<string, unknown>> => ({
   required_skills: ['Flutter', 'Dart']
 });
 
-const OFFER = 'https://justjoin.it/offers/kowalski-senior-flutter-developer-krakow';
+const OFFER = 'https://vacancies.example/offers/kowalski-senior-flutter-developer-krakow';
 
 test('a round searches, reads, grounds and scores in one pass', async () => {
   const s = scratch();
@@ -113,7 +114,7 @@ test('a round searches, reads, grounds and scores in one pass', async () => {
     const store = createOfferStore(s.db);
     const read = readerOver({ [OFFER]: POSTING });
 
-    const report = await runRound({
+    const report = await runRound({boards,
       store,
       cv: cv(),
       preferences: wants(),
@@ -157,7 +158,7 @@ test('a claim the posting does not support is dropped, and named', async () => {
   try {
     const store = createOfferStore(s.db);
 
-    const report = await runRound({
+    const report = await runRound({boards,
       store,
       cv: cv(),
       preferences: wants(),
@@ -184,7 +185,7 @@ test('two queries returning one posting is one candidate', async () => {
     const store = createOfferStore(s.db);
     const read = readerOver({ [OFFER]: POSTING });
 
-    const report = await runRound({
+    const report = await runRound({boards,
       store,
       cv: cv(),
       preferences: wants(),
@@ -210,13 +211,13 @@ test('what the fetch budget does not reach is still recorded', async () => {
     const store = createOfferStore(s.db);
     const read = readerOver({ [OFFER]: POSTING });
 
-    const report = await runRound({
+    const report = await runRound({boards,
       store,
       cv: cv(),
       preferences: wants(),
       analyse: extracts,
       read,
-      search: answers(hit(OFFER), hit('https://justjoin.it/offers/other-flutter-role')),
+      search: answers(hit(OFFER), hit('https://vacancies.example/offers/other-flutter-role')),
       call: call(),
       queries: ['flutter'],
       fetchLimit: 1
@@ -240,13 +241,13 @@ test('a board whose terms refuse automation is recorded and never read', async (
     const store = createOfferStore(s.db);
     const read = readerOver({});
 
-    const report = await runRound({
+    const report = await runRound({boards,
       store,
       cv: cv(),
       preferences: wants(),
       analyse: extracts,
       read,
-      search: answers(hit('https://www.linkedin.com/jobs/view/123456789')),
+      search: answers(hit('https://www.manual.example/jobs/view/123456789')),
       call: call(),
       queries: ['flutter']
     });
@@ -266,7 +267,7 @@ test('a posting read but not extracted is left for the next round to finish', as
     const store = createOfferStore(s.db);
     const read = readerOver({ [OFFER]: POSTING });
 
-    const failing = await runRound({
+    const failing = await runRound({boards,
       store,
       cv: cv(),
       preferences: wants(),
@@ -287,7 +288,7 @@ test('a posting read but not extracted is left for the next round to finish', as
     // The second round finishes it with a model call and no request to the
     // board. An earlier version read `fetched` as finished and left these
     // stranded forever: read, unscored, never looked at again.
-    const finishing = await runRound({
+    const finishing = await runRound({boards,
       store,
       cv: cv(),
       preferences: wants(),
@@ -323,11 +324,11 @@ test('an offer the user dismissed is not re-read, and stays dismissed', async ()
       queries: ['flutter']
     };
 
-    await runRound({ ...options, call: call() });
+    await runRound({boards, ...options, call: call() });
     const id = store.recent(10)[0]!.id;
     store.setDisposition(id, 'dismissed');
 
-    const second = await runRound({ ...options, call: call() });
+    const second = await runRound({boards, ...options, call: call() });
 
     assert.equal(second.fetched, 0);
     assert.equal(read.reads.length, 1);
@@ -355,8 +356,8 @@ test('a rated offer seen again costs nothing but a re-score', async () => {
       queries: ['flutter']
     };
 
-    await runRound({ ...options, call: call() });
-    const second = await runRound({ ...options, call: call() });
+    await runRound({boards, ...options, call: call() });
+    const second = await runRound({boards, ...options, call: call() });
 
     assert.equal(second.fetched, 0);
     assert.equal(second.discovered, 0);
@@ -381,12 +382,12 @@ test('the audit trail survives a round that only re-saw the offer', async () => 
       queries: ['flutter']
     };
 
-    await runRound({
+    await runRound({boards,
       ...options,
       call: call(),
       analyse: async () => ({ ...(await extracts()), salary: '40 000 PLN / mies.' })
     });
-    const second = await runRound({ ...options, call: call(), analyse: extracts });
+    const second = await runRound({boards, ...options, call: call(), analyse: extracts });
 
     // The second round re-checked nothing. Defaulting to an empty list here
     // erased the audit trail on the strength of not having looked.
@@ -401,7 +402,7 @@ test('finding nothing at all is not saturation', async () => {
   try {
     const store = createOfferStore(s.db);
 
-    const report = await runRound({
+    const report = await runRound({boards,
       store,
       cv: cv(),
       preferences: wants(),
@@ -428,7 +429,7 @@ test('a search that cannot run at all is reported once per query it owed', async
     const store = createOfferStore(s.db);
     let asked = 0;
 
-    const report = await runRound({
+    const report = await runRound({boards,
       store,
       cv: cv(),
       preferences: wants(),
@@ -455,7 +456,7 @@ test('the same job on two boards is reported, never merged', async () => {
   const s = scratch();
   try {
     const store = createOfferStore(s.db);
-    const elsewhere = 'https://nofluffjobs.com/job/senior-flutter-developer-kowalski-krakow';
+    const elsewhere = 'https://html.example/job/senior-flutter-developer-kowalski-krakow';
     const read = readerOver({ [OFFER]: POSTING, [elsewhere]: POSTING });
     const options = {
       store,
@@ -467,8 +468,8 @@ test('the same job on two boards is reported, never merged', async () => {
       queries: ['flutter']
     };
 
-    await runRound({ ...options, search: answers(hit(OFFER)) });
-    const second = await runRound({
+    await runRound({boards, ...options, search: answers(hit(OFFER)) });
+    const second = await runRound({boards,
       ...options,
       call: call(),
       search: answers(hit(elsewhere))
@@ -487,12 +488,12 @@ test('a near-miss title is not called a repost', async () => {
   const s = scratch();
   try {
     const store = createOfferStore(s.db);
-    const junior = 'https://nofluffjobs.com/job/junior-flutter-developer-kowalski';
+    const junior = 'https://html.example/job/junior-flutter-developer-kowalski';
     const read = readerOver({ [OFFER]: POSTING, [junior]: POSTING });
     const options = { store, cv: cv(), preferences: wants(), read, queries: ['flutter'] };
 
-    await runRound({ ...options, call: call(), analyse: extracts, search: answers(hit(OFFER)) });
-    const second = await runRound({
+    await runRound({boards, ...options, call: call(), analyse: extracts, search: answers(hit(OFFER)) });
+    const second = await runRound({boards,
       ...options,
       call: call(),
       analyse: async () => ({ ...(await extracts()), position: 'Flutter Developer' }),
@@ -513,7 +514,7 @@ test('rounds stop once a round finds nothing new', async () => {
   try {
     const store = createOfferStore(s.db);
 
-    const reports = await runRounds({
+    const reports = await runRounds({boards,
       store,
       cv: cv(),
       preferences: wants(),
@@ -538,7 +539,7 @@ test('rounds stop when every query failed, which proves nothing about the market
     const store = createOfferStore(s.db);
     let asked = 0;
 
-    const reports = await runRounds({
+    const reports = await runRounds({boards,
       store,
       cv: cv(),
       preferences: wants(),
@@ -563,7 +564,7 @@ test('rounds stop when every query failed, which proves nothing about the market
 /* ------------------------------------------------------------ board search */
 
 const listing = (url: string): Listing => ({
-  board: 'justjoin',
+  board: 'vacancies',
   url,
   title: 'Senior Flutter Developer'
 });
@@ -571,6 +572,7 @@ const listing = (url: string): Listing => ({
 const listerOver = (
   answer: (board: string) => SiteOutcome<readonly Listing[]>
 ): SiteReader => ({
+  integrationSources:async()=>boards,
   async listBoard({ board }) {
     return answer(board);
   },

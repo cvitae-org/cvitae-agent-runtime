@@ -1,4 +1,11 @@
-import { configuredDiscoveryProvider, type DiscoveryProvider } from '../effects/discovery-provider.js';
+import { createIntegrationDirectories } from '../effects/integration-directories.js';
+import { createIntegrationDirectoryStore } from '../storage/sqlite/integration-directories.js';
+import { withIntegrationSites } from '../effects/integration-sites.js';
+import { type IntegrationProviders } from '../effects/integration-providers.js';
+import { createIntegrationManagement } from '../effects/integration-management.js';
+import { createIntegrationSettingsStore } from '../storage/sqlite/integration-settings.js';
+import { randomUUID } from 'node:crypto';
+import { createIntegrationDiscovery } from '../effects/integration-discovery.js';
 import {createBrowserService} from './browser.js';
 import {createBrowserImportStore} from '../storage/sqlite/browser-imports.js';
 import {OperationError} from '../contracts/operation-error.js';
@@ -45,8 +52,8 @@ import { createOfferQueryService } from './offer-query.js';
  * write port, and indexing is the same kind of thing for the same reason.
  */
 
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { join, dirname, resolve } from 'node:path';
 import { open } from '../storage/sqlite/open.js';
 import { migrate } from '../storage/sqlite/migrate.js';
 import { createRunStore } from '../storage/sqlite/run-store.js';
@@ -66,7 +73,6 @@ import { CvContextError, RuntimeError } from '../contracts/index.js';
 import { createChunkIndex } from '../storage/sqlite/chunk-index.js';
 import { createOfferStore } from '../storage/sqlite/offers.js';
 import { createDiscoveryCatalogue } from '../storage/sqlite/discovery.js';
-import { createDiscoverySource } from '../effects/discovery.js';
 import { createDiscoverySearchStore } from '../storage/sqlite/discovery-searches.js';
 import { createDiscoveryChatStore } from '../storage/sqlite/discovery-chat.js';
 import { createDiscoveryChatService } from './discovery-chat.js';
@@ -76,6 +82,8 @@ import { createDiscoverySqlPort } from './discovery-sql.js';
 import { createCollectionPort } from './offer-collection.js';
 import { createDiscoveryService } from './discovery.js';
 import { createOfferNotes } from '../storage/sqlite/offer-notes.js';
+import { createIntegrationOfferReader } from '../effects/integration-offers.js';
+import { createIntegrationOfferLookup } from '../storage/sqlite/integration-acquisitions.js';
 import { createEnrichmentStore } from '../storage/sqlite/enrichment.js';
 import { createDetailQueueStore } from '../storage/sqlite/detail-queue.js';
 import { createDetailQueue } from './detail-queue.js';
@@ -173,11 +181,15 @@ export const consoleLogger: AiLogger = {
 export const silentLogger: AiLogger = { record: () => undefined };
 
 export type CreateOptions = {
-  readonly discoveryProvider?: DiscoveryProvider;
-  /** Optional source port for hosts/tests; defaults to the loopback scraper. */
+  readonly integrationProviders?: IntegrationProviders;
+  readonly integrationFetch?: typeof globalThis.fetch;
+  readonly integrationCacheDirectory?: string;
+  /** Optional source port for hosts/tests; defaults to configured provider recipes. */
   readonly discoverySource?: DiscoverySource;
   /** Injectable public reader for deterministic Board integration tests. */
   readonly boardReader?: OfferReader;
+  /** Explicit offer reader port for embedding hosts and deterministic tests. */
+  readonly offerReader?: OfferReader;
   /** Desktop host enables durable background index recovery; libraries opt in. */
   readonly indexRecovery?: boolean;
   /** Defaults to `CVITAE_DB`, then `~/.cvitae/runtime.db`. */
@@ -309,6 +321,8 @@ export type Harness = {
    * `providers/environment.ts` — the keychain on the host's side is the store of
    * record, and this process holds a copy for as long as it is alive.
    */
+  readonly integrationDirectories: ReturnType<typeof createIntegrationDirectories>;
+  readonly integrations: ReturnType<typeof createIntegrationManagement>;
   readonly settings: {
     read(): Settings;
     write(next: Settings): Settings;
@@ -333,7 +347,8 @@ const defaultDatabasePath = (): string =>
   process.env.CVITAE_DB ?? join(homedir(), '.cvitae', 'runtime.db');
 
 export const createHarness = (options: CreateOptions = {}): Harness => {
-  const db = open(options.databasePath ?? defaultDatabasePath());
+  const databasePath = options.databasePath ?? defaultDatabasePath();
+  const db = open(databasePath);
   migrate(db);
 
   const runs = createRunStore(db);
@@ -353,10 +368,17 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   const catalogue = createDiscoveryCatalogue(db, offers);
   const enrichmentStore = createEnrichmentStore(db, offers);
   const browserImports = createBrowserImportStore(db,offers,catalogue,discoverySearches,enrichmentStore,options.now);
-  const provider = options.discoveryProvider ?? configuredDiscoveryProvider();
-  const browser = createBrowserService(browserImports,options.now,provider);
+  const integrations = createIntegrationManagement(createIntegrationSettingsStore(db), {
+    env: options.env ?? process.env, fetch: options.integrationFetch, now: options.now, providers: options.integrationProviders,
+    directory: options.integrationCacheDirectory ?? (options.env ?? process.env).INTEGRATION_PROVIDERS_CACHE_DIR ??
+      (databasePath === ':memory:' ? join(tmpdir(), 'cvitae-integrations-'+randomUUID()) : join(dirname(resolve(databasePath)), 'integrations')),
+  });
+  const integrationDirectories = createIntegrationDirectories(createIntegrationDirectoryStore(db), integrations, {fetch:options.integrationFetch,now:options.now});
+  const integrationProviders = integrations.providers;
+  const browser = createBrowserService(browserImports,options.now,integrationProviders);
+  const integrationDiscovery = options.discoverySource ?? createIntegrationDiscovery(integrationProviders, {url:options.scraperUrl,token:scraperToken,now:options.now});
   const discovery = createDiscoveryService(catalogue,
-    withDiscoveryMetadata(db, options.discoverySource ?? createDiscoverySource({ url: options.scraperUrl, token: scraperToken, provider })), options.now, discoverySearches);
+    withDiscoveryMetadata(db, integrationDiscovery), options.now, discoverySearches);
   const attempts = createAttemptLog(db);
   const aiLog = createAiLog(db);
   const settings = createSettingsStore(db, options.now);
@@ -456,10 +478,13 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     ...(options.now ? { now: options.now } : {})
   });
 
+  const integrationOfferLookup = createIntegrationOfferLookup(db);
+  const offerReader = options.offerReader ?? createIntegrationOfferReader(integrationProviders, {url:options.scraperUrl, token:scraperToken, now:options.now, lookup:integrationOfferLookup});
+
   const effects = {
     ai,
-    offers: web,
-    sites: web,
+    offers: offerReader,
+    sites: withIntegrationSites(web,integrationProviders,integrationDiscovery),
     search: createWebSearch({ ...(options.now ? { now: options.now } : {}) }),
     sources: createSourceReader({ ai }),
     attempts
@@ -541,7 +566,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
 
   // Public offer extraction has no CV/conversation input. Use only the fixed
   // analyze_offer plan; this does not relax context checks for ordinary runs.
-  const enrichment = createEnrichmentService(offers, enrichmentStore, web,
+  const enrichment = createEnrichmentService(offers, enrichmentStore, offerReader,
     (offerId, signal) => {
       const offer = offers.get(offerId)!;
       return beginRun({ ...deps, scopeLegacy: () => undefined, capabilities: { analyze_offer: analyzeOffer } }, {
@@ -574,10 +599,13 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     }
   });
   const board = createBoardService(boardStore, {
-    reader: {...(options.boardReader ?? web),capture:async (url,call)=>{
+    reader: {...(options.boardReader ?? offerReader),capture:async (url,call)=>{
       const captured=browserImports.capture(url);if(captured)return captured;
-      if(browserImports.has(url))throw new OperationError('browser_capture_required','Open the offer and import its details with Cvitae Browser Companion.');
-      const reader=options.boardReader??web;return (reader.capture??reader.resolve).call(reader,url,call);
+      // Listing imports have no description yet. Their saved provider binding
+      // can authorize detail collection; the reader still checks trust, expiry,
+      // enabled state, recipe withdrawal and the original offer identity.
+      if(browserImports.has(url) && !integrationOfferLookup(url))throw new OperationError('browser_capture_required','This item only contains a listing. Open the offer in Cvitae Browser, import its details, then resume preparation.');
+      const reader=options.boardReader??offerReader;return (reader.capture??reader.resolve).call(reader,url,call);
     }}, contexts: cvContexts.list, run: runs.get, now: options.now,
     emptyCv: cvDocumentSchema.parse({}),
     captureCv: db.transaction((contextId: string) => {
@@ -659,6 +687,8 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
       ...(options.mailUrl === undefined ? {} : { url: options.mailUrl })
     }),
     capabilities: deps.capabilities,
+    integrations,
+    integrationDirectories,
     settings: {
       read: settings.read,
       // Validated, then stored, then applied — in that order, so a value that
@@ -681,6 +711,6 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
         })
     },
     recoverInterrupted: () => recoverInterruptedRuns(runs, options.now),
-    close: () => { browser.close(); applicationAgent.close(); board.close(); offerQueries.close(); discoveryChat.close(); detailQueue.close(); enrichment.close(); discovery.close(); indexRebuilder.close(); db.close(); }
+    close: () => { integrationDirectories.close(); browser.close(); integrations.close(); applicationAgent.close(); board.close(); offerQueries.close(); discoveryChat.close(); detailQueue.close(); enrichment.close(); discovery.close(); indexRebuilder.close(); db.close(); }
   };
 };

@@ -1,0 +1,131 @@
+{
+  "listing": {
+    "sourceId": "vacancies",
+    "revision": "r1",
+    "hosts": [
+      "careers.example"
+    ],
+    "offer": {
+      "pathPrefix": "/position/"
+    },
+    "kind": "dom-listing-v1",
+    "listing": {
+      "path": "/opportunities",
+      "pageParameter": "page",
+      "keywordParameter": "term"
+    },
+    "root": "#results",
+    "items": ".vacancy",
+    "fields": {
+      "external_id": {
+        "selector": "$",
+        "attribute": "data-id"
+      },
+      "url": {
+        "selector": "a.permalink",
+        "attribute": "href"
+      },
+      "title": {
+        "selector": ".title"
+      },
+      "company": {
+        "selector": ".company"
+      },
+      "location": {
+        "selector": ".location"
+      },
+      "salary": {
+        "selector": ".salary"
+      },
+      "contract_type": {
+        "selector": ".contract"
+      },
+      "posted_at": {
+        "selector": "time",
+        "attribute": "datetime"
+      }
+    },
+    "pagination": {
+      "page": {
+        "selector": "$",
+        "attribute": "data-page"
+      },
+      "pages": {
+        "selector": "$",
+        "attribute": "data-pages"
+      },
+      "keyword": {
+        "selector": "$",
+        "attribute": "data-term"
+      },
+      "empty": ".no-results",
+      "maxPages": 3
+    }
+  },
+  "detail": {
+    "sourceId": "vacancies",
+    "revision": "r1",
+    "hosts": [
+      "careers.example"
+    ],
+    "offer": {
+      "pathPrefix": "/position/"
+    },
+    "kind": "dom-detail-v1",
+    "root": "article.position",
+    "fields": {
+      "external_id": {
+        "selector": "$",
+        "attribute": "data-id"
+      },
+      "url": {
+        "selector": "a.permalink",
+        "attribute": "href"
+      },
+      "title": {
+        "selector": ".title"
+      },
+      "company": {
+        "selector": ".company"
+      },
+      "location": {
+        "selector": ".location"
+      },
+      "salary": {
+        "selector": ".salary"
+      },
+      "contract_type": {
+        "selector": ".contract"
+      },
+      "posted_at": {
+        "selector": "time",
+        "attribute": "datetime"
+      },
+      "description": {
+        "selector": ".description"
+      },
+      "required_skills": {
+        "selector": ".skills li"
+      }
+    }
+  },
+  "sitemap": {
+    "sourceId": "vacancies",
+    "revision": "r1",
+    "hosts": [
+      "careers.example"
+    ],
+    "offer": {
+      "pathPrefix": "/position/"
+    },
+    "kind": "sitemap-v1",
+    "seeds": [
+      "https://careers.example/sitemap.xml"
+    ],
+    "maxDocuments": 3,
+    "maxDepth": 2,
+    "maxUrls": 20
+  },
+  "listingHtml": "<div id=\"results\" data-page=\"1\" data-pages=\"1\" data-term=\"Research\"><div class=\"vacancy\" data-id=\"R-1\"><a class=\"permalink\" href=\"/position/research-1\">Open</a><h2 class=\"title\">Research Engineer</h2><p class=\"company\">Example Laboratory</p><p class=\"location\">Toronto</p><p class=\"salary\">CAD 90000\u2013110000 / year</p><p class=\"contract\">Permanent</p><time datetime=\"2026-09-28T09:00:00Z\">Today</time></div></div>",
+  "detailHtml": "<html><title>Research Engineer</title><body><nav>Account private menu</nav><article class=\"position\" data-id=\"R-1\"><a class=\"permalink\" href=\"/position/research-1\">Open</a><h2 class=\"title\">Research Engineer</h2><p class=\"company\">Example Laboratory</p><p class=\"location\">Toronto</p><p class=\"salary\">CAD 90000\u2013110000 / year</p><p class=\"contract\">Permanent</p><time datetime=\"2026-09-28T09:00:00Z\">Today</time><section class=\"description\"><p>Build and validate scientific instruments with our research team.</p><p>Design reproducible experiments and publish reliable measurements.</p><script>privateToken()</script><form><input value=\"secret\"/>private form text</form><p hidden>hidden private data</p></section><ul class=\"skills\"><li>Python</li><li>Experimental design</li></ul></article></body></html>"
+}

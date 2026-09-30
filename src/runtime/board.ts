@@ -140,7 +140,7 @@ export const createBoardService = (store: ReturnType<typeof createBoardStore>, p
           const state = current.preparation.steps[step]; state.status = 'failed'; state.error = message;
           current.preparation.error = message; current.preparation.code = code;
           const retryable = ['step_failed','timeout','provider_unavailable','network_error'].includes(code) && state.attempts < 3;
-          current.preparation.status = retryable ? 'queued' : ['selection_required','unreadable_source','board_conflict'].includes(code) ? 'waiting' : 'failed';
+          current.preparation.status = retryable ? 'queued' : ['selection_required','unreadable_source','browser_capture_required','board_conflict'].includes(code) ? 'waiting' : 'failed';
           if (retryable) current.preparation.retryAt = now() + [1000,5000,30000][Math.min(state.attempts - 1,2)]!;
           boardEvent(current,'preparationFailed',{step,code,message,willRetry:retryable},now());
         });

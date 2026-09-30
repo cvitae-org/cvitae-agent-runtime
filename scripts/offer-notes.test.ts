@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHarness } from '../src/runtime/create.js';
 import { createDispatch } from '../src/adapters/ipc/dispatch.js';
-const offer = { id: 'a', url: 'https://justjoin.it/job-offer/a', text: '', firstSeenAt: 1, lastSeenAt: 1, processing: 'candidate' as const, disposition: 'active' as const };
+const offer = { id: 'a', url: 'https://vacancies.example/job-offer/a', text: '', firstSeenAt: 1, lastSeenAt: 1, processing: 'candidate' as const, disposition: 'active' as const };
 test('notes reject stale edits and deletions, allow response replay, and survive offer updates', () => {
  const h = createHarness({ databasePath: ':memory:', env: {}, scraperUrl: '' });
  try {

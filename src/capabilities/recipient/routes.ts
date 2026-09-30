@@ -36,43 +36,10 @@ import type { SearchHit } from '../../contracts/index.js';
 export const slug = (value: string): string =>
   value.toLowerCase().replace(/[^a-z0-9ąćęłńóśźż]+/gi, '');
 
-/**
- * Applicant tracking systems: where an employer's "Apply" button lands.
- *
- * Worth opening and worth showing, and never mistaken for the employer's own
- * domain — `jobs.lever.co` belongs to Lever, and an address found on it is on
- * Lever's domain, not the company's. Keeping the two apart is what stops a
- * careers page hosted by a third party from attesting a domain match.
- */
-const ATS =
-  /(^|\.)(lever\.co|greenhouse\.io|workable\.com|recruitee\.com|teamtailor\.com|smartrecruiters\.com|breezy\.hr|jobvite\.com|ashbyhq\.com|personio\.(com|de)|bamboohr\.com|myworkdayjobs\.com|taleo\.net|successfactors\.(com|eu)|icims\.com|applytojob\.com|jazz\.co|erecruiter\.pl|traffit\.com|elevato\.net|hrlink\.pl|emplo\.com|tribe39\.com|workday\.com)$/i;
-
-/**
- * Boards. Excluded from everything here, for two different reasons: the ones
- * this runtime crawls are already swept by the cross-check tier, and the ones
- * that refuse crawling would only produce a blocked fetch.
- */
-const BOARD =
-  /(^|\.)(justjoin\.it|nofluffjobs\.com|pracuj\.pl|theprotocol\.it|rocketjobs\.pl|bulldogjob\.pl|solid\.jobs|jobs\.pl|aplikuj\.pl|praca\.pl|infopraca\.pl|olx\.pl|linkedin\.com|indeed\.com|glassdoor\.[a-z.]+|xing\.com|goldenline\.pl|monster\.[a-z.]+|stepstone\.[a-z.]+)$/i;
-
-const SOCIAL =
-  /(^|\.)(facebook\.com|instagram\.com|x\.com|twitter\.com|youtube\.com|tiktok\.com|medium\.com|github\.com|gitlab\.com|wikipedia\.org|crunchbase\.com|pinterest\.[a-z.]+|reddit\.com)$/i;
-
-/**
- * Registers and scraped aggregators.
- *
- * These do publish company addresses, which is exactly why they are refused.
- * The address on a company register is the one filed with the registrar years
- * ago, and an aggregator's is a copy of a board's copy — both look like
- * corroboration while being neither independent nor current. A wrong address
- * that arrives wearing a second source is worse than no second source.
- */
-const DIRECTORY =
-  /(^|\.)(aleo\.com|panoramafirm\.pl|rejestr\.io|krs-online\.com\.pl|biznes\.gov\.pl|imsig\.pl|bizraport\.pl|gowork\.pl|jooble\.org|careerjet\.[a-z.]+|talent\.com|neuvoo\.[a-z.]+|trovit\.[a-z.]+|jobsora\.com|whatjobs\.com|jobtome\.com)$/i;
-
+import type {IntegrationSourceInfo} from '../../contracts/effects.js';
 export type HostKind = 'ats' | 'board' | 'social' | 'directory' | 'employer';
 
-export const hostKind = (url: string): HostKind => {
+export const hostKind = (url: string, sources:readonly IntegrationSourceInfo[]=[]): HostKind => {
   const domain = registrableDomain(url);
   const host = (() => {
     try {
@@ -82,13 +49,9 @@ export const hostKind = (url: string): HostKind => {
     }
   })();
 
-  // The host as well as the domain, because an ATS is reached at a subdomain —
-  // `jobs.lever.co` registers as `lever.co`, but `company.myworkdayjobs.com`
-  // needs the full host to match at all.
-  if (ATS.test(domain) || ATS.test(host)) return 'ats';
-  if (BOARD.test(domain)) return 'board';
-  if (SOCIAL.test(domain)) return 'social';
-  if (DIRECTORY.test(domain)) return 'directory';
+  const classifications=sources.flatMap(source=>[...(source.hosts??[source.domain]).map(host=>({host,kind:'board' as const})),...(source.routing??[])]);
+  const matches=classifications.filter(item=>host===item.host||host.endsWith('.'+item.host)).sort((a,b)=>b.host.length-a.host.length);
+  if(matches.length)return matches[0]!.kind;
 
   return 'employer';
 };
@@ -119,8 +82,8 @@ export type ApplyRoute = {
  * a mislabelled route can do is appear under the wrong heading in a list of
  * links a person clicks.
  */
-export const routeKind = (url: string, title = '', snippet = ''): RouteKind => {
-  if (hostKind(url) === 'ats') return 'ats';
+export const routeKind = (url: string, title = '', snippet = '', sources:readonly IntegrationSourceInfo[]=[]): RouteKind => {
+  if (hostKind(url,sources) === 'ats') return 'ats';
 
   const path = (() => {
     try {
@@ -177,13 +140,13 @@ export type DomainCandidate = {
 export const domainCandidates = (
   hits: readonly SearchHit[],
   company: string,
-  limit = 4
+  limit = 4, sources:readonly IntegrationSourceInfo[]=[]
 ): DomainCandidate[] => {
   const wanted = slug(company);
   const byDomain = new Map<string, { domain: string; urls: string[]; score: number }>();
 
   hits.forEach((hit, index) => {
-    if (hostKind(hit.url) !== 'employer') return;
+    if (hostKind(hit.url,sources) !== 'employer') return;
 
     const domain = registrableDomain(hit.url);
 
@@ -213,7 +176,7 @@ export const domainCandidates = (
     // pages is not four times the evidence.
     if (entry.urls.length < 3) entry.score += 1;
 
-    const kind = routeKind(hit.url, hit.title, hit.snippet);
+    const kind = routeKind(hit.url, hit.title, hit.snippet,sources);
 
     if (kind === 'careers') entry.score += 2;
     if (kind === 'contact') entry.score += 1;
@@ -259,18 +222,18 @@ export const pagesToOpen = (
   {
     companyDomains = [],
     alreadyRead = [],
-    limit = 3
+    limit = 3, sources=[]
   }: {
     companyDomains?: readonly string[];
     alreadyRead?: readonly string[];
-    limit?: number;
+    limit?: number; sources?:readonly IntegrationSourceInfo[];
   } = {}
 ): PagePick[] => {
   const owned = new Set(companyDomains.map(registrableDomain).filter(Boolean));
 
   const picks = hits
     .filter((hit) => {
-      const kind = hostKind(hit.url);
+      const kind = hostKind(hit.url,sources);
 
       // Boards are another tier's job, and directories are copies. Social
       // profiles publish a contact address that belongs to the network's
@@ -290,7 +253,7 @@ export const pagesToOpen = (
     .filter((hit) => !alreadyRead.some((read) => sameUrl(read, hit.url)))
     .map((hit) => ({
       url: hit.url,
-      kind: routeKind(hit.url, hit.title, hit.snippet),
+      kind: routeKind(hit.url, hit.title, hit.snippet,sources),
       title: hit.title,
       host: (() => {
         try {

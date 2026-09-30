@@ -1,3 +1,5 @@
+import { directoryPayloads } from '../../contracts/integration-directories.js';
+import { integrationPayloads } from '../../contracts/integration-settings.js';
 import { discoveryBoardIdSchema, maxDiscoveryBoards } from '../../contracts/discovery-board.js';
 import { boardPayloads } from '../../contracts/board-channels.js';
 import { queryPayloads } from '../../contracts/offer-query.js';
@@ -300,6 +302,8 @@ export const payloads = {
     decision: z.record(z.string(), z.unknown()).optional()
   }),
 
+  ...integrationPayloads,
+  ...directoryPayloads,
   'settings.get': z.object({}),
 
   /**

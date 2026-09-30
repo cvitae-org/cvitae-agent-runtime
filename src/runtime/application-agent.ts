@@ -6,12 +6,12 @@ import { fieldDraftSchema, type ApplicationAction, type ApplicationAgentState, t
 import { directAnswer, factCatalogue, protectedField, proseField, normalizeField } from '../capabilities/apply/fields.js';
 import { currentCv, currentPosting, boardEvent, type createBoardStore } from '../storage/sqlite/board.js';
 import type { RunHandle } from './run.js';
+import { isPublicUrl as publicUrl } from '../public-url.js';
 
 type Store=ReturnType<typeof createBoardStore>;
 type Owner={entryId:string;sessionId:string};
 type Ports={captureProfile:(contextId:string)=>Pick<OfferSnapshot,'context'|'document'|'photo'>;execute:(input:BoardRunInput,signal:AbortSignal)=>RunHandle;now?:()=>number};
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const publicUrl=(raw:string)=>{try{const u=new URL(raw);return u.protocol==='https:'&&!u.username&&!u.password;}catch{return false;}};
 const activeStatus=(status:string)=>['running','paused','needsInput'].includes(status);
 
 /** Browser application work has its own state machine and cancellation scope.
@@ -62,7 +62,7 @@ export const createApplicationAgent=(store:Store,ports:Ports)=>{
     if(entry.currentCvId!==state.cvVersionId||entry.preparation.status!=='ready')return plan(owner,observation,{kind:'pause',message:'The prepared CV changed. Start Apply again with the current CV.'});
     if(active.has(entry.id))throw new OperationError('application_busy','The application agent is already planning this page.');
     if(state.iterations>=30)return plan(owner,observation,{kind:'pause',message:'The agent reached its action limit. Review the browser before continuing.'});
-    for(const frame of observation.frames)if(!publicUrl(frame.url))throw new OperationError('application_origin','Application forms must use HTTPS.');
+    for(const frame of observation.frames)if(!publicUrl(frame.url))throw new OperationError('application_origin','Application forms must be on a public HTTPS site.');
     save(owner,(current,workspace)=>{current.observation=observation;delete current.action;current.iterations++;captureAnswers(workspace,observation);});
     const blocked=observation.frames.find(frame=>frame.blocked);
     if(blocked)return plan(owner,observation,{kind:'pause',message:blocked.blocked});
@@ -157,7 +157,7 @@ export const createApplicationAgent=(store:Store,ports:Ports)=>{
       if(state.status!=='running')return state;
       return save(request,(current,entry)=>{
         if(request.observation){
-          if(request.observation.frames.some(frame=>!publicUrl(frame.url)))throw new OperationError('application_origin','Application forms must use HTTPS.');
+          if(request.observation.frames.some(frame=>!publicUrl(frame.url)))throw new OperationError('application_origin','Application forms must be on a public HTTPS site.');
           captureAnswers(entry,request.observation);
         }
         if(!request.ok){current.status='needsInput';current.message=request.message||'The page changed. Check the browser, then Resume.';return;}

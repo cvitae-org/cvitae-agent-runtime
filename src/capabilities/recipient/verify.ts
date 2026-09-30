@@ -69,17 +69,9 @@ import {
   type ApplyRoute
 } from './routes.js';
 
-/** Boards the companion scraper will crawl. LinkedIn and Indeed refuse, by their terms. */
-const BOARDS = ['justjoin', 'nofluffjobs', 'pracuj'] as const;
+/** Sources explicitly enabled by the configured providers. */
 
-/**
- * A cap on rows scanned per board, not a cap the board honours.
- *
- * Measured: `justjoin` returns its whole result set — 188 rows for "react" —
- * whatever `limit` says, because that argument bounds offers fetched rather
- * than rows listed. Scanning them is free; this exists so a board that one day
- * returns ten thousand does not turn a verification into a sort.
- */
+
 const ROWS_PER_BOARD = 200;
 
 /**
@@ -514,7 +506,7 @@ If you do not know, return an empty array.`,
                   }
                 }
 
-                for (const candidate of domainCandidates(hits, company)) {
+                for (const candidate of domainCandidates(hits, company,4,await context.effects.sites.integrationSources?.(callFrom(context))??[])) {
                   suggestedDomains.push(candidate.domain);
                 }
 
@@ -809,6 +801,7 @@ If you do not know, return an empty array.`,
                 }
 
                 const picks = pagesToOpen(hits, {
+                  sources:await context.effects.sites.integrationSources?.(callFrom(context))??[],
                   companyDomains: [...owned],
                   alreadyRead: readAlready,
                   limit: WEB_PAGES_TO_OPEN
@@ -941,7 +934,8 @@ If you do not know, return an empty array.`,
                 const call = callFrom(context);
 
                 const results = await Promise.all(
-                  BOARDS.map(async (board) => {
+                  (await context.effects.sites.integrationSources?.(call)??[]).filter(source=>source.scraperId).map(async (source) => {
+                    const board=source.scraperId!;
                     const outcome = await context.effects.sites.listBoard(
                       { board, keyword: input.position, limit: ROWS_PER_BOARD },
                       call
@@ -953,19 +947,7 @@ If you do not know, return an empty array.`,
                   })
                 );
 
-                /**
-                 * Matched on the slug, not on a company field.
-                 *
-                 * Listing rows carry `board`, `url` and `title` and nothing
-                 * else — measured on justjoin, where every one of 188 rows had
-                 * no company at all. An earlier version filtered on
-                 * `row.company` and would therefore have matched nothing, ever,
-                 * while looking like it worked.
-                 *
-                 * What the rows do carry is the employer's name inside the URL
-                 * slug and at the front of the title, which is how these boards
-                 * build both.
-                 */
+
                 const wanted = slug(input.company);
 
                 const matches = results
@@ -1046,6 +1028,7 @@ If you do not know, return an empty array.`,
               name: 'rank',
               critical: false,
               run: async (context) => {
+                const sourceCatalogue=await context.effects.sites.integrationSources?.(callFrom(context))??[];
                 // The board's stated company URL counts as the employer's
                 // domain even when the site itself could not be read — an
                 // unreachable site is not evidence that an address on that
@@ -1120,7 +1103,7 @@ If you do not know, return an empty array.`,
                     ),
                   ...hits
                     .filter((hit) => {
-                      const kind = hostKind(hit.url);
+                      const kind = hostKind(hit.url,sourceCatalogue);
                       return kind === 'ats' || kind === 'employer';
                     })
                     .map(

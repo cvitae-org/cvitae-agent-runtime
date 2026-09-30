@@ -93,12 +93,10 @@ test('failed selections roll back offers, collection, capture and receipt togeth
   assert.equal(h.offers.byUrl(url),undefined);assert.equal(h.browser.store.collection(),null);assert.equal(h.browser.store.receipt(operationId),null);assert.equal(h.browser.store.has(url),false);
  }finally{h.close();}
 });
-test('listing and shorter detail reimports preserve rich text and freeze the richer capture',async()=>{
+test('shorter detail reimports preserve rich text and freeze the richer capture',async()=>{
  const h=setup();try{
-  const input={url:'https://bulldogjob.pl/companies/jobs/123-react-developer',title:'React',selection:job.description,selectionTitle:'React developer'};
+  const input={url:'https://careers.example.org/jobs/react',title:'React',selection:job.description,selectionTitle:'React developer'};
   const initial=readLoadedPage(input);const {receipt}=commit(h,{...initial,kind:'offer'});const id=receipt.offerIds[0]!;
-  const listing={...initial,url:'https://bulldogjob.pl/companies/jobs',kind:'listing' as const,items:initial.items.map(j=>({...j,description:undefined,completeness:'listing' as const}))};
-  commit(h,listing);assert.equal(h.offers.get(id)!.text,job.description.trim());
   h.detailQueue.enqueue(receipt.collectionId,[id]);assert.equal(h.detailQueue.poll(0).queued,0);
   commit(h,{...initial,kind:'offer',items:initial.items.map(j=>({...j,description:'Build accessible React interfaces. '.repeat(3)}))});
   assert.equal(h.offers.get(id)!.text,job.description.trim());assert.equal(h.browser.store.capture(input.url)!.text,job.description.trim());
@@ -108,8 +106,8 @@ test('listing and shorter detail reimports preserve rich text and freeze the ric
 test('disconnect removes uncommitted previews, and large previews fail with an actionable error',()=>{
  const h=setup();try{
   const p=preview(h);h.browser.disconnect('browser-one');assert.throws(()=>h.browser.dispatch('browser-one','import.commit',{captureId:p.captureId,operationId:randomUUID(),selected:[0],target}),/expired/);
-  const listing={version:1,url:'https://bulldogjob.pl/companies/jobs',title:'Jobs',kind:'listing',items:Array.from({length:200},(_,i)=>({url:`https://bulldogjob.pl/companies/jobs/${i}-developer?x=`+'x'.repeat(1800),title:'🧑'.repeat(250),company:'🧑'.repeat(200),location:'🧑'.repeat(200),salary:'🧑'.repeat(200)}))};
-  assert.throws(()=>h.browser.dispatch('browser-one','capture.preview',{capture:listing,target:{...target,url:listing.url}}),/too much preview data/);
+  const oversized={...capture(),items:capture().items.map(item=>({...item,description:'x'.repeat(1000001)}))};
+  assert.throws(()=>h.browser.dispatch('browser-one','capture.preview',{capture:oversized,target}),/capture limit/);
  }finally{h.close();}
 });
 
@@ -123,5 +121,18 @@ test('internal Studio browser uses the import contract without a native host and
   const committed=await dispatch('browser.internal.dispatch',{sessionId,method:'import.commit',payload:{captureId,operationId:randomUUID(),selected:[0],target}});assert.equal(committed.ok,true);
   const unknown=await dispatch('browser.internal.dispatch',{sessionId,method:'secrets.get',payload:{}});assert.equal(unknown.ok,false);
   assert.equal(h.browser.store.collection()!.count,1);assert.equal(h.browser.status() && (h.browser.status() as {enabled:boolean}).enabled,false);
+ }finally{h.close();}
+});
+
+test('shared browser parser retains published start date, company details, duration and routes',()=>{
+ const url='https://careers.example.org/jobs/react';
+ const captured=readLoadedPage({url,title:'Offer',jsonLd:[{'@type':'JobPosting',url,title:'Developer',description:'<p>Build accessible software for customers. </p>'.repeat(30),jobStartDate:'2026-11-01',industry:'Software',jobDuration:'12 months',hiringOrganization:{name:'Example',numberOfEmployees:50,url:'https://example.org'},applicationContact:{email:'jobs@example.org',url:'https://example.org/apply'}}]});
+ const h=setup();try{
+  const id=commit(h,captured).receipt.offerIds[0]!,stored=h.offers.get(id)!;
+  assert.equal(stored.stated?.start_date,'2026-11-01');
+  assert.equal(stored.stated?.company_type,'Software');
+  assert.equal(stored.stated?.company_size,'50');
+  assert.equal(stored.stated?.engagement_length,'12 months');
+  assert.deepEqual(h.browser.store.capture(url)?.routes,{companyUrl:'https://example.org/',applicationEmail:'jobs@example.org',applyUrl:'https://example.org/apply'});
  }finally{h.close();}
 });

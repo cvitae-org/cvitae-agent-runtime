@@ -16,10 +16,10 @@ import type { ResolvedOffer } from '../src/contracts/index.js';
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 const setup=(maxRequestsTotal=500)=>{
  const db=open(':memory:');migrate(db);const offers=createOfferStore(db);
- const searches=createDiscoverySearchStore(db,offers);searches.create('s','React',['justjoin'],{
+ const searches=createDiscoverySearchStore(db,offers);searches.create('s','React',['vacancies'],{
   sourceMode:'hybrid',matchMode:'anywhere',matchingPolicyVersion:'test',budget:{targetAcceptedTotal:null,maxCandidatesTotal:10000,maxPagesPerSource:100,maxRequestsTotal,deadlineMs:720000,maxConcurrentRequests:3}
  });
- for(let i=0;i<5;i++) offers.sight([{id:`a${i}`,url:`https://justjoin.it/job-offer/a${i}`,text:''}],1);
+ for(let i=0;i<5;i++) offers.sight([{id:`a${i}`,url:`https://vacancies.example/job-offer/a${i}`,text:''}],1);
  searches.add('s',offers.recent(10).map(offer=>({offer})));
  return {db,offers,searches,store:createEnrichmentStore(db,offers),queueStore:createDetailQueueStore(db)};
 };
@@ -52,7 +52,7 @@ test('failed automatic reads are not retried; manual consumer survives clearing 
   queue.enqueue('s',['a0']);await tick();assert.equal(queue.poll().jobs[0]?.status,'failed');
   queue.enqueue('s',['a0']);await tick();assert.equal(reads,1);
   queue.enqueue('s',['a1']);enrichment.details.start('a1');await tick();
-  queue.clear();resolve(source('https://justjoin.it/job-offer/a1'));await tick();
+  queue.clear();resolve(source('https://vacancies.example/job-offer/a1'));await tick();
   assert.equal(store.get('a1')?.details?.status,'succeeded');assert.equal(offers.get('a1')?.text,'Published React role');
   const first=queue.poll();assert.equal(queue.poll(first.after).jobs.length,0);
  } finally {queue.close();enrichment.close();db.close();}
@@ -82,7 +82,7 @@ test('listing and automatic detail workers share one durable request ledger',asy
   assert.equal(jobs.find(job=>job.offerId==='a1')?.stopReason,'request_budget');
   assert.deepEqual(searches.requestUsage('s'),{search:1,details:1,total:2,limit:2,remaining:0,exhausted:true});
   assert.equal(searches.reserveRequest('s','search'),false);
-  resolve(source('https://justjoin.it/job-offer/a0'));await tick();
+  resolve(source('https://vacancies.example/job-offer/a0'));await tick();
   assert.equal(queue.poll().items.find(item=>item.offer.id==='a1')?.autoDetailStopReason,'request_budget');
  } finally {queue.close();enrichment.close();db.close();}
 });
@@ -125,7 +125,7 @@ test('published scalar salary units are parsed without guessing month or day',()
 
 test('refetch cancels and drains only its search jobs and allows fresh enqueue',async()=>{
  const {db,offers,store,queueStore,searches}=setup();
- searches.create('other','React',['justjoin']); searches.add('other',[{offer:offers.get('a4')!}]);
+ searches.create('other','React',['vacancies']); searches.add('other',[{offer:offers.get('a4')!}]);
  const enrichment=createEnrichmentService(offers,store,{resolve:async()=>new Promise(()=>{})},()=>{assert.fail('no model');});
  const queue=createDetailQueue(queueStore,enrichment,searches);
  try {

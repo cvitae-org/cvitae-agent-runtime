@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "algorithm": {
+      "type": "string",
+      "const": "Ed25519"
+    },
+    "keyId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "payloadBase64": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000000
+    },
+    "signatureBase64": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "required": [
+    "algorithm",
+    "keyId",
+    "payloadBase64",
+    "signatureBase64"
+  ],
+  "additionalProperties": false
+}

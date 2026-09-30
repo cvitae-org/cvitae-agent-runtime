@@ -4,13 +4,19 @@ import {randomUUID} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {validateCapture,listingContext,isNextListingUrl} from '@cvitae/job-pages';
+import {validateCapture,browserRecipeContext,browserRecipeNextUrl,domListingRecipeSchema} from '@cvitae/job-pages';
+import {readFileSync} from 'node:fs';
+import {createBrowserCollection} from '../src/runtime/browser-collection.js';
+import type {BrowserRecipePin} from '../src/effects/browser-recipes.js';
 import {createHarness} from '../src/runtime/create.js';
 import type {ImportReceipt} from '../src/storage/sqlite/browser-imports.js';
-const base='https://bulldogjob.pl/companies/jobs';
-const page=(number:number,ids:number[])=>validateCapture({version:1,url:base+(number>1?'/s/page,'+number:''),title:'Jobs',kind:'listing',items:ids.map(id=>({board:'bulldogjob',external_id:String(id),url:`${base}/${id}-react`,title:`React ${id}`,completeness:'listing'}))});
+const recipe=domListingRecipeSchema.parse(JSON.parse(readFileSync(new URL('./fixtures/generic-provider.json',import.meta.url),'utf8')).listing);
+const base='https://careers.example/opportunities';
+const offerBase='https://careers.example/position';
+const pin:BrowserRecipePin={token:randomUUID(),recipe,validUntil:'2035-01-01T00:00:00.000Z',expiresAt:Date.now()+3600000,scope:base,tabId:1,session:'test'};
+const page=(number:number,ids:number[])=>validateCapture({version:1,url:base+(number>1?'?page='+number:''),title:'Jobs',kind:'listing',recipe:{sourceId:recipe.sourceId,revision:recipe.revision},items:ids.map(id=>({board:recipe.sourceId,external_id:String(id),url:`${offerBase}/${id}-react`,title:`React ${id}`,completeness:'listing'}))},recipe);
 const target=(url:string,documentId=randomUUID())=>({tabId:1,documentId,url});
-const setup=(databasePath=':memory:',now=Date.now)=>createHarness({databasePath,now,env:{},scraperUrl:''});
+const setup=(databasePath=':memory:',now=Date.now)=>{const h=createHarness({databasePath,now,env:{},scraperUrl:''}),collection=createBrowserCollection(h.browser.store,now);const dispatch=(session:string,method:string,payload:unknown)=>method==='capture.cancel'?collection.cancel(session):collection.dispatch(session,method,payload,pin);return {...h,browser:{...h.browser,dispatch},close:()=>{collection.close();h.close();}};};
 const session='studio:'+randomUUID();
 const start=(h:ReturnType<typeof setup>)=>(h.browser.dispatch(session,'collection.start',{target:target(base)}) as {collectionId:string}).collectionId;
 const append=(h:ReturnType<typeof setup>,collectionId:string,capture=page(1,[1,2]),t=target(capture.url))=>h.browser.dispatch(session,'collection.append',{collectionId,capture,target:t}) as {jobs:number;pages:number;added:number;replayed:boolean};
@@ -40,8 +46,8 @@ test('collection scope, session, expiry and cancellation are enforced without lo
  try {
   assert.throws(()=>h.browser.dispatch('extension','collection.start',{target:target(base)}),/built-in/);
   const id=start(h);append(h,id);
-  assert.throws(()=>append(h,id,{...page(2,[3]),url:base+'/s/skills,java/page,2'}),/search or page changed/);
-  assert.throws(()=>append(h,id,page(2,[3]),target(base)),/search or page changed/);
+  assert.throws(()=>append(h,id,{...page(2,[3]),url:base+'?term=other&page=2'}),/search or page changed|pinned recipe/);
+  assert.throws(()=>append(h,id,page(2,[3]),target(base)),/search or page changed|pinned recipe/);
   assert.throws(()=>h.browser.dispatch('studio:other','collection.preview',{collectionId:id}),/expired/);
   assert.equal(preview(h,id).items.length,2);
   h.browser.dispatch(session,'capture.cancel',{});assert.throws(()=>preview(h,id),/expired/);
@@ -51,8 +57,8 @@ test('collection scope, session, expiry and cancellation are enforced without lo
 });
 test('multi-page selection failure rolls back the entire save and receipt',()=>{
  const h=setup();try{
-  assert.throws(()=>h.browser.store.commitBatch(randomUUID(),[{capture:page(1,[1]),indices:[0]},{capture:page(2,[2]),indices:[0,99]}],'rollback'),/selection/);
-  assert.equal(h.browser.store.collection(),null);assert.equal(h.offers.byUrl(base+'/1-react'),undefined);assert.equal(h.browser.store.poll(0).imports.length,0);
+  assert.throws(()=>h.browser.store.commitBatch(randomUUID(),[{capture:page(1,[1]),recipe,indices:[0]},{capture:page(2,[2]),recipe,indices:[0,99]}],'rollback'),/selection/);
+  assert.equal(h.browser.store.collection(),null);assert.equal(h.offers.byUrl(offerBase+'/1-react'),undefined);assert.equal(h.browser.store.poll(0).imports.length,0);
   const id=start(h);append(h,id);assert.throws(()=>h.browser.dispatch(session,'collection.commit',{collectionId:id,operationId:randomUUID(),selected:[0,0]}),/twice/);
   assert.equal(preview(h,id).items.length,2);
  }finally{h.close();}
@@ -66,13 +72,8 @@ test('collection accepts more than one-page limit and rejects excess pages witho
   assert.equal(receipt.added,1000);assert.equal(h.browser.store.poll(0).imports.length,1);
  }finally{h.close();}
 });
-test('pagination policy permits only the next page of the same search, including encoded commas',()=>{
- assert.equal(isNextListingUrl(base,base+'/s/page%2C2'),true);
- assert.equal(isNextListingUrl(base+'/s/skills,react',base+'/s/skills,react/page,2'),true);
- assert.equal(isNextListingUrl(base+'/s/skills,react',base+'/s/skills,java/page,2'),false);
- assert.equal(isNextListingUrl(base,base+'/s/page,3'),false);
- const p='https://theprotocol.it/praca?kw=React&workModes=remote';
- assert.equal(isNextListingUrl(p,p+'&pageNumber=2'),true);
- assert.equal(isNextListingUrl(p,'https://theprotocol.it/praca?kw=Java&pageNumber=2'),false);
- for(const url of ['https://evil.example/praca',base+'/1-offer','https://user:pass@bulldogjob.pl/companies/jobs',p+'&pageNumber=2&pageNumber=3'])assert.equal(listingContext(url),null);
+test('pagination policy permits only the next page of the same declared search',()=>{
+ assert.equal(browserRecipeNextUrl(recipe,base,2),base+'?page=2');
+ assert.equal(browserRecipeNextUrl(recipe,base+'?term=Research&region=north',2),base+'?term=Research&region=north&page=2');
+ for(const url of ['https://evil.example/opportunities','https://user:pass@careers.example/opportunities',base+'?page=2&page=3'])assert.equal(browserRecipeContext(recipe,url),null);
 });

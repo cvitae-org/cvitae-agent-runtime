@@ -1,6 +1,6 @@
-import { createBrowserRecipes } from '../effects/browser-recipes.js';
+import { createIntegrationBrowserRecipes } from '../effects/integration-browser-recipes.js';
+import {configuredIntegrationProviders, type IntegrationProviders} from '../effects/integration-providers.js';
 import type { BrowserRecipePin } from '../effects/browser-recipes.js';
-import type { DiscoveryProvider } from '../effects/discovery-provider.js';
 import {createBrowserCollection} from './browser-collection.js';
 import {randomUUID,createHash} from 'node:crypto';
 import {validateCapture, type BrowserCapture} from '@cvitae/job-pages';
@@ -9,8 +9,8 @@ import {OperationError} from '../contracts/operation-error.js';
 import type {createBrowserImportStore} from '../storage/sqlite/browser-imports.js';
 const target=z.object({tabId:z.number().int().nonnegative(),documentId:z.string().min(1).max(200),url:z.string().max(8000)}).strict();
 const commitSchema=z.object({captureId:z.string().uuid(),operationId:z.string().uuid(),selected:z.array(z.number().int().min(0).max(199)).min(1).max(200),target}).strict();
-export const createBrowserService=(store:ReturnType<typeof createBrowserImportStore>,now=Date.now,provider?:DiscoveryProvider)=>{
- const collection=createBrowserCollection(store,now), recipes=createBrowserRecipes(provider,now);
+export const createBrowserService=(store:ReturnType<typeof createBrowserImportStore>,now=Date.now,providers:IntegrationProviders=configuredIntegrationProviders({}))=>{
+ const collection=createBrowserCollection(store,now), recipes=createIntegrationBrowserRecipes(providers,now);
  let bridge: {status:()=>unknown;configure:(enabled:boolean)=>Promise<unknown>;close:()=>void}|undefined;
  const previews=new Map<string,{sessionId:string;capture:BrowserCapture;pin?:BrowserRecipePin;target:z.infer<typeof target>;expiresAt:number;targetSearchId?:string}>();
  const generations=new Map<string,number>();let closed=false;
@@ -25,11 +25,16 @@ export const createBrowserService=(store:ReturnType<typeof createBrowserImportSt
   dispatch(sessionId:string,method:string,payload:unknown,targetSearchId?:string):unknown{
    const current=generation(sessionId);
    const active=()=>{if(closed||generation(sessionId)!==current)throw new OperationError('browser_cancelled','Browser operation cancelled. Preview the current page again.');};
-   if(method==='browser.recipe')return recipes.prepare(sessionId,z.object({target}).strict().parse(payload).target).then(result=>{
+   if(method==='browser.recipe'){
+    const input=z.object({target,sourceKey:z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional()}).strict().parse(payload);
+    const destination=targetSearchId?store.destinationBoard(targetSearchId):undefined;
+    if(destination && input.sourceKey && destination!==input.sourceKey)throw new OperationError('browser_destination_mismatch','Select the provider belonging to this search.');
+    return recipes.prepare(sessionId,input.target,destination??input.sourceKey).then(result=>{
     try{active();return result;}catch(error){if(result.recipeToken)recipes.release(result.recipeToken);throw error;}
    });
+   }
    const acquisition=['capture.preview','collection.start','collection.append','collection.navigation'].includes(method);
-   if(recipes.enabled && acquisition)return recipes.refresh().then(()=>{active();return this.perform(sessionId,method,payload,targetSearchId);});
+   if(recipes.enabled && acquisition && (method!=='capture.preview' || !!(payload as {recipeToken?:string})?.recipeToken || (payload as {capture?:{kind?:string}})?.capture?.kind==='listing'))return recipes.refresh().then(()=>{active();return this.perform(sessionId,method,payload,targetSearchId);});
    return this.perform(sessionId,method,payload,targetSearchId);
   },
   perform(sessionId:string,method:string,payload:unknown,targetSearchId?:string):unknown{
@@ -47,7 +52,7 @@ export const createBrowserService=(store:ReturnType<typeof createBrowserImportSt
    if(method==='capture.preview'){
     const p=z.object({capture:z.unknown(),target,recipeToken:z.string().uuid().optional()}).strict().parse(payload);
     const kind=z.object({kind:z.string()}).parse(p.capture).kind;
-    const pin=kind==='listing'?recipes.require(sessionId,p.recipeToken,p.target):undefined;
+    const pin=kind==='listing'||p.recipeToken?recipes.require(sessionId,p.recipeToken,p.target):undefined;
     const capture=validateCapture(p.capture,pin?.recipe);
     if(capture.url!==p.target.url)throw new OperationError('stale_document','The captured page changed. Preview this page again.');
     if(previews.size>=20)throw new OperationError('preview_capacity','Close an earlier preview before capturing another page.');
@@ -66,7 +71,7 @@ export const createBrowserService=(store:ReturnType<typeof createBrowserImportSt
     if(targetSearchId!==preview.targetSearchId)throw new OperationError('browser_destination_mismatch','The import destination changed. Preview this page again.');
     if(JSON.stringify(p.target)!==JSON.stringify(preview.target))throw new OperationError('stale_document','The page changed. Capture it again.');
     if(new Set(p.selected).size!==p.selected.length)throw new OperationError('invalid_selection','An offer was selected twice.');
-    const result=store.commit(p.operationId,preview.capture,p.selected,requestHash,preview.pin?.recipe,preview.targetSearchId);previews.delete(p.captureId);return result;
+    const result=store.commit(p.operationId,preview.capture,p.selected,requestHash,preview.pin?.recipe,preview.targetSearchId,preview.pin?.integration);previews.delete(p.captureId);return result;
    }
    if(method==='operation.read'){const p=z.object({operationId:z.string().uuid()}).strict().parse(payload);return store.receipt(p.operationId);}
    if(method==='capture.cancel'){this.disconnect(sessionId);return {cancelled:true};}

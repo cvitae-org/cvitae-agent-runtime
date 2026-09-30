@@ -46,6 +46,7 @@ import { fieldEvidenceMapSchema } from '../contracts/field-evidence.js';
 
 import { publishedSalarySchema } from '../contracts/published-salary.js';
 import { lookup } from 'node:dns/promises';
+import { isReservedName } from '../public-url.js';
 import { RuntimeError } from '../contracts/index.js';
 import type {
   CompanyPage,
@@ -61,9 +62,6 @@ import type {
 } from '../contracts/index.js';
 
 /* ------------------------------------------------ where a URL may point */
-
-/** Hostnames that never belong to an employer's public site. */
-const LOCAL_NAME = /(^|\.)(localhost|local|internal|intranet|home\.arpa|lan)$/i;
 
 const parseV4 = (value: string): number[] | undefined => {
   const parts = value.split('.');
@@ -168,7 +166,7 @@ export const refuseUrl = async (
   const { hostname } = new URL(url);
   const host = hostname.replace(/^\[|\]$/g, '');
 
-  if (LOCAL_NAME.test(host)) return `${host} is not a public host.`;
+  if (isReservedName(host)) return `${host} is not a public host.`;
 
   // An IP literal never needs resolving, and asking a resolver about one is how
   // "127.0.0.1" turns into a successful lookup on some platforms.
