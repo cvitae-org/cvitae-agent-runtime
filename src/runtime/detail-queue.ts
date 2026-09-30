@@ -1,11 +1,14 @@
 import type { DetailQueueStore } from '../contracts/detail-queue.js';
 import { OperationError } from '../contracts/operation-error.js';
+import { RuntimeError } from '../contracts/run.js';
 import type { createEnrichmentService } from './enrichment.js';
 type RequestLedger = {
  reserveRequest(searchId: string, kind: 'detail'): boolean;
  refundRequest(searchId: string, kind: 'detail'): void;
  requestUsage(searchId: string): unknown;
 };
+/** A failed read is kept by its error's code; `unknown` for an error with none, such as a dropped connection. */
+const failureCode = (error: unknown): string => error instanceof OperationError || error instanceof RuntimeError ? error.code : 'unknown';
 /** Two background consumers reserve capacity for explicit detail/analysis requests. */
 export const createDetailQueue = (store: DetailQueueStore, enrichment: ReturnType<typeof createEnrichmentService>, requests?: RequestLedger) => {
  const active = new Map<string, AbortController>();
@@ -30,7 +33,9 @@ export const createDetailQueue = (store: DetailQueueStore, enrichment: ReturnTyp
     // Explicit operations can occupy all source slots; capacity is not a source failure.
     const capacity=error instanceof OperationError && error.code==='details_capacity';
     if (capacity && job.searchId && requests) requests.refundRequest(job.searchId,'detail');
-    store.set(job.offerId,controller.signal.aborted?(stopping.has(job.offerId)?'queued':'cancelled'):capacity?'queued':'failed');
+    if (controller.signal.aborted) store.set(job.offerId,stopping.has(job.offerId)?'queued':'cancelled');
+    else if (capacity) store.set(job.offerId,'queued');
+    else store.set(job.offerId,'failed',failureCode(error));
    }).finally(() => { stopping.delete(job.offerId); active.delete(job.offerId); pending.delete(job.offerId); schedule(); });
    pending.set(job.offerId,task);
   }

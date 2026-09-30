@@ -12,7 +12,7 @@ import { parseSalary } from '../src/capabilities/offers/salary.js';
 import { publishedContract } from '../src/capabilities/offers/published.js';
 import { discoveryFilter } from '../src/storage/sqlite/discovery-filter.js';
 import { discoveryFiltersSchema } from '../src/contracts/discovery-search.js';
-import type { ResolvedOffer } from '../src/contracts/index.js';
+import { OperationError, RuntimeError, type ResolvedOffer } from '../src/contracts/index.js';
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 const setup=(maxRequestsTotal=500)=>{
  const db=open(':memory:');migrate(db);const offers=createOfferStore(db);
@@ -55,6 +55,24 @@ test('failed automatic reads are not retried; manual consumer survives clearing 
   queue.clear();resolve(source('https://vacancies.example/job-offer/a1'));await tick();
   assert.equal(store.get('a1')?.details?.status,'succeeded');assert.equal(offers.get('a1')?.text,'Published React role');
   const first=queue.poll();assert.equal(queue.poll(first.after).jobs.length,0);
+ } finally {queue.close();enrichment.close();db.close();}
+});
+
+// Mutations run, not assumed: `failed` without a reason; every reason `unknown`;
+// a `RuntimeError` not read for its code. Each fails this test.
+test('a failed automatic read keeps its error code as the reason, beside the message the offer shows',async()=>{
+ const {db,offers,store,queueStore}=setup();
+ const errors:Record<string,Error>={a0:new OperationError('unreadable_source','The offer contained no readable text.'),
+  a1:new RuntimeError('SCRAPER_URL is not a valid URL.','misconfigured'),a2:new Error('socket hang up')};
+ const enrichment=createEnrichmentService(offers,store,{resolve:async url=>{throw errors[url.slice(-2)]!;}},()=>{assert.fail('no model');});
+ const queue=createDetailQueue(queueStore,enrichment);
+ try {
+  queue.enqueue('s',['a0','a1']);await tick();
+  queue.enqueue('s',['a2']);await tick();
+  const reasons=Object.fromEntries(queue.poll().items.map(item=>[item.offer.id,[item.autoDetailStatus,item.autoDetailStopReason]]));
+  assert.deepEqual(reasons,{a0:['failed','unreadable_source'],a1:['failed','misconfigured'],a2:['failed','unknown']});
+  assert.equal(store.get('a0')?.details?.error,'The offer contained no readable text.');
+  assert.equal(createDetailQueueStore(db).poll(0).jobs.find(job=>job.offerId==='a1')?.stopReason,'misconfigured');
  } finally {queue.close();enrichment.close();db.close();}
 });
 
