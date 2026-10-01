@@ -29,6 +29,7 @@
  */
 
 import type { EmbeddingModel, LanguageModel } from 'ai';
+import { createHuggingFaceEmbedding } from './huggingface-embedding.js';
 import type * as OpenAi from '@ai-sdk/openai';
 import type * as OpenAiCompatible from '@ai-sdk/openai-compatible';
 import { RuntimeError } from '../contracts/index.js';
@@ -379,6 +380,9 @@ export const createModelResolver = (
   ): Promise<EmbeddingModel<string>> => {
     const provider = providers[choice.providerId];
 
+    if (choice.providerId === 'huggingface') {
+      return createHuggingFaceEmbedding(choice.modelId, apiKey);
+    }
     if (!provider.baseURL) {
       const { createOpenAI } = await loadOpenAi();
       return createOpenAI({ apiKey }).textEmbeddingModel(choice.modelId);

@@ -340,7 +340,10 @@ export const payloads = {
    * connection" button: a person part-way through configuring the app should
    * not be billed for finding out that they are not finished.
    */
-  'providers.status': z.object({}),
+  'providers.status': z.object({
+    settings: settings.optional(),
+    keys: z.record(z.string().min(1).max(64), z.string().min(1).max(4096)).optional()
+  }).refine(value => value.settings !== undefined || value.keys === undefined, 'Draft keys require draft settings.'),
 
   /** Every conversation, or one subject's. Most recently active first. */
   'conversations.list': z.object({ subject: subject.optional() }).strict(),

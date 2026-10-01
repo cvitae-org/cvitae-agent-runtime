@@ -37,6 +37,7 @@ import {
   type ProviderId
 } from './resolve.js';
 import { credentialFor } from '../secrets/env.js';
+import { modelOptions, type ModelOption } from './model-options.js';
 import type { Environment } from './environment.js';
 
 /** How long to wait for a local server before calling it absent. */
@@ -90,6 +91,7 @@ export type ProviderStatus = {
   /** Configured local models the server does not have pulled. */
   readonly missingLocalModels: readonly string[];
   readonly providers: readonly ProviderSummary[];
+  readonly modelOptions: readonly ModelOption[];
 };
 
 type Probe = {
@@ -124,6 +126,7 @@ const listLocalModels = async (
 
     try {
       const body = (await response.json()) as { data?: { id?: unknown }[] };
+      if (!body || !Array.isArray(body.data)) return { state: 'refused', models: [], statusCode: response.status };
 
       return {
         state: 'ok',
@@ -160,7 +163,8 @@ export const providerStatus = async (
   const credentials = environment.credentials();
 
   const localBaseUrl =
-    generation.baseURL ?? embedding.baseURL ?? providers.local.baseURL;
+    generation.baseURL ?? embedding.baseURL
+    ?? (environment.env.LOCAL_BASE_URL?.trim().replace(/\/$/, '') || providers.local.baseURL);
 
   const usesLocal = generation.providerId === 'local' || embedding.providerId === 'local';
   const probe = usesLocal
@@ -197,6 +201,7 @@ export const providerStatus = async (
     // of those two.
     missingLocalModels:
       probe?.state === 'ok' ? wanted.filter((model) => !isPulled(model, probe.models)) : [],
+    modelOptions,
     providers: providerIds.map((id) => ({
       id,
       label: providers[id].label,

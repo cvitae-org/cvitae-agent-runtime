@@ -590,7 +590,18 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
       return ok({ providerId, configured: false });
     },
 
-    'providers.status': async () => ok(await harness.settings.status()),
+    'providers.status': async ({ settings, keys }) => ok(await harness.settings.status(
+      settings ? {
+        settings: {
+          providerId: settings.providerId ?? undefined,
+          modelId: settings.modelId ?? undefined,
+          localBaseUrl: settings.localBaseUrl ?? undefined,
+          embeddingProviderId: settings.embeddingProviderId ?? undefined,
+          embeddingModelId: settings.embeddingModelId ?? undefined
+        },
+        ...(keys ? { keys } : {})
+      } : undefined
+    )),
 
     'conversations.list': ({ subject }) =>
       ok({ conversations: harness.conversations.list(subject) }),

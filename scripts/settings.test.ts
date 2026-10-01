@@ -476,3 +476,113 @@ test('an unreachable local server reports nothing missing, because nothing answe
     it.dispose();
   }
 });
+
+
+test('Studio catalogue exposes exactly OpenAI, Bielik and Local with embedding defaults', async () => {
+  const it = bench();
+  try {
+    const status = data<ProviderStatus>(await it.dispatch('providers.status', {}));
+    assert.deepEqual(status.modelOptions.map(option => option.id), ['openai', 'bielik', 'local']);
+    assert.deepEqual(status.modelOptions.map(option => [option.providerId, option.modelId, option.embeddingModelId]), [
+      ['openai', 'gpt-4o', 'text-embedding-3-small'],
+      ['huggingface', 'speakleash/Bielik-11B-v3.0-Instruct', 'BAAI/bge-m3'],
+      ['local', 'gemma4:12b', 'nomic-embed-text']
+    ]);
+  } finally { it.dispose(); }
+});
+
+test('draft status uses its URL and key without writing settings, installing keys or making AI calls', async () => {
+  let requestedUrl = '';
+  let requestedKey = '';
+  const probe: typeof fetch = async (url, init) => {
+    requestedUrl = String(url);
+    requestedKey = new Headers(init?.headers).get('authorization') ?? '';
+    return new Response(JSON.stringify({ data: [{ id: 'draft-chat' }, { id: 'draft-embed' }] }), { status: 200 });
+  };
+  const it = bench({ probe, env: { LOCAL_BASE_URL: 'http://localhost:11434/v1', LOCAL_API_KEY: 'active-secret' } });
+  try {
+    const contextId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    it.harness.cvContexts.create(contextId, 'en');
+    it.harness.documents.update(contextId, 'cv', () => ({ role_description: 'Private CV content' }));
+    const job = it.harness.indexRecovery.status(contextId);
+    assert.ok(job);
+    const filesBefore = it.files();
+    const before = it.harness.settings.read();
+    const draft = data<ProviderStatus>(await it.dispatch('providers.status', {
+      settings: { providerId: 'local', modelId: 'draft-chat', localBaseUrl: 'http://localhost:1234/v1', embeddingProviderId: 'local', embeddingModelId: 'draft-embed' },
+      keys: { local: 'draft-secret' }
+    }));
+    assert.equal(requestedUrl, 'http://localhost:1234/v1/models');
+    assert.equal(requestedKey, 'Bearer draft-secret');
+    assert.deepEqual(draft.missingLocalModels, []);
+    assert.deepEqual(it.harness.settings.read(), before);
+    const active = data<ProviderStatus>(await it.dispatch('providers.status', {}));
+    assert.equal(active.modelId, 'gemma4:12b');
+    assert.equal(requestedUrl, 'http://localhost:11434/v1/models');
+    assert.equal(requestedKey, 'Bearer active-secret');
+    assert.ok(!JSON.stringify(draft).includes('draft-secret'));
+    assert.ok(!it.files().includes('draft-secret'));
+    assert.deepEqual(it.harness.indexRecovery.status(contextId), job);
+    assert.equal(it.files(), filesBefore, 'draft checks do not write settings, logs or indexing state');
+    assert.equal(it.harness.aiCalls.recent(10).length, 0);
+  } finally { it.dispose(); }
+});
+
+test('draft replacement resolves cleared fields from inherited defaults, not saved settings', async () => {
+  const it = bench({ env: { AI_PROVIDER: 'openai', AI_MODEL: 'inherited-model', EMBEDDING_PROVIDER: 'openai' } });
+  try {
+    await it.dispatch('settings.set', { settings: { providerId: 'huggingface', modelId: 'saved-model' } });
+    const draft = data<ProviderStatus>(await it.dispatch('providers.status', { settings: { providerId: null, modelId: null } }));
+    assert.equal(draft.providerId, 'openai');
+    assert.equal(draft.modelId, 'inherited-model');
+    assert.equal(it.harness.settings.read().modelId, 'saved-model');
+    assert.equal(error(await it.dispatch('providers.status', { keys: { local: 'orphan-key' } })).code, 'invalid_input');
+    assert.equal(error(await it.dispatch('providers.status', { settings: { localBaseUrl: 'https://example.com/v1' } })).code, 'misconfigured');
+  } finally { it.dispose(); }
+});
+
+test('supported model and embedding pairs survive restart over conflicting environment settings', async () => {
+  const it = bench({ env: { AI_PROVIDER: 'openai', AI_MODEL: 'other-model', EMBEDDING_PROVIDER: 'local', EMBEDDING_MODEL: 'other-embed' } });
+  let restarted: Bench | undefined;
+  try {
+    await it.dispatch('settings.set', { settings: { providerId: 'openai', modelId: 'gpt-4o', embeddingProviderId: 'openai', embeddingModelId: 'text-embedding-3-small' } });
+    restarted = it.restart();
+    const status = data<ProviderStatus>(await restarted.dispatch('providers.status', {}));
+    assert.equal(status.modelId, 'gpt-4o');
+    assert.equal(status.embeddingModelId, 'text-embedding-3-small');
+  } finally { (restarted ?? it).dispose(); }
+});
+
+
+test('hosted status reports the inherited local address without probing hosted authentication', async () => {
+  let calls = 0;
+  const it = bench({
+    env: { AI_PROVIDER: 'huggingface', EMBEDDING_PROVIDER: 'huggingface', LOCAL_BASE_URL: 'http://localhost:1234/v1/' },
+    probe: async () => { calls++; return Response.json({ data: [] }); }
+  });
+  try {
+    const hosted = data<ProviderStatus>(await it.dispatch('providers.status', {}));
+    assert.equal(hosted.localBaseUrl, 'http://localhost:1234/v1');
+    assert.equal(hosted.localState, undefined);
+    assert.equal(calls, 0);
+    const draft = data<ProviderStatus>(await it.dispatch('providers.status', {
+      settings: { providerId: 'huggingface', embeddingProviderId: 'local' }
+    }));
+    assert.equal(draft.localBaseUrl, hosted.localBaseUrl);
+    assert.equal(draft.localState, 'ok');
+    assert.deepEqual(draft.localModels, []);
+    assert.equal(calls, 1);
+  } finally { it.dispose(); }
+});
+
+test('a malformed successful model-list response is refused rather than verified', async () => {
+  for (const body of [null, {}, { data: 'wrong' }]) {
+    const it = bench({ probe: async () => Response.json(body) });
+    try {
+      const status = data<ProviderStatus>(await it.dispatch('providers.status', { settings: { providerId: 'local', embeddingProviderId: 'local' } }));
+      assert.equal(status.localState, 'refused');
+      assert.deepEqual(status.localModels, []);
+      assert.deepEqual(status.missingLocalModels, []);
+    } finally { it.dispose(); }
+  }
+});

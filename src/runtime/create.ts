@@ -344,7 +344,7 @@ export type Harness = {
     read(): Settings;
     write(next: Settings): Settings;
     secret(providerId: string, apiKey: string | undefined): void;
-    status(): Promise<ProviderStatus>;
+    status(draft?: { settings: Settings; keys?: Readonly<Record<string, string>> }): Promise<ProviderStatus>;
   };
   /** Settles work left running by a previous process. It never replays an effect. */
   recoverInterrupted(): readonly RunRecord[];
@@ -726,10 +726,12 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
         // A rebuild parked on a missing or refused key may work with this one.
         indexJobs.resume();
       },
-      status: () =>
-        providerStatus(resolver, environment, {
+      status: (draft) => {
+        const inspected = draft ? environment.preview(draft.settings, draft.keys) : environment;
+        return providerStatus(draft ? createModelResolver({ env: inspected.env }) : resolver, inspected, {
           ...(options.probe ? { fetch: options.probe } : {})
-        })
+        });
+      }
     },
     recoverInterrupted: () => recoverInterruptedRuns(runs, options.now),
     close: () => { integrationDirectories.close(); browser.close(); integrations.close(); applicationAgent.close(); board.close(); offerQueries.close(); discoveryChat.close(); detailQueue.close(); enrichment.close(); discovery.close(); indexRebuilder.close(); db.close(); }

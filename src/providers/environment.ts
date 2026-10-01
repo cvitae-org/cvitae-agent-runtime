@@ -139,6 +139,8 @@ export type Environment = {
   secret(providerId: string, apiKey: string | undefined): void;
   /** Whether each provider has a key available, without reading one. */
   credentials(): Readonly<Record<ProviderId, boolean>>;
+  /** An isolated draft using inherited defaults and current in-memory keys. */
+  preview(settings: Settings, keys?: Readonly<Record<string, string>>): Environment;
 };
 
 export const createEnvironment = (base: Env = process.env): Environment => {
@@ -185,6 +187,16 @@ export const createEnvironment = (base: Env = process.env): Environment => {
       }
 
       put(provider.apiKeyEnvVar, apiKey?.trim() || inherited[provider.apiKeyEnvVar]);
+    },
+
+    preview(settings, keys = {}) {
+      const draft = createEnvironment({
+        ...inherited,
+        ...Object.fromEntries(providerIds.map(id => [providers[id].apiKeyEnvVar, env[providers[id].apiKeyEnvVar]]))
+      });
+      draft.apply(validateSettings(settings));
+      for (const [id, key] of Object.entries(keys)) draft.secret(id, key);
+      return draft;
     },
 
     credentials: () =>
