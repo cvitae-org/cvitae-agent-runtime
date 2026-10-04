@@ -1,3 +1,4 @@
+import { groundingRecord0040 } from './migrations/0040-grounding-record.js';
 import { boardChatRemoval0039 } from './migrations/0039-board-chat-removal.js';
 import { indexParking0038 } from './migrations/0038-index-parking.js';
 import { integrationDirectories0037 } from './migrations/0037-integration-directories.js';
@@ -91,7 +92,8 @@ export const migrations: readonly Migration[] = [
   { version: 36, sql: integrationSettings0036 },
   { version: 37, sql: integrationDirectories0037 },
   { version: 38, sql: indexParking0038 },
-  { version: 39, sql: boardChatRemoval0039 }
+  { version: 39, sql: boardChatRemoval0039 },
+  { version: 40, sql: groundingRecord0040 }
 ];
 
 export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.version), 0);

@@ -310,6 +310,15 @@ export type StepContext = RunContext & {
 
 /* ------------------------------------------------------------------- errors */
 
+/**
+ * The error code recovery writes on a run whose process disappeared.
+ *
+ * A name rather than a literal because two modules have to agree on it: the one
+ * that writes it, and the run store, which settles a run's grounding record
+ * differently when this is why the run failed.
+ */
+export const PROCESS_INTERRUPTED = 'process_interrupted';
+
 export type RuntimeErrorCode =
   | 'unknown_capability'
   | 'invalid_input'
@@ -327,7 +336,7 @@ export type RuntimeErrorCode =
   | 'aborted'
   | 'deadline_exceeded'
   /** The process ended while the run was active. Recovery records this and never retries. */
-  | 'process_interrupted'
+  | typeof PROCESS_INTERRUPTED
   /** A run was resumed with an attempt still open. Ask a person; never retry. */
   | 'unsettled_attempt'
   | 'invalid_transition'

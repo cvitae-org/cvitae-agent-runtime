@@ -95,7 +95,36 @@ export type GroundingRecord = {
   /** Present exactly when `state` is `closed`. */
   readonly outcome?: RecordOutcome;
   readonly openedAt: number;
+  /**
+   * When the run ended; present for `closed` and `interrupted`. For an
+   * interrupted record that is when the process was found gone, which is later
+   * than when it died.
+   */
   readonly closedAt?: number;
   /** In the order each was first recorded. */
   readonly entries: readonly RecordEntry[];
 };
+
+/**
+ * Where records are kept.
+ *
+ * A record is opened when a run that belongs to a conversation is created, and
+ * settled whenever the run's status changes, inside the transaction that writes
+ * that change. So nobody opens or closes a record by hand, and no way for a run
+ * to end can skip the settling: the run store is where every ending is written.
+ * A run that belongs to no conversation has no record.
+ */
+export interface RecordStore {
+  /**
+   * Adds entries to a run's record in the order given, leaving out any entry
+   * equal to one already there, and returns how many were new.
+   *
+   * Only an `open` record takes entries. One that is closed, interrupted or
+   * parked for an approval does not change, and a run with no record takes
+   * nothing; both return 0 and throw nothing, because the caller that meets
+   * them is a late write from a run that has already ended.
+   */
+  append(runId: string, entries: readonly RecordEntry[]): number;
+
+  read(runId: string): GroundingRecord | undefined;
+}
