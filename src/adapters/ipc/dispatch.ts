@@ -212,7 +212,7 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     'browser.configure': async ({enabled}) => ok(await harness.browser.configure(enabled)),
     'browser.poll': ({after}) => ok(harness.browser.store.poll(after)),
     'browser.collection': () => ok(harness.browser.store.collection()),
-    'protocol.get': () => ok({ version: 2, features: ['cv-contexts', 'checked-writes', 'durable-proposals', 'context-copy', 'offer-snapshot-runs', 'board-workspaces-v1', 'board-application-agent-v1', 'browser-companion-v1', 'studio-browser-v1', 'discovery-board-threads-v1', 'provider-connection-test-v1'], languages: ['pl', 'en'] }),
+    'protocol.get': () => ok({ version: 2, features: ['cv-contexts', 'checked-writes', 'durable-proposals', 'context-copy', 'offer-snapshot-runs', 'board-workspaces-v1', 'board-application-agent-v1', 'browser-companion-v1', 'studio-browser-v1', 'discovery-board-threads-v1', 'provider-connection-test-v1', 'grounding-record'], languages: ['pl', 'en'] }),
     'board.application.start': request => ok(harness.applicationAgent.start(request)),
     'board.application.observe': async request => ok(await harness.applicationAgent.observe(request)),
     'board.application.report': request => ok(harness.applicationAgent.report(request)),
@@ -507,6 +507,19 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
       if (!record) return failed('not_found', `No such run: ${runId}`);
 
       return ok({ run: record, steps: harness.runs.steps(runId) });
+    },
+
+    'runs.grounding': ({ runId }) => {
+      if (!harness.runs.get(runId)) return failed('not_found', `No such run: ${runId}`);
+
+      const record = harness.groundingRecords.read(runId);
+
+      // Two different absences. A run that has no conversation has nothing to be
+      // grounded in and no record, and a caller that is told "no such run" for
+      // it would go looking for a typo in the id.
+      if (!record) return failed('not_found', `Run ${runId} has no record of what it was given.`);
+
+      return ok({ record });
     },
 
     'runs.events': ({ runId, after, limit }) => {

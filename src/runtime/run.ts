@@ -18,6 +18,8 @@ import { route, validateInput } from '../core/router.js';
 import { createCheckpointer } from '../runs/checkpoint.js';
 import * as emit from '../events/emit.js';
 import { CvContextError, OperationError, RuntimeError, isRunSuspension } from '../contracts/index.js';
+import { createRecorder, recordingDocuments, recordingRetrieval } from './grounding.js';
+import type { Grounding } from './grounding.js';
 import type {
   AiLogger,
   ApprovalGate,
@@ -44,11 +46,27 @@ import type {
 export type RuntimeDeps = {
   /** Resolves and validates captured context ownership before creating a run. */
   readonly scopeLegacy?: () => void;
-  readonly scopeOffer?: (snapshotId: string, conversationId: string) => Pick<RuntimeDeps, 'documents' | 'retrieval' | 'index' | 'effects'> & { readonly contextGeneration: number; readonly contextRevision: number };
+  readonly scopeOffer?: (snapshotId: string, conversationId: string) => Pick<RuntimeDeps, 'documents' | 'retrieval' | 'index' | 'effects' | 'offerId'> & { readonly contextGeneration: number; readonly contextRevision: number };
   readonly offerInput?: (snapshotId: string, capability: string, input: unknown) => unknown;
   readonly scopeCv?: (contextId: string, conversationId?: string, generation?: number, revision?: number) => Pick<RuntimeDeps, 'documents' | 'retrieval' | 'index'> & { readonly contextGeneration: number; readonly contextRevision: number };
   readonly contextGeneration?: number;
   readonly contextRevision?: number;
+  /**
+   * The saved offer a snapshot run is about, set by `scopeOffer` and by nothing
+   * else, so it exists only on the deps of a run bound to a snapshot.
+   */
+  readonly offerId?: string;
+  /**
+   * What lets a chat run say what the model was given and what it read.
+   *
+   * The run store opens and settles a record for every run that has a
+   * conversation, whether or not this is set. Absent means nothing writes into
+   * it: the record is still there, closed, with no entries, and the runtime
+   * behaves as it did before records existed. A record that is empty because
+   * nothing was recorded is not a statement that the model was given nothing,
+   * so a host that shows records must set this.
+   */
+  readonly grounding?: Grounding;
   readonly finish?: (runId: string, result: RunResult, commit: (result: RunResult) => void) => RunResult;
   readonly capabilities: CapabilityMap;
   readonly runs: RunStore;
@@ -122,19 +140,39 @@ export const buildRunContext = (
     signal: AbortSignal;
     deadlineAt: number;
   }
-): RunContext => ({
-  ...fields,
-  effects: deps.effects,
-  tools: deps.tools,
-  documents: deps.documents,
-  retrieval: deps.retrieval,
-  index: deps.index,
-  approvals: deps.gate(fields.runId, 'plan'),
-  logger: deps.logger,
-  // The run id is added here rather than passed by the step, because a step
-  // that had to name the run it belongs to could name the wrong one.
-  deltas: (delta) => deps.deltas?.({ ...delta, runId: fields.runId })
-});
+): RunContext => {
+  // Only a run that belongs to a conversation has a record, and building the
+  // sink reads nothing: the record is first touched by the first step that has
+  // something to say, which is inside the run's own failure handling.
+  const record =
+    deps.grounding === undefined || fields.conversationId === undefined
+      ? undefined
+      : createRecorder(deps.grounding, {
+          runId: fields.runId,
+          conversationId: fields.conversationId,
+          ...(fields.contextId === undefined ? {} : { contextId: fields.contextId }),
+          ...(deps.offerId === undefined ? {} : { offerId: deps.offerId }),
+          input: fields.input
+        });
+
+  return {
+    ...fields,
+    effects: deps.effects,
+    tools: deps.tools,
+    // The ports say what they were asked for. Wrapped only when there is a
+    // record to say it to, so every other run holds the ports it always did.
+    documents: record === undefined ? deps.documents : recordingDocuments(deps.documents, record),
+    retrieval:
+      record === undefined ? deps.retrieval : recordingRetrieval(deps.retrieval, deps.documents, record),
+    index: deps.index,
+    ...(record === undefined ? {} : { record }),
+    approvals: deps.gate(fields.runId, 'plan'),
+    logger: deps.logger,
+    // The run id is added here rather than passed by the step, because a step
+    // that had to name the run it belongs to could name the wrong one.
+    deltas: (delta) => deps.deltas?.({ ...delta, runId: fields.runId })
+  };
+};
 
 /**
  * Records how a run ended and rethrows.

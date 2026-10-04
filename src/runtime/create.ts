@@ -57,6 +57,7 @@ import { join, dirname, resolve } from 'node:path';
 import { open } from '../storage/sqlite/open.js';
 import { migrate } from '../storage/sqlite/migrate.js';
 import { createRunStore } from '../storage/sqlite/run-store.js';
+import { createRecordStore } from '../storage/sqlite/grounding-record.js';
 import { createEventLog } from '../storage/sqlite/event-log.js';
 import { createApprovalGate, createApprovalStore } from '../storage/sqlite/approvals.js';
 import { createDocumentStore } from '../storage/sqlite/document-store.js';
@@ -115,6 +116,7 @@ import { createCheckpointer } from '../runs/checkpoint.js';
 import { beginRun, startRun, type RunHandle, type RuntimeDeps, type RunRequest } from './run.js';
 import { beginResume, resumeRun, type ResumeRequest } from './resume.js';
 import { recoverInterruptedRuns } from './recover.js';
+import { defaultWells } from './grounding.js';
 import type {
   AiLog,
   AiLogEntry,
@@ -134,6 +136,7 @@ import type {
   EventLog,
   MailSender,
   OfferStore,
+  RecordStore,
   RunRecord,
   RunResult,
   RunStore,
@@ -263,6 +266,14 @@ export type Harness = {
   run(request: RunRequest): Promise<RunResult>;
   resume(request: ResumeRequest): Promise<RunResult>;
   readonly runs: RunStore;
+  /**
+   * What each chat run was given and what it read, read back.
+   *
+   * The read half only. The run writes its own record as it goes and a host has
+   * no business adding to it: a record a host can write is a record that says
+   * what the host wishes had happened.
+   */
+  readonly groundingRecords: Pick<RecordStore, 'read'>;
   readonly events: EventLog;
   readonly documents: DocumentStore;
   /** Checked context lifecycle; legacy work must settle before transition. */
@@ -371,6 +382,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   migrate(db);
 
   const runs = createRunStore(db);
+  const groundingRecords = createRecordStore(db);
   const events = createEventLog(db);
   const approvals = createApprovalStore(db, options.now);
   const documents = createDocumentStore(db, options.now);
@@ -528,7 +540,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
       if (!snapshot || snapshot.conversationId !== conversationId || !conversations.read(conversationId)) {
         throw new CvContextError('context_conflict', 'Snapshot and conversation do not match.');
       }
-      return bindOfferScope(snapshot, effects);
+      return { ...bindOfferScope(snapshot, effects), offerId: snapshot.offer.id };
     },
     finish: db.transaction((runId: string, result: RunResult, commit: (result: RunResult) => void) => {
       const run = runs.get(runId);
@@ -569,6 +581,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     documents,
     retrieval,
     index: chunks,
+    grounding: { records: groundingRecords, wells: defaultWells() },
     logger,
     ...(options.deltas ? { deltas: options.deltas } : {}),
     newRunId: options.newRunId ?? (() => crypto.randomUUID()),
@@ -659,6 +672,9 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     run: (request) => startRun(deps, request),
     resume: (request) => resumeRun(deps, request),
     runs,
+    // The read half only: the type says so, and so does handing out a wrapper
+    // that has no `append` for a caller that ignores the type.
+    groundingRecords: { read: (runId) => groundingRecords.read(runId) },
     events,
     documents,
     offerSnapshots,

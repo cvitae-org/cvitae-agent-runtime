@@ -12,6 +12,7 @@ import type { AiLogger, EffectSet } from './effects.js';
 import type { ToolRegistry } from './tools.js';
 import type { DocumentStore } from './document-store.js';
 import type { ChunkIndex, Retriever } from './chunk-index.js';
+import type { RecordSink } from './grounding.js';
 
 /* ------------------------------------------------------------------ states */
 
@@ -290,6 +291,15 @@ export type RunContext = {
    * content is responsible for saying so.
    */
   readonly index: ChunkIndex;
+
+  /**
+   * Where the run says what it was given and what it read, when it has a record.
+   *
+   * Absent for a run that belongs to no conversation, and for a runtime with no
+   * record store. Nothing branches on it except the code that reports: a step
+   * that does not look at it behaves exactly as it did before it existed.
+   */
+  readonly record?: RecordSink;
   readonly approvals: ApprovalGate;
   readonly logger: AiLogger;
 

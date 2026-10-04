@@ -17,6 +17,7 @@
 
 import type { z } from 'zod';
 import type { ConversationTurn } from './effects.js';
+import type { SentField } from './grounding.js';
 import type { RunContext, StepContext, StepKind, RuntimeErrorCode } from './run.js';
 
 type StepBase = {
@@ -35,13 +36,30 @@ type StepBase = {
 };
 
 /**
+ * What a step that calls a model says about the input it sends.
+ *
+ * Only the three kinds that reach a model have it. A `transform` runs no model,
+ * and a field it reads has not reached anything.
+ */
+type Sends = {
+  /**
+   * The fields of the run's input that go into this step's model call.
+   *
+   * Recorded as the call goes out and not when the plan is made, because a
+   * `generate` step that answers from `directText` makes no call, and a field
+   * that never left the process has not been sent.
+   */
+  readonly sends?: readonly SentField[];
+};
+
+/**
  * One structured call against a narrow schema.
  *
  * No tool calling, so this runs on models that cannot do it. Narrow is the
  * operative word: a schema with four fields is answered reliably by a model
  * that returns `{}` for a schema with twenty.
  */
-export type ExtractStep = StepBase & {
+export type ExtractStep = StepBase & Sends & {
   readonly kind: 'extract';
   /** Only these typed failures may degrade even when this step is critical. */
   readonly fallbackOn?: readonly RuntimeErrorCode[];
@@ -82,7 +100,7 @@ export type ExtractStep = StepBase & {
  * The rule this leaves behind: **`extract` is for values carved out of text,
  * `generate` is for text.** A schema earns its place when the output has parts.
  */
-export type GenerateStep = StepBase & {
+export type GenerateStep = StepBase & Sends & {
   readonly kind: 'generate';
   /** Use a known answer from earlier steps without another model call. */
   readonly directText?: (context: StepContext) => string | undefined;
@@ -94,7 +112,7 @@ export type GenerateStep = StepBase & {
   readonly fallback?: Readonly<Record<string, unknown>>;
 };
 
-export type ToolLoopStep = StepBase & {
+export type ToolLoopStep = StepBase & Sends & {
   readonly kind: 'tool_loop';
   readonly system: string;
   readonly prompt: string | ((context: StepContext) => string);

@@ -18,7 +18,7 @@
  */
 
 import { RuntimeError } from '../contracts/index.js';
-import type { FinishReason, Step, StepContext } from '../contracts/index.js';
+import type { FinishReason, SentField, Step, StepContext } from '../contracts/index.js';
 import { renderPrompt } from '../context/build.js';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -70,11 +70,21 @@ export const runStep = async (
    */
   const onDelta = (text: string): void => context.deltas({ step: step.name, text });
 
+  /**
+   * Said right before the call goes out, so that what is recorded is what was
+   * sent: a step that answers without calling a model, or fails before it gets
+   * as far as one, has not sent anything.
+   */
+  const sends = (fields: readonly SentField[] | undefined): void => {
+    if (fields !== undefined) context.record?.sent(fields);
+  };
+
   switch (step.kind) {
     case 'transform':
       return step.run(context);
 
     case 'extract': {
+      sends(step.sends);
       const { object, finishReason } = await context.effects.ai.generateObject({
         ...call,
         schema: step.schema,
@@ -105,6 +115,7 @@ export const runStep = async (
         if (!direct.trim()) throw new RuntimeError('The deterministic answer is empty.', 'step_failed');
         return { [step.key]: direct };
       }
+      sends(step.sends);
       const { text, finishReason } = await context.effects.ai.generateText({
         ...call,
         system: step.system,
@@ -133,9 +144,11 @@ export const runStep = async (
         signal: context.signal,
         effects: context.effects,
         documents: context.documents,
-        retrieval: context.retrieval
+        retrieval: context.retrieval,
+        ...(context.record === undefined ? {} : { record: context.record })
       });
 
+      sends(step.sends);
       const result = await context.effects.ai.runToolLoop({
         ...call,
         system: step.system,

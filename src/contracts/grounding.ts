@@ -128,3 +128,38 @@ export interface RecordStore {
 
   read(runId: string): GroundingRecord | undefined;
 }
+
+/**
+ * What a step says it sends to a model call, by the name of a field of the run's
+ * input.
+ *
+ * A step that builds its prompt from input the host or the runtime supplied names
+ * the fields it used, and the runtime records them as the call goes out. The step
+ * knows what it sent and not where it came from, so what a name addresses, and
+ * who supplied it, is the runtime's to resolve.
+ */
+export type SentField = {
+  /** The name of a field of the run's input. */
+  readonly field: string;
+  /**
+   * What the model received of the field, when that is not all of it. Absent
+   * means the whole value. It is digested and never stored.
+   */
+  readonly shown?: unknown;
+};
+
+/**
+ * What a running step or tool uses to say what it was given or read.
+ *
+ * Present on a run's context only when the run belongs to a conversation, since
+ * only such a run has a record. Everything added lands in that run's record and
+ * nowhere else.
+ */
+export interface RecordSink {
+  /** The scope of each well this run is bound to, by well id. */
+  readonly scopes: Readonly<Record<string, string>>;
+  /** Records entries in the order given, leaving out any that are already there. */
+  add(entries: readonly RecordEntry[]): void;
+  /** Records what a step is about to send to a model call. */
+  sent(fields: readonly SentField[]): void;
+}

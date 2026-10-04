@@ -24,7 +24,10 @@
  */
 
 import { z } from 'zod';
+import type { ChunkHit, ToolContext } from '../contracts/index.js';
+import { CV_ID } from '../capabilities/cv/document.js';
 import { readCvTool } from '../capabilities/cv/tools.js';
+import { CV_WELL, cvHitEntries, cvOf } from '../capabilities/cv/well.js';
 import { defineTool } from './registry.js';
 
 /**
@@ -35,6 +38,28 @@ import { defineTool } from './registry.js';
  * one tool result than on the rest of the conversation.
  */
 const MAX_RESULT_CHARS = 6_000;
+
+/**
+ * Says which passages of the CV a search handed to the model.
+ *
+ * The passages are placed in the document as it is now, which is the revision
+ * they were found at: the scoped retriever drops a passage indexed from any
+ * other. A passage is part of a piece and not the whole of it, so each entry
+ * carries the digest of the passage the model received as well as the digest of
+ * the piece it came from.
+ */
+const reportPassages = (context: ToolContext, hits: readonly ChunkHit[]): void => {
+  const scope = context.record?.scopes[CV_WELL];
+  if (context.record === undefined || scope === undefined || hits.length === 0) return;
+
+  const found = context.documents.read(CV_ID);
+  const cv = found === undefined ? undefined : cvOf(found.body);
+  if (found === undefined || cv === undefined) return;
+
+  context.record.add(
+    cvHitEntries(scope, found.revision, cv, hits, { status: 'included', via: 'tool:search_profile', passage: true })
+  );
+};
 
 export const searchProfileTool = defineTool({
   name: 'search_profile',
@@ -70,6 +95,9 @@ export const searchProfileTool = defineTool({
       budget -= hit.text.length;
       results.push({ text: hit.text, kind: hit.kind, meta: { ...hit.meta } });
     }
+
+    // Only the passages that fit are the ones the model receives.
+    reportPassages(context, hits.slice(0, results.length));
 
     // The score is not returned. It is a fused rank with no meaning outside
     // this one query, and a model given a number will reason about it.

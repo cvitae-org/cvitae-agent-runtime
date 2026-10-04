@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '../../contracts/index.js';
 import { CV_ID, asCvDocument } from './document.js';
+import { CV_WELL, cvReadEntries } from './well.js';
 
 export const READ_CV_TOOL = 'read_cv';
 
@@ -167,6 +168,16 @@ export const readCvTool: ToolDefinition<z.infer<typeof inputSchema>, unknown> = 
     const document = asCvDocument(record.body);
     const budget: Budget = { remaining: CONTENT_BUDGET, truncated: false };
     const data = bounded(select(section, document, offset, limit), budget);
+
+    // Said before the result is returned: a tool that cannot say what it hands
+    // to the model hands nothing. The entries are made from the copy that is
+    // about to be returned, so they cannot disagree with it.
+    const scope = context.record?.scopes[CV_WELL];
+    if (context.record !== undefined && scope !== undefined) {
+      context.record.add(
+        cvReadEntries(scope, record.revision, document, { section, offset }, data, 'tool:read_cv')
+      );
+    }
 
     return {
       present: true,

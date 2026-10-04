@@ -284,6 +284,17 @@ export const payloads = {
   'runs.get': z.object({ runId }),
 
   /**
+   * What a chat run was given and what it read, as the run wrote it down.
+   *
+   * A channel of its own rather than a field of `runs.get`. That answer is the
+   * run row and its steps, every caller pays for what it carries, and a record
+   * can be long: one entry for each passage a search handed over. A caller that
+   * wants to show what an answer was based on asks for this one run's record
+   * and leaves the rest alone.
+   */
+  'runs.grounding': z.object({ runId }).strict(),
+
+  /**
    * The tail. `after` is the last `seq` the caller saw, which is the whole
    * reason `seq` is per-run and gapless: reconnecting is this same call with
    * the same number, so a closed window costs no replay and leaves no gap.
