@@ -333,13 +333,13 @@ export const payloads = {
 
   'secrets.clear': z.object({ providerId: z.string().min(1).max(64) }),
 
-  /**
-   * What the next run would resolve to, and whether it could.
-   *
-   * Answerable without a model call, which is what makes it usable as a "test
-   * connection" button: a person part-way through configuring the app should
-   * not be billed for finding out that they are not finished.
-   */
+  /** Explicit, bounded chat and embedding calls over an isolated draft. */
+  'providers.test': z.object({
+    settings,
+    keys: z.record(z.string().min(1).max(64), z.string().min(1).max(4096)).optional()
+  }).strict(),
+
+  /** Resolved metadata and local model discovery, without generation. */
   'providers.status': z.object({
     settings: settings.optional(),
     keys: z.record(z.string().min(1).max(64), z.string().min(1).max(4096)).optional()

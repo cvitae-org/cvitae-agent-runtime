@@ -97,6 +97,7 @@ import { createAttemptLog } from '../storage/sqlite/attempts.js';
 import { createModelResolver } from '../providers/resolve.js';
 import { createEnvironment, validateSettings } from '../providers/environment.js';
 import { providerStatus, type ProviderStatus } from '../providers/status.js';
+import { testProviderConnection, type ProviderConnectionTest } from '../providers/connection-test.js';
 import { createAiGateway } from '../effects/ai.js';
 import { createWebReader } from '../effects/offers.js';
 import { createWebSearch } from '../effects/search.js';
@@ -345,6 +346,7 @@ export type Harness = {
     write(next: Settings): Settings;
     secret(providerId: string, apiKey: string | undefined): void;
     status(draft?: { settings: Settings; keys?: Readonly<Record<string, string>> }): Promise<ProviderStatus>;
+    test(draft: { settings: Settings; keys?: Readonly<Record<string, string>> }): Promise<ProviderConnectionTest>;
   };
   /** Settles work left running by a previous process. It never replays an effect. */
   recoverInterrupted(): readonly RunRecord[];
@@ -709,6 +711,10 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     integrations,
     integrationDirectories,
     settings: {
+      test: (draft) => {
+        const inspected = environment.preview(draft.settings, draft.keys);
+        return testProviderConnection(createModelResolver({ env: inspected.env }), inspected);
+      },
       read: settings.read,
       // Validated, then stored, then applied — in that order, so a value that
       // cannot work never reaches the file and a value that reached the file is

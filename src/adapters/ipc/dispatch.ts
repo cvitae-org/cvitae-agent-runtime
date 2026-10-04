@@ -212,7 +212,7 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     'browser.configure': async ({enabled}) => ok(await harness.browser.configure(enabled)),
     'browser.poll': ({after}) => ok(harness.browser.store.poll(after)),
     'browser.collection': () => ok(harness.browser.store.collection()),
-    'protocol.get': () => ok({ version: 2, features: ['cv-contexts', 'checked-writes', 'durable-proposals', 'context-copy', 'offer-snapshot-runs', 'board-workspaces-v1', 'board-application-agent-v1', 'browser-companion-v1', 'studio-browser-v1', 'discovery-board-threads-v1'], languages: ['pl', 'en'] }),
+    'protocol.get': () => ok({ version: 2, features: ['cv-contexts', 'checked-writes', 'durable-proposals', 'context-copy', 'offer-snapshot-runs', 'board-workspaces-v1', 'board-application-agent-v1', 'browser-companion-v1', 'studio-browser-v1', 'discovery-board-threads-v1', 'provider-connection-test-v1'], languages: ['pl', 'en'] }),
     'board.application.start': request => ok(harness.applicationAgent.start(request)),
     'board.application.observe': async request => ok(await harness.applicationAgent.observe(request)),
     'board.application.report': request => ok(harness.applicationAgent.report(request)),
@@ -589,6 +589,17 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
       harness.settings.secret(providerId, undefined);
       return ok({ providerId, configured: false });
     },
+
+    'providers.test': async ({ settings, keys }) => ok(await harness.settings.test({
+      settings: {
+        providerId: settings.providerId ?? undefined,
+        modelId: settings.modelId ?? undefined,
+        localBaseUrl: settings.localBaseUrl ?? undefined,
+        embeddingProviderId: settings.embeddingProviderId ?? undefined,
+        embeddingModelId: settings.embeddingModelId ?? undefined
+      },
+      ...(keys ? { keys } : {})
+    })),
 
     'providers.status': async ({ settings, keys }) => ok(await harness.settings.status(
       settings ? {
