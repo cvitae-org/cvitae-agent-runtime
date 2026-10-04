@@ -19,6 +19,7 @@ export * from './document-store.js';
 export * from './effects.js';
 export * from './event.js';
 export * from './event-log.js';
+export * from './grounding.js';
 export * from './offer.js';
 export * from './discovery.js';
 export * from './offer-snapshot.js';
