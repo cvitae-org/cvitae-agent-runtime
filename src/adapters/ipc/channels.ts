@@ -413,7 +413,29 @@ export const payloads = {
     through: z.number().int().min(0)
   }),
 
-  'conversations.delete': z.object({ conversationId })
+  'conversations.delete': z.object({ conversationId }),
+
+  /**
+   * What a conversation leaves out of what its runs are given, and whether each
+   * exclusion still names something. Not a field of `conversations.get`, which a
+   * window calls for every transcript it draws.
+   */
+  'selection.get': z.object({ conversationId }).strict(),
+
+  /**
+   * Excludes and clears pieces, against the revision the caller last saw.
+   *
+   * `exclude` and `clear` are canonical refs with no version, such as
+   * `cv:<context>/experience/acme~engineer`. A change made against a revision
+   * that is no longer current is refused as `selection_conflict` and carries the
+   * current selection, so a window reloads and offers the change again.
+   */
+  'selection.update': z.object({
+    conversationId,
+    expectedRevision: z.number().int().min(0),
+    exclude: z.array(z.string().min(1).max(1024)).max(50).default([]),
+    clear: z.array(z.string().min(1).max(1024)).max(50).default([])
+  }).strict()
 } as const;
 
 export type Channel = keyof typeof payloads;

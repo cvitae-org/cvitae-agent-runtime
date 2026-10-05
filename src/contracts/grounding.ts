@@ -163,3 +163,62 @@ export interface RecordSink {
   /** Records what a step is about to send to a model call. */
   sent(fields: readonly SentField[]): void;
 }
+
+/* ---------------------------------------------------------------- selections */
+
+/**
+ * What a person has asked for of a conversation's data: so far only to leave
+ * something out.
+ *
+ * A selection names a piece by its address with no version and no digest, so it
+ * follows the live revision: an edit to an excluded section does not lift the
+ * exclusion, and a new item added to it is covered too. The refs are held in
+ * their canonical text form, which is what a host sends and what a wall is made
+ * from (`grounding/walls.ts`).
+ */
+export type Selection = {
+  readonly conversationId: string;
+  /**
+   * Moves by one with every change that changes something, and starts at 0 for
+   * a conversation nobody has selected anything in. A change is made against a
+   * revision and refused when it is not the current one, so two windows cannot
+   * silently overwrite each other.
+   */
+  readonly revision: number;
+  /** Canonical refs, in the order they were excluded. */
+  readonly exclude: readonly string[];
+};
+
+export type SelectionChange = {
+  /** The revision the caller last saw. */
+  readonly expectedRevision: number;
+  /** Refs to exclude. One already excluded is left as it is. */
+  readonly exclude: readonly string[];
+  /** Refs to stop excluding. One that is not excluded is left as it is. */
+  readonly clear: readonly string[];
+};
+
+/** The most a conversation may exclude. A person with more than this has excluded the wrong level. */
+export const MAX_EXCLUSIONS = 100;
+
+export interface SelectionStore {
+  /** A conversation with nothing selected reads as revision 0 and no refs. */
+  read(conversationId: string): Selection;
+
+  /**
+   * Applies a change when `expectedRevision` is the current one. Otherwise
+   * nothing is written, `applied` is false and `selection` is what is current.
+   * A change that changes nothing does not move the revision.
+   *
+   * The refs are stored as given: whether a conversation may exclude them is the
+   * caller's to have checked. Throws `selection_limit` when the result would hold
+   * more than `MAX_EXCLUSIONS`.
+   */
+  change(
+    conversationId: string,
+    change: SelectionChange
+  ): { readonly applied: boolean; readonly selection: Selection };
+
+  /** The walls a run is to honour now, read from the file each time it is asked. */
+  walls(conversationId: string): readonly PieceRef[];
+}

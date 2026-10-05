@@ -606,7 +606,8 @@ test('the migration adds the tables and leaves a run from before it with no reco
       "INSERT INTO runs (id, capability, status, input, trace_id, created_at) VALUES ('old', 'noop', 'succeeded', '{}', 't', 1)"
     ).run();
 
-    migrate(db);
+    // Up to this migration and no further: later ones add tables of their own.
+    migrate(db, migrations.filter((step) => step.version <= 40));
 
     assert.deepEqual(
       (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'grounding_%' ORDER BY name").all() as { name: string }[]).map((row) => row.name),

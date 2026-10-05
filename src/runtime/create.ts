@@ -58,6 +58,7 @@ import { open } from '../storage/sqlite/open.js';
 import { migrate } from '../storage/sqlite/migrate.js';
 import { createRunStore } from '../storage/sqlite/run-store.js';
 import { createRecordStore } from '../storage/sqlite/grounding-record.js';
+import { createSelectionStore } from '../storage/sqlite/grounding-selection.js';
 import { createEventLog } from '../storage/sqlite/event-log.js';
 import { createApprovalGate, createApprovalStore } from '../storage/sqlite/approvals.js';
 import { createDocumentStore } from '../storage/sqlite/document-store.js';
@@ -110,6 +111,9 @@ import { createToolRegistry } from '../tools/registry.js';
 import { defaultTools } from '../tools/index.js';
 import { capabilities as defaultCapabilities } from '../capabilities/index.js';
 import { CV_ID, CV_KIND, cvDocumentSchema, normaliseCv } from '../capabilities/cv/document.js';
+import { cvHolds } from '../capabilities/cv/walls.js';
+import { CV_WELL, cvOf } from '../capabilities/cv/well.js';
+import { OFFERS_WELL } from '../capabilities/offers/well.js';
 import { requireSameRun } from './run-identity.js';
 import { route, validateInput } from '../core/router.js';
 import { createCheckpointer } from '../runs/checkpoint.js';
@@ -117,6 +121,8 @@ import { beginRun, startRun, type RunHandle, type RuntimeDeps, type RunRequest }
 import { beginResume, resumeRun, type ResumeRequest } from './resume.js';
 import { recoverInterruptedRuns } from './recover.js';
 import { defaultWells } from './grounding.js';
+import { createSelectionService } from './selection.js';
+import type { SelectionService } from './selection.js';
 import type {
   AiLog,
   AiLogEntry,
@@ -274,6 +280,12 @@ export type Harness = {
    * what the host wishes had happened.
    */
   readonly groundingRecords: Pick<RecordStore, 'read'>;
+  /**
+   * What each conversation leaves out of what its runs are given. Reading and
+   * changing it go through here, and a change is checked against what the
+   * conversation can enforce.
+   */
+  readonly selection: SelectionService;
   readonly events: EventLog;
   readonly documents: DocumentStore;
   /** Checked context lifecycle; legacy work must settle before transition. */
@@ -383,6 +395,8 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
 
   const runs = createRunStore(db);
   const groundingRecords = createRecordStore(db);
+  const selectionStore = createSelectionStore(db);
+  const wells = defaultWells();
   const events = createEventLog(db);
   const approvals = createApprovalStore(db, options.now);
   const documents = createDocumentStore(db, options.now);
@@ -581,7 +595,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     documents,
     retrieval,
     index: chunks,
-    grounding: { records: groundingRecords, wells: defaultWells() },
+    grounding: { records: groundingRecords, wells },
     logger,
     ...(options.deltas ? { deltas: options.deltas } : {}),
     newRunId: options.newRunId ?? (() => crypto.randomUUID()),
@@ -675,6 +689,18 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     // The read half only: the type says so, and so does handing out a wrapper
     // that has no `append` for a caller that ignores the type.
     groundingRecords: { read: (runId) => groundingRecords.read(runId) },
+    selection: createSelectionService({
+      store: selectionStore,
+      conversations,
+      wells,
+      holds: (ref) => {
+        if (ref.well === CV_WELL) {
+          const found = documents.read(ref.scope);
+          return cvHolds(found !== undefined && found.kind === CV_KIND ? cvOf(found.body) : undefined, ref.path);
+        }
+        return ref.well === OFFERS_WELL && offers.get(ref.scope) !== undefined;
+      }
+    }),
     events,
     documents,
     offerSnapshots,

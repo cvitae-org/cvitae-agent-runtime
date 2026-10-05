@@ -677,7 +677,32 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     },
 
     'conversations.delete': ({ conversationId }) =>
-      ok({ deleted: harness.conversations.delete(conversationId) })
+      ok({ deleted: harness.conversations.delete(conversationId) }),
+
+    'selection.get': ({ conversationId }) => {
+      const view = harness.selection.get(conversationId);
+
+      if (!view) return failed('not_found', `No such conversation: ${conversationId}`);
+
+      return ok(view);
+    },
+
+    'selection.update': ({ conversationId, expectedRevision, exclude, clear }) => {
+      const result = harness.selection.update(conversationId, { expectedRevision, exclude, clear });
+
+      if (!result) return failed('not_found', `No such conversation: ${conversationId}`);
+
+      // Nothing was written. What is current comes back with the refusal, so the
+      // caller reloads from the answer and does not have to ask again.
+      if (!result.applied) {
+        return failed('selection_conflict', 'The selection changed since it was read. Reload it and try again.', {
+          revision: result.view.revision,
+          exclusions: result.view.exclusions
+        });
+      }
+
+      return ok(result.view);
+    }
   };
 
   const handle = async (channel: Channel, payload: unknown): Promise<Response> => {
