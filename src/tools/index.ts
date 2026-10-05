@@ -27,7 +27,8 @@ import { z } from 'zod';
 import type { ChunkHit, ToolContext } from '../contracts/index.js';
 import { CV_ID } from '../capabilities/cv/document.js';
 import { readCvTool } from '../capabilities/cv/tools.js';
-import { CV_WELL, cvHitEntries, cvOf } from '../capabilities/cv/well.js';
+import { storedCv } from '../capabilities/cv/walls.js';
+import { CV_WELL, cvHitEntries } from '../capabilities/cv/well.js';
 import { defineTool } from './registry.js';
 
 /**
@@ -52,8 +53,10 @@ const reportPassages = (context: ToolContext, hits: readonly ChunkHit[]): void =
   const scope = context.record?.scopes[CV_WELL];
   if (context.record === undefined || scope === undefined || hits.length === 0) return;
 
+  // Placed in the document as it is stored, whatever of it the run may see:
+  // a passage says which entry it came from by that document's positions.
   const found = context.documents.read(CV_ID);
-  const cv = found === undefined ? undefined : cvOf(found.body);
+  const cv = found === undefined ? undefined : storedCv(found);
   if (found === undefined || cv === undefined) return;
 
   context.record.add(

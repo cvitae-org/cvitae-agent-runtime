@@ -1,9 +1,11 @@
-# Studio integration: grounding record
+# Studio integration: grounding record and selection
 
 A chat run that belongs to a conversation writes down what reached the model
 while it works. Studio reads that record back to show what an answer was based
-on. This is step 1 of the grounding plan. It only records. Prompts, payloads and
-answers are the same as before, and nothing in a request has to change.
+on. That is the first half of this file, the record. The second half is the
+selection: what a person leaves out of a conversation, and what the runtime then
+keeps from the model. Prompts and answers are worded as before. With nothing
+excluded a payload is the same as before, and nothing in a request has to change.
 
 Related: `studio-context-protocol.md` for CV contexts, conversations and runs.
 
@@ -12,6 +14,11 @@ Related: `studio-context-protocol.md` for CV contexts, conversations and runs.
 Call `protocol.get` with `{}` and look for the feature `grounding-record`. A
 runtime without it answers `runs.grounding` with `unknown_channel`. Hide the
 "based on" list in that case. Do not guess a record from the transcript.
+
+The feature `grounding-selection` says the selection channels below are there.
+A runtime without it answers `selection.get` and `selection.update` with
+`unknown_channel`. Hide the exclude toggles in that case: a toggle the runtime
+cannot honour is worse than none.
 
 ## runs.grounding
 
@@ -156,3 +163,132 @@ unrecorded.
 4. For `open`, `suspended` and `interrupted` records say the list may be
    incomplete.
 5. For `not_found` with "has no record", show nothing.
+
+# Selection: leaving pieces out of a conversation
+
+A person can exclude a piece of what a conversation may read. Excluded means
+unreachable: the model gets it through nothing the conversation runs, and no
+answer, summary or retrieval result carries its text. The runtime does this at
+the ports a run reads through, so no tool has to remember to.
+
+## selection.get
+
+`selection.get {conversationId}` returns the selection of one conversation:
+
+```json
+{
+  "revision": 3,
+  "exclusions": [
+    { "ref": "cv:9d5e0c1a-5b0e-4d56-9a3a-3f0f6f2f7c11/experience/acme~senior-engineer", "state": "live" },
+    { "ref": "cv:9d5e0c1a-5b0e-4d56-9a3a-3f0f6f2f7c11/overview/personal", "state": "gone" }
+  ]
+}
+```
+
+- A conversation nobody has excluded anything from answers `revision: 0` and no
+  exclusions. `not_found` means there is no such conversation.
+- `exclusions` are in the order they were added.
+- `state` is `live` when the piece is in the document now and `gone` when
+  nothing carries that address any more. A `gone` exclusion still holds: it
+  excludes whatever is given that address later. Show it, and say it no longer
+  covers anything. The usual cause is a renamed entry: an item's key comes from
+  what it says (`company~title`), so a renamed item is a new item and is no
+  longer excluded. The runtime does not follow the rename. Warn the person
+  instead, and let them clear the old exclusion and exclude the new item.
+- The selection is not a field of `conversations.get`. Read it when a
+  conversation is opened and after every change.
+
+## selection.update
+
+`selection.update {conversationId, expectedRevision, exclude, clear}` changes it.
+`exclude` and `clear` are lists of at most 50 refs each, both optional, and
+anything else in the payload is `invalid_input`.
+
+- `expectedRevision` is the revision the caller last read. It is how two
+  windows avoid overwriting each other. Selections carry no version of the
+  document: a ref names a piece, not a revision of it, so leave off `@version`
+  and `#digest`.
+- On success the answer is the new selection, as `selection.get` returns it.
+  The revision goes up by one when something changed. A change that changes
+  nothing (excluding what is excluded, clearing what is not) is accepted and
+  leaves the revision alone.
+- `exclude` is applied after `clear`. A ref in both ends up excluded.
+- When `expectedRevision` is not the current revision nothing is written and the
+  answer is `selection_conflict` with the current `revision` and `exclusions` in
+  its details. Reload from them and offer the change again.
+- A conversation excludes at most 100 refs. More is `selection_limit`.
+- An exclusion is kept until it is cleared, across restarts. It binds every run
+  of the conversation that starts afterwards, a run that is suspended for an
+  approval and resumed later, and the reads a run still has to make after it was
+  excluded mid-run.
+
+### What a conversation may exclude
+
+The runtime accepts only what something stands behind. Anything else is
+`invalid_selection`, with a message to show. Clearing is not held to this: what
+was allowed once can always be removed.
+
+- A conversation about a CV (`cv:<context id>/...`), the pieces of its own CV
+  only: the whole CV (`cv:<id>`), a section (`experience`, `education`,
+  `certificates`, `languages`, `overview`), an overview item
+  (`overview/personal`, `overview/role_description`, `overview/skills`) or one
+  entry of a list section (`experience/acme~senior-engineer`).
+- A discovery conversation, whole saved offers: `offers:<offer id>`.
+- A conversation about one offer excludes nothing yet.
+- The preferences well is Studio's, and the runtime reads none of it.
+
+Other codes: `invalid_ref` for a ref that does not parse, `unknown_well` for a
+well that does not exist, `not_found` for a conversation that does not exist.
+
+## What the runtime keeps from the model
+
+For a conversation about a CV, every run of it reads the CV through walls:
+
+- `read_cv` returns the CV without the excluded pieces. An excluded list entry is
+  removed from its section. An excluded overview item (name and contact details,
+  the role description, the skills) is left out of the answer, and not blanked,
+  so the model is not told the CV has no name.
+- `search_profile` returns no passage from an excluded piece. A passage that
+  cannot be placed in the stored CV (its entry was edited since it was indexed,
+  or it belongs to no piece) is dropped as well while anything of the CV is
+  excluded: whether it came from an excluded piece is then not known, and not
+  knowing is not a reason to hand it over. With nothing of the CV excluded, an
+  exclusion that names nothing the CV holds (a `gone` one) changes no payload.
+- The record names pieces by the key they have in the stored CV, so an entry in
+  `runs.grounding` never names the wrong item because an earlier one was cut.
+  An excluded piece is never in a record: it did not reach the model.
+- `edit_cv` works on what is left and puts the excluded pieces back. The
+  proposal a person is asked to approve keeps every excluded piece as it was
+  stored, so approving never deletes one. An edit aimed at something excluded
+  entirely (the overview item, a list section with nothing left, the whole CV)
+  is refused as `target_excluded` before any model call.
+- `translate_cv` the same way: excluded pieces are left untranslated and
+  returned as stored.
+- A CV whose stored body cannot be read as a CV, while the conversation excludes
+  something of it, fails the run with `walled_unreadable`: what is left cannot
+  be told from what is not, and the runtime does not guess.
+
+What a wall never does: block the document an edit is written against. It
+decides what a model may be shown. The stored CV is the stored one.
+
+Things the walls do not cover yet:
+
+- Runs of a conversation about one offer, which read a captured snapshot.
+- History and summary the app sends in the request. They stay outside the
+  guarantee, listed with origin `client` in the record.
+- Discovery conversations: exclusions of saved offers are stored and returned,
+  but the discovery chat does not honour them yet.
+
+## Suggested exclude toggles
+
+1. Check `grounding-selection` in `protocol.get`.
+2. `selection.get` when a conversation is opened. Keep `revision`.
+3. A toggle per section and per entry sends `selection.update` with
+   `expectedRevision` set to the kept revision. Replace the kept selection with
+   the answer.
+4. On `selection_conflict` replace the kept selection with the details of the
+   error and show the person what changed before they try again.
+5. Show a `gone` exclusion as "no longer matches anything" next to a way to
+   clear it.
+6. An `edit_cv` proposal for a CV with exclusions keeps them. Show the proposal
+   as the runtime sent it.

@@ -12,7 +12,7 @@ import type { AiLogger, EffectSet } from './effects.js';
 import type { ToolRegistry } from './tools.js';
 import type { DocumentStore } from './document-store.js';
 import type { ChunkIndex, Retriever } from './chunk-index.js';
-import type { RecordSink } from './grounding.js';
+import type { RecordSink, Walls } from './grounding.js';
 
 /* ------------------------------------------------------------------ states */
 
@@ -300,6 +300,15 @@ export type RunContext = {
    * that does not look at it behaves exactly as it did before it existed.
    */
   readonly record?: RecordSink;
+
+  /**
+   * What the person has excluded from this run's conversation, for the few steps
+   * that are handed data by the host instead of reading it through a port.
+   *
+   * `documents`, `retrieval` and `index` are already cut by it, so a step that
+   * reads through them never looks here. Absent for a run with no conversation.
+   */
+  readonly walls?: Walls;
   readonly approvals: ApprovalGate;
   readonly logger: AiLogger;
 

@@ -18,8 +18,9 @@
  *
  * Keys are derived from what an entry says, so renaming an entry renames its
  * address. That is acceptable for a record, which also carries the revision it
- * read, and it is the thing to settle before an exclusion is allowed to name an
- * item: an exclusion that outlives a rename would silently stop excluding.
+ * read. For an exclusion it means a renamed item is a new item and is no longer
+ * excluded; the runtime keeps the derived key and says so (an exclusion that
+ * names nothing reads as `gone`), and a host warns about it.
  *
  * The digest of a piece is the digest of the piece as the parsed, normalised
  * document holds it (`asCvDocument`), whichever way it was read, so two reads of
@@ -124,7 +125,26 @@ export type CvRead = {
   readonly shown?: unknown;
 };
 
-type Place = { readonly section?: string; readonly key?: string };
+/** Where a piece sits: the whole CV with neither, a section, or an item of one. */
+export type Place = { readonly section?: string; readonly key?: string };
+
+/** The path of a place, as a ref carries it. */
+export const placePath = (place: Place): string[] =>
+  place.section === undefined ? [] : place.key === undefined ? [place.section] : [place.section, place.key];
+
+/**
+ * How the entries a model was shown map back to the document they were cut from.
+ *
+ * With parts of a CV excluded, the list a model reads is shorter than the stored
+ * one, and its entry at position 1 may be the stored entry at position 2. An
+ * address is made from the stored entry's key, so a reader that was shown a cut
+ * list says how to get back (`walls.ts` makes this; a read of the whole document
+ * has no need of one).
+ */
+export type CvFrame = {
+  readonly keys: Readonly<Record<ListSection, readonly string[]>>;
+  readonly rows: Readonly<Record<ListSection, readonly number[]>>;
+};
 
 const entry = (scope: string, revision: number, place: Place, original: unknown, how: CvRead): RecordEntry => ({
   ref: cvRef(scope, place.section, place.key),
@@ -165,7 +185,8 @@ export const cvReadEntries = (
   document: CvDocument,
   request: { readonly section: string; readonly offset: number },
   data: unknown,
-  via: string
+  via: string,
+  frame?: CvFrame
 ): RecordEntry[] => {
   const how = (shown: unknown): CvRead => ({ status: 'included', via, shown });
   const given = typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {};
@@ -186,13 +207,15 @@ export const cvReadEntries = (
   }
 
   const section = request.section;
-  const keys = cvKeys(document)[section];
+  const keys = frame === undefined ? cvKeys(document)[section] : frame.keys[section];
   const items: unknown[] = Array.isArray(given.items) ? given.items : [];
 
   return items.flatMap((shown, index) => {
     const at = request.offset + index;
     const key = keys[at];
-    return key === undefined ? [] : [entry(scope, revision, { section, key }, document[section][at], how(shown))];
+    if (key === undefined) return [];
+    const row = frame === undefined ? at : frame.rows[section][at];
+    return row === undefined ? [] : [entry(scope, revision, { section, key }, document[section][row], how(shown))];
   });
 };
 
@@ -212,7 +235,7 @@ export type CvHit = {
  * passage cannot be placed and the caller records the whole CV instead, which is
  * less precise and never wrong.
  */
-const placer = (document: CvDocument) => {
+export const placer = (document: CvDocument) => {
   const keys = cvKeys(document);
 
   return (hit: CvHit): { place: Place; original: unknown } | undefined => {

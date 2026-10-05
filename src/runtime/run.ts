@@ -20,6 +20,7 @@ import * as emit from '../events/emit.js';
 import { CvContextError, OperationError, RuntimeError, isRunSuspension } from '../contracts/index.js';
 import { createRecorder, recordingDocuments, recordingRetrieval } from './grounding.js';
 import type { Grounding } from './grounding.js';
+import { wallPorts } from './walls.js';
 import type {
   AiLogger,
   ApprovalGate,
@@ -31,9 +32,11 @@ import type {
   RunContext,
   RunResult,
   RunStore,
+  SelectionStore,
   StepDelta,
   StepOutcome,
-  ToolRegistry
+  ToolRegistry,
+  Walls
 } from '../contracts/index.js';
 
 /**
@@ -67,6 +70,12 @@ export type RuntimeDeps = {
    * so a host that shows records must set this.
    */
   readonly grounding?: Grounding;
+  /**
+   * What each conversation has excluded. A run that belongs to a conversation
+   * reads the CV through ports with those pieces taken out, asked again at every
+   * read. Absent means nothing is excluded from any run, as before selections.
+   */
+  readonly selection?: Pick<SelectionStore, 'walls'>;
   readonly finish?: (runId: string, result: RunResult, commit: (result: RunResult) => void) => RunResult;
   readonly capabilities: CapabilityMap;
   readonly runs: RunStore;
@@ -155,17 +164,35 @@ export const buildRunContext = (
           input: fields.input
         });
 
+  // What the conversation has excluded, read at every access. Only a run that is
+  // about a CV of the person's own has anything to cut: a run about a saved offer
+  // reads a copy the offer was captured with, and no selection names that.
+  const { selection } = deps;
+  const { conversationId, contextId } = fields;
+  const walls: Walls | undefined =
+    selection === undefined || conversationId === undefined || contextId === undefined || deps.offerId !== undefined
+      ? undefined
+      : { pieces: () => selection.walls(conversationId) };
+
+  // Cut first and recorded after, so the record sees the stored document through
+  // the cut one and can say what of it the model was shown.
+  const ports =
+    walls === undefined || contextId === undefined
+      ? { documents: deps.documents, retrieval: deps.retrieval, index: deps.index }
+      : wallPorts({ documents: deps.documents, retrieval: deps.retrieval, index: deps.index }, walls, contextId);
+
   return {
     ...fields,
     effects: deps.effects,
     tools: deps.tools,
     // The ports say what they were asked for. Wrapped only when there is a
     // record to say it to, so every other run holds the ports it always did.
-    documents: record === undefined ? deps.documents : recordingDocuments(deps.documents, record),
+    documents: record === undefined ? ports.documents : recordingDocuments(ports.documents, record),
     retrieval:
-      record === undefined ? deps.retrieval : recordingRetrieval(deps.retrieval, deps.documents, record),
-    index: deps.index,
+      record === undefined ? ports.retrieval : recordingRetrieval(ports.retrieval, ports.documents, record),
+    index: ports.index,
     ...(record === undefined ? {} : { record }),
+    ...(walls === undefined ? {} : { walls }),
     approvals: deps.gate(fields.runId, 'plan'),
     logger: deps.logger,
     // The run id is added here rather than passed by the step, because a step

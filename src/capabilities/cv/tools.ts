@@ -11,7 +11,9 @@
 import { z } from 'zod';
 import type { ToolDefinition } from '../../contracts/index.js';
 import { CV_ID, asCvDocument } from './document.js';
-import { CV_WELL, cvReadEntries } from './well.js';
+import { cvView, viewOf } from './walls.js';
+import type { CvWithheld } from './walls.js';
+import { CV_WELL, OVERVIEW_ITEMS, cvReadEntries } from './well.js';
 
 export const READ_CV_TOOL = 'read_cv';
 
@@ -126,16 +128,17 @@ const select = (
   section: Section,
   document: ReturnType<typeof asCvDocument>,
   offset: number,
-  limit: number
+  limit: number,
+  withheld: CvWithheld
 ): Record<string, unknown> => {
   switch (section) {
-    case 'overview':
-      return {
-        version: document.version,
-        personal: document.personal,
-        role_description: document.role_description,
-        skills: document.skills
-      };
+    case 'overview': {
+      // An excluded item is left out, and not blanked: a model told the CV has an
+      // empty name would say so to the person.
+      const overview: Record<string, unknown> = { version: document.version };
+      for (const item of OVERVIEW_ITEMS) if (!(item in withheld.items)) overview[item] = document[item];
+      return overview;
+    }
     case 'experience':
       return page(document.experience, offset, limit);
     case 'education':
@@ -165,9 +168,13 @@ export const readCvTool: ToolDefinition<z.infer<typeof inputSchema>, unknown> = 
 
     // Parse at the read boundary. A corrupt or future-version body must not be
     // presented to the model as if it were a canonical CV.
-    const document = asCvDocument(record.body);
+    //
+    // What is read is what the document port handed over, which has the
+    // excluded pieces out of it. `view` keeps where each remaining entry sat in
+    // the stored document, because that is what a record names it by.
+    const view = viewOf(record) ?? cvView(asCvDocument(record.body), [], '');
     const budget: Budget = { remaining: CONTENT_BUDGET, truncated: false };
-    const data = bounded(select(section, document, offset, limit), budget);
+    const data = bounded(select(section, view.shown, offset, limit, view.withheld), budget);
 
     // Said before the result is returned: a tool that cannot say what it hands
     // to the model hands nothing. The entries are made from the copy that is
@@ -175,7 +182,7 @@ export const readCvTool: ToolDefinition<z.infer<typeof inputSchema>, unknown> = 
     const scope = context.record?.scopes[CV_WELL];
     if (context.record !== undefined && scope !== undefined) {
       context.record.add(
-        cvReadEntries(scope, record.revision, document, { section, offset }, data, 'tool:read_cv')
+        cvReadEntries(scope, record.revision, view.original, { section, offset }, data, 'tool:read_cv', view)
       );
     }
 

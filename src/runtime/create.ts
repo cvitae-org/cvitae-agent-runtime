@@ -596,6 +596,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     retrieval,
     index: chunks,
     grounding: { records: groundingRecords, wells },
+    selection: selectionStore,
     logger,
     ...(options.deltas ? { deltas: options.deltas } : {}),
     newRunId: options.newRunId ?? (() => crypto.randomUUID()),

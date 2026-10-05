@@ -201,6 +201,17 @@ export type SelectionChange = {
 /** The most a conversation may exclude. A person with more than this has excluded the wrong level. */
 export const MAX_EXCLUSIONS = 100;
 
+/**
+ * What a run may not reach, asked for at the moment of reaching.
+ *
+ * A function and not a list, so a run that waits for a person and is resumed
+ * honours what was excluded while it waited. Present on a run's context only when
+ * the run belongs to a conversation and the runtime keeps selections.
+ */
+export interface Walls {
+  pieces(): readonly PieceRef[];
+}
+
 export interface SelectionStore {
   /** A conversation with nothing selected reads as revision 0 and no refs. */
   read(conversationId: string): Selection;

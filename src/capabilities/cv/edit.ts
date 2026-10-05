@@ -71,6 +71,7 @@ import {
 } from '../../context/conversation.js';
 import { compose, labelled } from '../../context/render.js';
 import {
+  OperationError,
   RuntimeError,
   type Capability,
   type Plan,
@@ -94,6 +95,8 @@ import {
   skillsSchema,
   type CvDocument
 } from './document.js';
+import { cvTargetWalled, cvView, restoreCv, viewOf } from './walls.js';
+import type { CvWithheld } from './walls.js';
 
 /* ------------------------------------------------------------------ sections */
 
@@ -508,8 +511,13 @@ const rules = (section: Section, extra?: string): string =>
     ...(extra ? [extra] : [])
   ].join('\n');
 
+/** The document the model is shown: the source with whatever the conversation excludes taken out. */
 const source = (context: StepContext): CvDocument =>
   context.completed.source?.document as CvDocument;
+
+/** What was taken out of it, to be put back into the proposal. Absent when nothing was. */
+const withheldOf = (context: StepContext): CvWithheld | undefined =>
+  context.completed.source?.withheld as CvWithheld | undefined;
 
 const reviseStep = (section: Section, input: EditCvInput): Step => {
   const shape = shapes[section];
@@ -649,11 +657,17 @@ const merge = (context: StepContext, section: Section): EditCvResult => {
       break;
   }
 
+  // The pieces the model was not shown go back where they were. The proposal is
+  // written over the stored document, so a proposal without them would delete
+  // what the person excluded from the conversation.
+  const withheld = withheldOf(context);
+  const whole = withheld === undefined ? document : restoreCv(document, withheld);
+
   return {
     // The whole document, so `version` and `sources` are proven to still be
     // the ones that were read rather than whatever the model had to say.
     ...(context.completed.source?.base ? { base: context.completed.source.base as CvProposalBase } : {}),
-    document: cvDocumentSchema.parse(document),
+    document: cvDocumentSchema.parse(whole),
     section,
     changed: JSON.stringify(document[section]) !== JSON.stringify(from[section])
   };
@@ -688,12 +702,36 @@ export const editCv: Capability<EditCvInput> = {
               name: 'source',
               critical: true,
               run: async (context) => {
+                // What the conversation has excluded, and which CV it is. The
+                // document a caller supplies is cut like the stored one: it is
+                // the same CV, and the section the model is shown is taken from it.
+                const walls = context.walls?.pieces() ?? [];
+                const scope = context.contextId ?? CV_ID;
+
+                const aimed = (document: CvDocument): void => {
+                  if (cvTargetWalled(walls, scope, section, document)) {
+                    throw new OperationError(
+                      'target_excluded',
+                      `The ${section} of this CV is excluded from the conversation, so there is nothing of it to edit. Include it again to change it.`
+                    );
+                  }
+                };
+
                 // Normalised even when the caller supplied it: a client that
                 // sent only the three legacy arrays would otherwise be shown a
                 // skills strip with no rows in it, and asked to edit that.
-                if (input.document) return { document: normaliseCv(input.document) };
+                if (input.document) {
+                  const whole = normaliseCv(input.document);
+                  aimed(whole);
+                  const view = cvView(whole, walls, scope);
+                  return view.walled ? { document: view.shown, withheld: view.withheld } : { document: whole };
+                }
 
                 const record = context.documents.read(CV_ID);
+                // The record is the cut one when something is excluded, and
+                // remembers the document it was cut from: the edit is made on
+                // what is left, and written back over what is stored.
+                const view = record === undefined ? undefined : viewOf(record);
                 /**
                  * An empty document rather than a refusal, which is where this
                  * parts company with `translate_cv`. There is nothing to
@@ -702,8 +740,13 @@ export const editCv: Capability<EditCvInput> = {
                  * reasonable way to start. Nothing is written either way, so
                  * the caller decides whether the proposal becomes a document.
                  */
+                const stored = record === undefined ? emptyDocument() : (view?.original ?? asCvDocument(record.body));
+                aimed(stored);
+                const cut = view?.walled === true ? view : undefined;
+
                 return {
-                  document: record ? asCvDocument(record.body) : emptyDocument(),
+                  document: cut === undefined ? stored : cut.shown,
+                  ...(cut === undefined ? {} : { withheld: cut.withheld }),
                   base: { contextId: context.contextId ?? CV_ID, revision: record?.revision ?? 0, generation: context.contextGeneration ?? 0 }
                 };
               }

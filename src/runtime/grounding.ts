@@ -32,8 +32,9 @@ import type {
   Retriever,
   SentField
 } from '../contracts/index.js';
-import { CV_ID, CV_KIND } from '../capabilities/cv/document.js';
-import { CV_WELL, cvHitEntries, cvOf, cvWell, cvWholeEntry } from '../capabilities/cv/well.js';
+import { CV_ID } from '../capabilities/cv/document.js';
+import { storedCv, viewOf } from '../capabilities/cv/walls.js';
+import { CV_WELL, cvHitEntries, cvWell, cvWholeEntry } from '../capabilities/cv/well.js';
 import { OFFERS_WELL, offersWell, postingRef } from '../capabilities/offers/well.js';
 import { createRecordBook, createWellRegistry, digest, formatRef } from '../grounding/index.js';
 import type { RecordBook, WellDef, WellRegistry } from '../grounding/index.js';
@@ -177,10 +178,19 @@ export const recordingDocuments = (documents: DocumentStore, sink: RecordSink): 
     const found = documents.read(id);
     const scope = sink.scopes[CV_WELL];
 
-    if (found !== undefined && scope !== undefined && found.kind === CV_KIND) {
-      const cv = cvOf(found.body);
-      if (cv !== undefined) {
-        sink.add([cvWholeEntry(scope, found.revision, cv, { status: 'read', via: 'port:documents' })]);
+    if (found !== undefined && scope !== undefined) {
+      // The piece is named by the document as stored, and what the model may see
+      // of it is the document the port handed over: when they differ, the entry
+      // says so by the digest of what was left.
+      const view = viewOf(found);
+      if (view !== undefined) {
+        sink.add([
+          cvWholeEntry(scope, found.revision, view.original, {
+            status: 'read',
+            via: 'port:documents',
+            ...(view.walled ? { shown: view.shown } : {})
+          })
+        ]);
       }
     }
 
@@ -206,7 +216,7 @@ export const recordingRetrieval = (
 
     if (hits.length > 0 && scope !== undefined) {
       const found = documents.read(CV_ID);
-      const cv = found !== undefined && found.kind === CV_KIND ? cvOf(found.body) : undefined;
+      const cv = found === undefined ? undefined : storedCv(found);
       if (found !== undefined && cv !== undefined) {
         sink.add(
           cvHitEntries(scope, found.revision, cv, hits, { status: 'read', via: 'port:retrieval', passage: false })
