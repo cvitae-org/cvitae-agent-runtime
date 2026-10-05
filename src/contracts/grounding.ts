@@ -130,6 +130,38 @@ export interface RecordStore {
 }
 
 /**
+ * A record, with the capability of the run it belongs to.
+ *
+ * The capability is not part of the record, which is a stored format. It is what
+ * tells an answer whose record can be trusted from one whose record cannot
+ * (`Capability.recorded`). Absent when the run is no longer stored.
+ */
+export type ConversationRecord = {
+  readonly record: GroundingRecord;
+  readonly capability?: string;
+};
+
+/** The records of a conversation, for deciding what its earlier answers were built from. */
+export interface ConversationRecords {
+  /** Every record of the conversation, oldest first. */
+  byConversation(conversationId: string): readonly ConversationRecord[];
+}
+
+/**
+ * What the runtime put into a run's input in place of what a host would have
+ * sent as `history` and `summary`: which earlier exchanges, and which summary.
+ *
+ * It is what the record is written from, so a later run can tell which earlier
+ * answers an answer was built on, and the taint rule can follow the chain.
+ */
+export type SuppliedHistory = {
+  /** The exchanges given as history, oldest first, by the key of each (`runtime/history.ts`). */
+  readonly exchanges: readonly { readonly key: string; readonly digest: string }[];
+  /** The summary given, and the `seq` of the last message it was made from. */
+  readonly summary?: { readonly through: number; readonly digest: string };
+};
+
+/**
  * What a step says it sends to a model call, by the name of a field of the run's
  * input.
  *

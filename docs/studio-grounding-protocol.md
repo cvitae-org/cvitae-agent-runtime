@@ -4,7 +4,7 @@ A chat run that belongs to a conversation writes down what reached the model
 while it works. Studio reads that record back to show what an answer was based
 on. That is the first half of this file, the record. The second half is the
 selection: what a person leaves out of a conversation, and what the runtime then
-keeps from the model. Prompts and answers are worded as before. With nothing
+keeps from the model, history included. Prompts and answers are worded as before. With nothing
 excluded a payload is the same as before, and nothing in a request has to change.
 
 Related: `studio-context-protocol.md` for CV contexts, conversations and runs.
@@ -19,6 +19,12 @@ The feature `grounding-selection` says the selection channels below are there.
 A runtime without it answers `selection.get` and `selection.update` with
 `unknown_channel`. Hide the exclude toggles in that case: a toggle the runtime
 cannot honour is worse than none.
+
+The feature `grounding-history` says the runtime keeps the conversation itself
+and holds back an earlier answer that an exclusion reaches (see "The
+conversation the runtime keeps"). Without it, keep sending `history` and
+`summary` as before, and know that they stay outside the guarantee. With it,
+stop sending them.
 
 ## runs.grounding
 
@@ -117,7 +123,9 @@ Only `ask_profile` is recorded in this step, live and on an offer snapshot.
 
 - Sent in the request (`via: input`, `status: included`): the history
   (`conversation:<id>/history`), the summary (`conversation:<id>/summary`),
-  both with origin `client`. A posting that comes with the request is
+  both with origin `client`. When the runtime kept the conversation itself, the
+  entries are the runtime's instead (see "The conversation the runtime keeps").
+  A posting that comes with the request is
   `conversation:<id>/attached`, origin `client`. In an offer snapshot run the
   posting is the saved one, `offers:<offerId>/posting`, origin `server`.
 - `read_cv`: the sections and items it returned, as `cv` entries with
@@ -138,7 +146,7 @@ unrecorded.
 - Discovery chat, board and enrichment runs. They have no conversation, so they
   have no record.
 - History and summary the app sends are listed with origin `client` and are
-  outside the guarantee until the runtime keeps them itself.
+  outside the guarantee. The runtime keeps its own when the app sends none.
 
 ## Things to know
 
@@ -275,9 +283,52 @@ Things the walls do not cover yet:
 
 - Runs of a conversation about one offer, which read a captured snapshot.
 - History and summary the app sends in the request. They stay outside the
-  guarantee, listed with origin `client` in the record.
+  guarantee, listed with origin `client` in the record. Send none and the
+  runtime keeps them (next section).
 - Discovery conversations: exclusions of saved offers are stored and returned,
   but the discovery chat does not honour them yet.
+
+## The conversation the runtime keeps
+
+An answer written before a piece was excluded may still carry it. If the app
+hands that answer back as history, the excluded piece is in front of the model
+again. So when the app sends no history and no summary with a message, the
+runtime reads the conversation it stores (the messages appended with
+`conversations.append`, and the note stored with `conversations.summarise`) and
+gives the model the part that no exclusion reaches.
+
+It applies to `ask_profile`. An input with a non-empty `history` or a non-blank
+`summary` is used as sent, as before, with origin `client`. An explicit empty
+`history` or blank `summary` counts as not sent.
+
+- What the model is given: the settled exchanges after the summary, newest that
+  fit, each an answer and the question it answered. The same limits as for a
+  host (12 turns, 6,000 characters). The first exchange that does not fit ends
+  it, so history never has a hole in the middle. The note stored with
+  `conversations.summarise`, when it is not held back. An unanswered question
+  and the run's own are not given.
+- What is held back: an exchange whose answer was built from something the
+  conversation excludes now, or on an earlier answer that was, however far back.
+  Only what a run was given counts. What it merely read does not. The summary is
+  held back while any answer it was made from is. It cannot be cut into parts,
+  so the conversation goes without it until it is summarised again over answers
+  that are not. Lifting the exclusion brings both back.
+- An answer whose run cannot say what it was given (no record, a record that is
+  not closed, a capability that keeps none, a run that no longer exists, an
+  answer with no run) is held back as long as the conversation excludes anything
+  at all. With nothing excluded, history is what the conversation holds.
+- An answer is named by the run that wrote it (`run~<run id>`) or, with no run,
+  by the message (`msg~<message id>`). Send `runId` with `conversations.append`
+  for an answer a run wrote, so it can be traced.
+- The record lists each exchange given as `conversation:<id>/history/<key>`,
+  origin `server`, and the note as `conversation:<id>/summary`, origin `server`,
+  with `version` the number of the last message it was made from. These are
+  what the model was given, so they belong in the "based on" list.
+- It is read when a run starts or resumes. An exclusion made while a step runs
+  reaches what the tools return at once, and the history on the next run or the
+  next resume.
+- The stored run input is what the app sent. The history the runtime put in is
+  not stored with it.
 
 ## Suggested exclude toggles
 
@@ -292,3 +343,8 @@ Things the walls do not cover yet:
    clear it.
 6. An `edit_cv` proposal for a CV with exclusions keeps them. Show the proposal
    as the runtime sent it.
+7. With `grounding-history`, append every message to the conversation (answers
+   with their `runId`) and stop sending `history` and `summary`. Summarise with
+   `conversations.summarise` as before. Say plainly that an earlier answer is
+   left out of the conversation when an exclusion reaches it, and that it comes
+   back when the exclusion is cleared.

@@ -22,6 +22,7 @@ import { CvContextError, RuntimeError } from '../contracts/index.js';
 import type { RunResult } from '../contracts/index.js';
 import {
   buildRunContext,
+  givenInput,
   scopedDeps,
   recordedOutcomes,
   settleFailure,
@@ -83,24 +84,26 @@ export const beginResume = (
   const checkpoint = createCheckpointer(deps.runs, record.id, now);
   checkpoint.resumed();
 
-  const context = buildRunContext(bound, {
-    ...(record.offerSnapshotId === undefined ? {} : { offerSnapshotId: record.offerSnapshotId }),
-    ...(record.contextId === undefined ? {} : { contextId: record.contextId }),
-    ...(bound.contextGeneration === undefined ? {} : { contextGeneration: bound.contextGeneration }),
-    ...(bound.contextRevision === undefined ? {} : { contextRevision: bound.contextRevision }),
-    ...(record.conversationId === undefined ? {} : { conversationId: record.conversationId }),
-    runId: record.id,
-    traceId: record.traceId,
-    capability: capability.name,
-    input,
-    signal: request.signal ?? new AbortController().signal,
-    deadlineAt:
-      request.deadlineAt ?? now() + (deps.timeoutMs ?? 10 * 60 * 1000)
-  });
-
   const settled = (async (): Promise<RunResult> => {
     try {
-      const plan = await makePlan(capability, input, context);
+      const given = givenInput(bound, capability.name, record.conversationId, record.id, input);
+
+      const context = buildRunContext(bound, {
+        ...(record.offerSnapshotId === undefined ? {} : { offerSnapshotId: record.offerSnapshotId }),
+        ...(record.contextId === undefined ? {} : { contextId: record.contextId }),
+        ...(bound.contextGeneration === undefined ? {} : { contextGeneration: bound.contextGeneration }),
+        ...(bound.contextRevision === undefined ? {} : { contextRevision: bound.contextRevision }),
+        ...(record.conversationId === undefined ? {} : { conversationId: record.conversationId }),
+        runId: record.id,
+        traceId: record.traceId,
+        capability: capability.name,
+        input: given.input,
+        signal: request.signal ?? new AbortController().signal,
+        deadlineAt:
+          request.deadlineAt ?? now() + (deps.timeoutMs ?? 10 * 60 * 1000)
+      }, given.supplied);
+
+      const plan = await makePlan(capability, given.input, context);
 
       const result = await executePlan(plan, context, {
         checkpoint,

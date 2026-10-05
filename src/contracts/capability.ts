@@ -221,6 +221,18 @@ export interface Capability<TInput extends Record<string, unknown> = Record<stri
   plan(input: TInput, context: RunContext): Plan | Promise<Plan>;
 
   /**
+   * Whether the runs of this capability say, in their record, everything they
+   * send to a model.
+   *
+   * It is what lets a later run trust the record to tell what an answer was built
+   * from. An answer of a capability that is not recorded has no such account, and
+   * the runtime treats where it came from as unknown. A recorded capability that
+   * takes `history` and `summary` is also one whose conversation the runtime keeps
+   * itself when the host sends neither (`runtime/history.ts`).
+   */
+  readonly recorded?: boolean;
+
+  /**
    * Folds step outputs into the capability's result shape. Defaults to a
    * shallow merge, which is what an extraction pipeline wants.
    *

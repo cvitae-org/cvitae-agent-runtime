@@ -121,6 +121,7 @@ import { beginRun, startRun, type RunHandle, type RuntimeDeps, type RunRequest }
 import { beginResume, resumeRun, type ResumeRequest } from './resume.js';
 import { recoverInterruptedRuns } from './recover.js';
 import { defaultWells } from './grounding.js';
+import { createHistory } from './history.js';
 import { createSelectionService } from './selection.js';
 import type { SelectionService } from './selection.js';
 import type {
@@ -597,6 +598,12 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     index: chunks,
     grounding: { records: groundingRecords, wells },
     selection: selectionStore,
+    history: createHistory({
+      conversations,
+      records: groundingRecords,
+      walls: (conversationId) => selectionStore.walls(conversationId),
+      capabilities: options.capabilities ?? defaultCapabilities
+    }),
     logger,
     ...(options.deltas ? { deltas: options.deltas } : {}),
     newRunId: options.newRunId ?? (() => crypto.randomUUID()),

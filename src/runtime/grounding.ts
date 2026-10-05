@@ -30,7 +30,8 @@ import type {
   RecordSink,
   RecordStore,
   Retriever,
-  SentField
+  SentField,
+  SuppliedHistory
 } from '../contracts/index.js';
 import { CV_ID } from '../capabilities/cv/document.js';
 import { storedCv, viewOf } from '../capabilities/cv/walls.js';
@@ -74,10 +75,20 @@ export type RecorderFacts = {
   /** The saved offer a snapshot run is about. Absent for a live run. */
   readonly offerId?: string;
   readonly input: Readonly<Record<string, unknown>>;
+  /**
+   * What the runtime put in `input` as the conversation, when the host sent none
+   * (`runtime/history.ts`). Those fields are the runtime's own and are recorded
+   * as such: one entry for each exchange, and one for the summary.
+   */
+  readonly supplied?: SuppliedHistory;
 };
 
 const conversationRef = (conversationId: string, section: string): string =>
   formatRef({ well: CONVERSATION_WELL, scope: conversationId, path: [section] });
+
+/** One earlier answer of a conversation, with the question it answered, by the key of the answer. */
+export const historyRef = (conversationId: string, key: string): string =>
+  formatRef({ well: CONVERSATION_WELL, scope: conversationId, path: ['history', key] });
 
 /**
  * The entry for one input field a step sent, or none when the field was empty
@@ -85,8 +96,9 @@ const conversationRef = (conversationId: string, section: string): string =>
  *
  * What each field is, and who supplied it, is settled here and not by the step. A
  * conversation's history and summary come from the host, so they are `client`
- * and the runtime does not vouch for them. A posting is `server` when a snapshot
- * supplied it, and `client` when the host sent it with a live run.
+ * and the runtime does not vouch for them, unless the runtime kept the
+ * conversation itself and supplied them (`supplied`). A posting is `server` when
+ * a snapshot supplied it, and `client` when the host sent it with a live run.
  */
 const sentEntries = (facts: RecorderFacts, sent: SentField): RecordEntry[] => {
   const value = facts.input[sent.field];
@@ -97,14 +109,41 @@ const sentEntries = (facts: RecorderFacts, sent: SentField): RecordEntry[] => {
 
   switch (sent.field) {
     case 'history':
+      // The runtime's own, exchange by exchange: it read them from the
+      // conversation, so it can say which they were and vouches for each.
+      if (facts.supplied !== undefined) {
+        return facts.supplied.exchanges.map((each) => ({
+          ref: historyRef(facts.conversationId, each.key),
+          digest: each.digest,
+          status: 'included' as const,
+          origin: 'server' as const,
+          via: 'input'
+        }));
+      }
       return Array.isArray(value) && value.length > 0
         ? entry(conversationRef(facts.conversationId, 'history'), 'client')
         : [];
 
-    case 'summary':
+    case 'summary': {
+      const given = facts.supplied?.summary;
+      // The version is how far the note reaches: it is made from the messages up to there.
+      if (given !== undefined) {
+        return [
+          {
+            ref: conversationRef(facts.conversationId, 'summary'),
+            version: String(given.through),
+            digest: given.digest,
+            ...shown,
+            status: 'included',
+            origin: 'server',
+            via: 'input'
+          }
+        ];
+      }
       return typeof value === 'string' && value.trim() !== ''
         ? entry(conversationRef(facts.conversationId, 'summary'), 'client')
         : [];
+    }
 
     case 'offerText':
       if (typeof value !== 'string' || value.trim() === '') return [];

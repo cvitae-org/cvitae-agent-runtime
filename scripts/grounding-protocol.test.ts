@@ -26,7 +26,7 @@
  *   what it hands out plain data; a store a host can read and cannot write
  *
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
- * tests counted, and the mutation reverted. 21 were applied and every one broke
+ * tests counted, and the mutation reverted. 23 were applied and every one broke
  * at least one test. The number is how many tests failed.
  *
  * the feature flag:
@@ -34,6 +34,8 @@
  *   the feature is the only one listed             1
  *   the feature is listed twice                    1
  *   the selection feature is not listed            1
+ *   the history feature is not listed              1
+ *   the history feature is listed twice            1
  *
  * the payload:
  *   the channel takes more than a run id           1
@@ -183,6 +185,7 @@ test('the feature is listed once, and the ones before it are still listed', asyn
 
     assert.equal(features.filter((feature) => feature === 'grounding-record').length, 1);
     assert.equal(features.filter((feature) => feature === 'grounding-selection').length, 1);
+    assert.equal(features.filter((feature) => feature === 'grounding-history').length, 1);
     assert.ok(features.includes('provider-connection-test-v1'), 'the list was replaced, not added to');
     assert.ok(features.includes('cv-contexts'));
   } finally {

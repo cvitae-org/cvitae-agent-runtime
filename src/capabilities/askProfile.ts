@@ -127,6 +127,10 @@ export const askProfile: Capability<AskProfileInput> = {
     "Answer an open-ended question about the user's CV and work history, searching as needed.",
   input: inputSchema,
 
+  // Says what it sends to the model, and so is one whose answers can be traced
+  // (`runtime/history.ts`).
+  recorded: true,
+
   /**
    * The plan is declared here like every other capability's. One stage, one
    * step, and the only thing a model decides is which tools go into it.

@@ -13,6 +13,8 @@
 
 import { PROCESS_INTERRUPTED, RECORD_VERSION } from '../../contracts/index.js';
 import type {
+  ConversationRecord,
+  ConversationRecords,
   EntryOrigin,
   EntryStatus,
   GroundingRecord,
@@ -128,7 +130,21 @@ const toEntry = (row: EntryRow): RecordEntry => ({
   via: row.via
 });
 
-export const createRecordStore = (db: Db): RecordStore => {
+type ConversationRecordRow = RecordRow & { capability: string | null };
+type ConversationEntryRow = EntryRow & { run_id: string };
+
+const toRecord = (row: RecordRow, entries: RecordEntry[]): GroundingRecord => ({
+  v: row.v as typeof RECORD_VERSION,
+  runId: row.run_id,
+  conversationId: row.conversation_id,
+  state: row.state as RecordState,
+  ...(row.outcome === null ? {} : { outcome: row.outcome as RecordOutcome }),
+  openedAt: row.opened_at,
+  ...(row.closed_at === null ? {} : { closedAt: row.closed_at }),
+  entries
+});
+
+export const createRecordStore = (db: Db): RecordStore & ConversationRecords => {
   /**
    * The state check is part of the insert, not a read before it. A statement
    * that tests "is the record open" and writes in one step cannot be overtaken
@@ -174,20 +190,39 @@ export const createRecordStore = (db: Db): RecordStore => {
     const row = selectRecord.get(runId) as RecordRow | undefined;
     if (!row) return undefined;
 
-    return {
-      v: row.v as typeof RECORD_VERSION,
-      runId: row.run_id,
-      conversationId: row.conversation_id,
-      state: row.state as RecordState,
-      ...(row.outcome === null ? {} : { outcome: row.outcome as RecordOutcome }),
-      openedAt: row.opened_at,
-      ...(row.closed_at === null ? {} : { closedAt: row.closed_at }),
-      entries: (selectEntries.all(runId) as EntryRow[]).map(toEntry)
-    };
+    return toRecord(row, (selectEntries.all(runId) as EntryRow[]).map(toEntry));
+  });
+
+  // The run is joined for its capability only. A record whose run has gone has
+  // none, and the caller reads that as not knowing what the run was.
+  const selectConversation = db.prepare<[string]>(
+    `SELECT g.*, r.capability AS capability
+       FROM grounding_record g LEFT JOIN runs r ON r.id = g.run_id
+      WHERE g.conversation_id = ? ORDER BY g.opened_at, g.run_id`
+  );
+  const selectConversationEntries = db.prepare<[string]>(
+    `SELECT e.run_id, e.ref, e.version, e.digest, e.shown, e.status, e.origin, e.via
+       FROM grounding_entry e JOIN grounding_record g ON g.run_id = e.run_id
+      WHERE g.conversation_id = ? ORDER BY e.id`
+  );
+
+  const readConversation = db.transaction((conversationId: string): ConversationRecord[] => {
+    const entries = new Map<string, RecordEntry[]>();
+    for (const row of selectConversationEntries.all(conversationId) as ConversationEntryRow[]) {
+      const held = entries.get(row.run_id) ?? [];
+      held.push(toEntry(row));
+      entries.set(row.run_id, held);
+    }
+
+    return (selectConversation.all(conversationId) as ConversationRecordRow[]).map((row) => ({
+      record: toRecord(row, entries.get(row.run_id) ?? []),
+      ...(row.capability === null ? {} : { capability: row.capability })
+    }));
   });
 
   return {
     append: (runId, entries) => (entries.length === 0 ? 0 : appendAll(runId, entries)),
-    read: (runId) => readAll(runId)
+    read: (runId) => readAll(runId),
+    byConversation: (conversationId) => readConversation(conversationId)
   };
 };

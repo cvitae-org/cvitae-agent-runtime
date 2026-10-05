@@ -20,6 +20,7 @@ import * as emit from '../events/emit.js';
 import { CvContextError, OperationError, RuntimeError, isRunSuspension } from '../contracts/index.js';
 import { createRecorder, recordingDocuments, recordingRetrieval } from './grounding.js';
 import type { Grounding } from './grounding.js';
+import type { HistorySupplier } from './history.js';
 import { wallPorts } from './walls.js';
 import type {
   AiLogger,
@@ -35,6 +36,7 @@ import type {
   SelectionStore,
   StepDelta,
   StepOutcome,
+  SuppliedHistory,
   ToolRegistry,
   Walls
 } from '../contracts/index.js';
@@ -76,6 +78,11 @@ export type RuntimeDeps = {
    * read. Absent means nothing is excluded from any run, as before selections.
    */
   readonly selection?: Pick<SelectionStore, 'walls'>;
+  /**
+   * Keeps the conversation of a run whose host sent none. Absent means a run is
+   * given the history and summary it was sent, and nothing else, as before.
+   */
+  readonly history?: HistorySupplier;
   readonly finish?: (runId: string, result: RunResult, commit: (result: RunResult) => void) => RunResult;
   readonly capabilities: CapabilityMap;
   readonly runs: RunStore;
@@ -134,6 +141,28 @@ export const scopedDeps = (deps: RuntimeDeps, contextId?: string, conversationId
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
+/**
+ * The input a run is planned and run from: the one it was validated to, with the
+ * conversation put in when the runtime keeps it (`history.ts`).
+ *
+ * The stored input is never this one. A run's identity is its input as validated,
+ * and a retry of the same request has to find the same run whatever the
+ * conversation has grown by since. Shared with `resume.ts`, which reads the
+ * conversation again: a run that waited for a person is given what the
+ * conversation holds now, exclusions made while it waited included.
+ */
+export const givenInput = (
+  deps: Pick<RuntimeDeps, 'history'>,
+  capability: string,
+  conversationId: string | undefined,
+  runId: string,
+  input: Readonly<Record<string, unknown>>
+): { readonly input: Readonly<Record<string, unknown>>; readonly supplied?: SuppliedHistory } => {
+  const made =
+    conversationId === undefined ? undefined : deps.history?.supply({ capability, conversationId, runId, input });
+  return made === undefined ? { input } : made;
+};
+
 export const buildRunContext = (
   deps: RuntimeDeps,
   fields: {
@@ -148,7 +177,9 @@ export const buildRunContext = (
     input: Readonly<Record<string, unknown>>;
     signal: AbortSignal;
     deadlineAt: number;
-  }
+  },
+  /** What `fields.input` holds as the conversation, when the runtime put it there. */
+  supplied?: SuppliedHistory
 ): RunContext => {
   // Only a run that belongs to a conversation has a record, and building the
   // sink reads nothing: the record is first touched by the first step that has
@@ -161,7 +192,8 @@ export const buildRunContext = (
           conversationId: fields.conversationId,
           ...(fields.contextId === undefined ? {} : { contextId: fields.contextId }),
           ...(deps.offerId === undefined ? {} : { offerId: deps.offerId }),
-          input: fields.input
+          input: fields.input,
+          ...(supplied === undefined ? {} : { supplied })
         });
 
   // What the conversation has excluded, read at every access. Only a run that is
@@ -288,23 +320,27 @@ export const beginRun = (deps: RuntimeDeps, request: RunRequest): RunHandle => {
   const checkpoint = createCheckpointer(deps.runs, runId, now);
   checkpoint.started(deps.effects.ai.describe());
 
-  const context = buildRunContext(bound, {
-    ...(request.offerSnapshotId === undefined ? {} : { offerSnapshotId: request.offerSnapshotId }),
-      ...(request.contextId === undefined ? {} : { contextId: request.contextId }),
-      ...(bound.contextGeneration === undefined ? {} : { contextGeneration: bound.contextGeneration }),
-      ...(bound.contextRevision === undefined ? {} : { contextRevision: bound.contextRevision }),
-    ...(request.conversationId === undefined ? {} : { conversationId: request.conversationId }),
-    runId,
-    traceId,
-    capability: capability.name,
-    input,
-    signal: request.signal ?? new AbortController().signal,
-    deadlineAt
-  });
-
   const settled = (async (): Promise<RunResult> => {
     try {
-      const plan = await makePlan(capability, input, context);
+      // Read here and not before the run row exists: a conversation that cannot
+      // be read is a failure of this run, which has an id by now to say so with.
+      const given = givenInput(bound, capability.name, request.conversationId, runId, input);
+
+      const context = buildRunContext(bound, {
+        ...(request.offerSnapshotId === undefined ? {} : { offerSnapshotId: request.offerSnapshotId }),
+        ...(request.contextId === undefined ? {} : { contextId: request.contextId }),
+        ...(bound.contextGeneration === undefined ? {} : { contextGeneration: bound.contextGeneration }),
+        ...(bound.contextRevision === undefined ? {} : { contextRevision: bound.contextRevision }),
+        ...(request.conversationId === undefined ? {} : { conversationId: request.conversationId }),
+        runId,
+        traceId,
+        capability: capability.name,
+        input: given.input,
+        signal: request.signal ?? new AbortController().signal,
+        deadlineAt
+      }, given.supplied);
+
+      const plan = await makePlan(capability, given.input, context);
 
       const result = await executePlan(plan, context, {
         checkpoint,
