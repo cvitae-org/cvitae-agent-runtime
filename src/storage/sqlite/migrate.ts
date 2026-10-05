@@ -1,3 +1,4 @@
+import { discoveryTurnScope0042 } from './migrations/0042-discovery-turn-scope.js';
 import { groundingSelection0041 } from './migrations/0041-grounding-selection.js';
 import { groundingRecord0040 } from './migrations/0040-grounding-record.js';
 import { boardChatRemoval0039 } from './migrations/0039-board-chat-removal.js';
@@ -95,7 +96,8 @@ export const migrations: readonly Migration[] = [
   { version: 38, sql: indexParking0038 },
   { version: 39, sql: boardChatRemoval0039 },
   { version: 40, sql: groundingRecord0040 },
-  { version: 41, sql: groundingSelection0041 }
+  { version: 41, sql: groundingSelection0041 },
+  { version: 42, sql: discoveryTurnScope0042 }
 ];
 
 export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.version), 0);

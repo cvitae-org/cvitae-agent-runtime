@@ -611,9 +611,9 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs })
   };
 
-  const discoveryChatStore = createDiscoveryChatStore(db, conversations, options.now, offerQueryStore);
+  const discoveryChatStore = createDiscoveryChatStore(db, conversations, options.now, offerQueryStore, (conversationId) => selectionStore.walls(conversationId));
   const discoveryChat = createDiscoveryChatService(discoveryChatStore, (scope, signal, onText) => beginRun({
-    ...bindDiscoveryScope(deps), timeoutMs: Math.min(options.timeoutMs ?? 120000,120000), capabilities: { ask_discovery: askDiscoverySql(scope, createDiscoverySqlPort(offerQueries, offerQueryStore, discoveryChatStore.recordSql, factPort, collectionPort)) },
+    ...bindDiscoveryScope(deps), timeoutMs: Math.min(options.timeoutMs ?? 120000,120000), capabilities: { ask_discovery: askDiscoverySql(scope, createDiscoverySqlPort(offerQueries, offerQueryStore, discoveryChatStore.recordSql, factPort, collectionPort, discoveryChatStore.scope)) },
     deltas: (delta) => { onText(delta.text); deps.deltas?.(delta); },
     finish: (runId,result,commit) => {
       if (signal.aborted) throw new RuntimeError('Cancelled','aborted');
@@ -633,7 +633,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
 
   const factPort=createFactPort(offerQueryStore,createOfferFactStore(db),(id,signal)=>enrichment.details.ensure(id,false,signal),()=>environment.env.LOCAL_BASE_URL?.trim()??'default');
 
-  const collectionPort=createCollectionPort(discovery,discoverySearches,offerQueryStore,(id,signal)=>enrichment.details.ensure(id,false,signal));
+  const collectionPort=createCollectionPort(discovery,discoverySearches,offerQueryStore,(id,signal)=>enrichment.details.ensure(id,false,signal),undefined,(searchId)=>discoveryChatStore.excluded(searchId));
 
   const detailQueue = createDetailQueue(createDetailQueueStore(db), enrichment, discoverySearches);
 

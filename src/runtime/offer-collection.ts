@@ -7,7 +7,7 @@ import type { createDiscoverySearchStore } from '../storage/sqlite/discovery-sea
 import type { OfferQueryStore } from '../storage/sqlite/offer-query-store.js';
 
 /** Uses existing ingestion and published-details paths; no canonical AI analysis. */
-export function createCollectionPort(discovery:ReturnType<typeof createDiscoveryService>,searches:ReturnType<typeof createDiscoverySearchStore>,queries:OfferQueryStore,fetchDetails:(id:string,signal:AbortSignal)=>Promise<unknown>,timing={searchMs:limits.deadlineMs as number,detailsMs:limits.detailDeadlineMs as number}):NonNullable<DiscoverySqlPort['collection']> {
+export function createCollectionPort(discovery:ReturnType<typeof createDiscoveryService>,searches:ReturnType<typeof createDiscoverySearchStore>,queries:OfferQueryStore,fetchDetails:(id:string,signal:AbortSignal)=>Promise<unknown>,timing={searchMs:limits.deadlineMs as number,detailsMs:limits.detailDeadlineMs as number},excluded?:(searchId:string)=>ReadonlySet<string>):NonNullable<DiscoverySqlPort['collection']> {
  return {
   defaults:id=>{const s=searches.get(id);return {phrase:s.phrase,boards:s.boards};},
   async run(context,keyword,signal,progress) {
@@ -79,7 +79,8 @@ export function createCollectionPort(discovery:ReturnType<typeof createDiscovery
    if(coverage.detailsUnavailable) {coverage.partial=true;coverage.limitations.push('published_details_incomplete');}
    coverage.status='complete';progress(structuredClone(coverage));
    const scope={kind:'search' as const,searchId:owner};
-   const snapshot=await queries.capture(owner,scope,signal);
+   // What the conversation excludes stays out of the scope however it came back into the search.
+   const without=excluded?.(owner), snapshot=await queries.capture(owner,scope,signal,undefined,without?.size ? without : undefined);
    return {...context,collection:coverage,scopeCount:queries.members(owner,snapshot.id).length,revision:searches.get(owner).revision,capturedMembers:undefined,evidence:[],sqlArtifact:undefined,
     queryContext:{scope,snapshotId:snapshot.id,scopeRevision:snapshot.fingerprint!},
     limitations:[...(context.limitations??[]),'Collection covers only the listed source requests and their adapter coverage, never the entire job market. Final SQL includes previously saved offers as well as collected offers. Published fetching may reuse cached details.']};

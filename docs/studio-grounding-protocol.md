@@ -143,8 +143,9 @@ unrecorded.
   and the question. It never carries the CV or a posting, and a test says so,
   but it is not in the record.
 - The user's question itself, and the photograph.
-- Discovery chat, board and enrichment runs. They have no conversation, so they
-  have no record.
+- Discovery chat, board and enrichment runs. They have no `runs.grounding`
+  record. A discovery turn keeps what it was built from in the turn itself, and
+  that is what exclusions are checked against (see "The discovery chat").
 - History and summary the app sends are listed with origin `client` and are
   outside the guarantee. The runtime keeps its own when the app sends none.
 
@@ -285,8 +286,7 @@ Things the walls do not cover yet:
 - History and summary the app sends in the request. They stay outside the
   guarantee, listed with origin `client` in the record. Send none and the
   runtime keeps them (next section).
-- Discovery conversations: exclusions of saved offers are stored and returned,
-  but the discovery chat does not honour them yet.
+- Discovery conversations are covered by their own rules, below.
 
 ## The conversation the runtime keeps
 
@@ -330,6 +330,43 @@ It applies to `ask_profile`. An input with a non-empty `history` or a non-blank
 - The stored run input is what the app sent. The history the runtime put in is
   not stored with it.
 
+## The discovery chat
+
+A discovery conversation excludes whole saved offers (`offers:<offer id>`) with
+`selection.update`, like any conversation. A runtime that lists
+`grounding-history` in `protocol.get` honours them in the discovery chat. One
+that does not still stores and returns them, and the chat ignores them: show no
+offer toggle without the flag.
+
+- A question is accepted over the offers of its scope less the excluded ones.
+  They are not counted (`scopeCount`), not retrieved, and not in the snapshot the
+  model's SQL runs over. When something was cut, that snapshot is not the one
+  `snapshotId` named in the request: the artifact of the answer carries the
+  snapshot that was queried, and the SQL editor opens that one.
+- A collection that finds an excluded offer again leaves it out of the scope it
+  captures. The counts of what the boards returned (`added`, `received`) are
+  counts of the boards, and include it.
+- The chat already kept its own history: up to six earlier messages, and the
+  references of the last answer. Now a message is left out of what the model is
+  given when its answer is withheld: its scope held an excluded offer, or it was
+  given an answer that is withheld, however far back. An answer is judged by its
+  scope and not by the offers its text names: an aggregate carries every offer it
+  counted without naming one. The messages stay in the conversation and in what
+  `discovery.chat.get` returns, and come back for the model when the exclusion is
+  cleared.
+- What cannot be traced is withheld as long as anything is excluded: a message
+  with no run, an answer whose run has no turn, and a turn made before this
+  version that collected offers (what it collected was not written down). A turn
+  made before this version is taken to have been given the six messages before
+  it. With nothing excluded, history is what it was.
+- It is read when the question is accepted. An exclusion made while a turn runs
+  reaches the next turn; the turn running may already have its scope.
+- The SQL editor is not walled. It runs the person's own SQL over their own saved
+  offers, and no model sees what it returns.
+- `runs.grounding` has no entry for a discovery turn. The turn's membership
+  (every offer its queries could read, including what it collected) and the runs
+  whose messages it was given are stored with it.
+
 ## Suggested exclude toggles
 
 1. Check `grounding-selection` in `protocol.get`.
@@ -348,3 +385,9 @@ It applies to `ask_profile`. An input with a non-empty `history` or a non-blank
    `conversations.summarise` as before. Say plainly that an earlier answer is
    left out of the conversation when an exclusion reaches it, and that it comes
    back when the exclusion is cleared.
+8. In a discovery conversation, with `grounding-history`, an exclude toggle per
+   saved offer. An exclusion that shows `gone` (the offer was removed from the
+   search or deleted) should say so, since the runtime keeps no versions: an
+   offer's key is its id, and an offer saved again under a new id is not
+   excluded. Earlier answers stay on screen. Say that the model no longer sees
+   the ones built on an excluded offer.
