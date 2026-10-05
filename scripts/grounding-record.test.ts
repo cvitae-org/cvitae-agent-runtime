@@ -38,9 +38,83 @@
  * posting, and one test below holds it to that.
  *
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
- * tests counted, and the mutation reverted. The number is how many tests failed.
+ * tests counted, and the mutation reverted. 59 were applied and every one broke
+ * at least one test. The number is how many tests failed.
  *
- * (table filled in after the run)
+ * the executor, what a step says it sends and when:
+ *   an extract step sends nothing                  1
+ *   a generate step sends nothing                  1
+ *   a tool loop sends nothing                      11
+ *   the executor never reports what a step sends   13
+ *   a generate step says what it sends before it knows it will send 1
+ *   a tool loop says what it sent after the call   6
+ *   a step that cannot say what it sends goes on   4
+ *   a tool is not handed the sink                  5
+ *   a recorded run is given a longer prompt        4
+ *
+ * ask_profile, the fields it names and what the model saw of them:
+ *   the history is not named                       6
+ *   the summary is not named                       4
+ *   the posting is not named                       3
+ *   what the model saw of the summary is not said  1
+ *   what the model saw of the posting is not said  1
+ *   the summary said to be shown is the one given  1
+ *   the posting said to be shown is the one given  1
+ *   the posting is said to be cut shorter than it was 1
+ *   the model is shown more of the posting than is said 1
+ *   the model is handed less history than is recorded 1
+ *   an excerpt keeps the whitespace around it      2
+ *
+ * read_cv:
+ *   read_cv says nothing                           3
+ *   read_cv says what it selected and not what it returned 1
+ *   read_cv says another revision                  3
+ *   read_cv says it was asked for the first page   1
+ *   read_cv says another channel                   3
+ *   read_cv hands over what it could not say it handed over 1
+ *
+ * search_profile:
+ *   search says nothing                            3
+ *   search says every passage it found and not those that fit 1
+ *   search says its passages were only read        3
+ *   search says it was another tool                3
+ *   search says a passage is the whole piece       3
+ *   search says another revision                   3
+ *   search says nothing it cannot say it handed over 1
+ *
+ * the run context:
+ *   a run in no conversation is given a sink       3
+ *   a runtime with no store is given a sink        2
+ *   the documents port is not wrapped              6
+ *   the retrieval port is not wrapped              3
+ *   passages are placed through the recording port 2
+ *   the sink is not part of the context            19
+ *   the sink is told no context                    7
+ *   the sink is told no offer                      4
+ *   the sink is told another run                   14
+ *   the sink is told another conversation          10
+ *   the sink is told no input                      10
+ *   a run that is cancelled is recorded as failed  1
+ *   a run parked for a person is recorded as failed 1
+ *
+ * the production runtime:
+ *   the production runtime keeps no records        1
+ *   a snapshot run is not bound to its offer       1
+ *   a snapshot run is bound to its conversation as the offer 1
+ *
+ * the recorder seen from a whole run:
+ *   a blank summary is sent                        1
+ *   an empty history is sent                       8
+ *   a field nothing addresses is ignored           3
+ *   the book is shared between runs                11
+ *   a failed use keeps the book it had             2
+ *   a record that was started is not read back when the run resumes 1
+ *
+ * the store seen from a whole run:
+ *   a run that was cancelled leaves a record that says it failed 1
+ *   a run parked for a person leaves a closed record 1
+ *   a run that is going again leaves a record that stays suspended 14
+ *   a run whose process died leaves a record that says it failed 1
  */
 
 import assert from 'node:assert/strict';
