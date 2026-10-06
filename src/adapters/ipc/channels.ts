@@ -429,12 +429,18 @@ export const payloads = {
    * `cv:<context>/experience/acme~engineer`. A change made against a revision
    * that is no longer current is refused as `selection_conflict` and carries the
    * current selection, so a window reloads and offers the change again.
+   *
+   * `pin` and `unpin` keep a section or an entry of the CV in every message of
+   * the conversation, or stop doing so. They belong to the same selection and the
+   * same revision, so one change may carry both.
    */
   'selection.update': z.object({
     conversationId,
     expectedRevision: z.number().int().min(0),
     exclude: z.array(z.string().min(1).max(1024)).max(50).default([]),
-    clear: z.array(z.string().min(1).max(1024)).max(50).default([])
+    clear: z.array(z.string().min(1).max(1024)).max(50).default([]),
+    pin: z.array(z.string().min(1).max(1024)).max(50).default([]),
+    unpin: z.array(z.string().min(1).max(1024)).max(50).default([])
   }).strict()
 } as const;
 

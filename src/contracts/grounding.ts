@@ -45,11 +45,14 @@ export const RECORD_VERSION = 1;
  *   read      the run read it through a port. Whether, and in what form, it
  *             reached the model is not known.
  *
- * Later steps add values (`compact`, `omitted`, `blocked`). A reader that meets
- * a status it does not know must treat the entry as one that did not reach the
- * model.
+ *   blocked   something asked for the piece (a pin, an attachment) and an
+ *             exclusion held it back. Nothing of it was read or sent, so its
+ *             digest is the digest of its address and says nothing of the piece.
+ *
+ * Later steps add values (`compact`, `omitted`). A reader that meets a status it
+ * does not know must treat the entry as one that did not reach the model.
  */
-export const ENTRY_STATUSES = ['included', 'read'] as const;
+export const ENTRY_STATUSES = ['included', 'read', 'blocked'] as const;
 export type EntryStatus = (typeof ENTRY_STATUSES)[number];
 
 /**
@@ -181,6 +184,33 @@ export type SentField = {
 };
 
 /**
+ * What a `ground` step hands to the step after it: the blocks it rendered, and the
+ * entries that say what is in them.
+ *
+ * Both are made by one function, so the record cannot say a piece was sent that
+ * the text does not carry. The step that sends the text names the step that made
+ * it (`Sends.groundedFrom`), and the entries are recorded as that call goes out,
+ * which is the moment they become true.
+ */
+export type Grounded = {
+  /** The blocks as the model reads them, with no heading. Empty when nothing was assembled. */
+  readonly text: string;
+  /** One `included` entry for each piece in `text`, in the order its block comes. */
+  readonly entries: readonly RecordEntry[];
+  /** Refs asked for and held back by an exclusion. Already recorded as `blocked`. */
+  readonly blocked: readonly string[];
+  /** Refs asked for that nothing carries now: a renamed entry, or a document with no such section. */
+  readonly gone: readonly string[];
+  /** Refs the runtime would add, when `auto` is `suggest`. Never in `text`. */
+  readonly suggested: readonly string[];
+  /** `failed` when `auto` was asked for and the search it needs did not answer. */
+  readonly auto?: 'failed';
+};
+
+/** The key a `ground` step's value is kept under. */
+export const GROUNDED = 'grounded';
+
+/**
  * What a running step or tool uses to say what it was given or read.
  *
  * Present on a run's context only when the run belongs to a conversation, since
@@ -199,14 +229,17 @@ export interface RecordSink {
 /* ---------------------------------------------------------------- selections */
 
 /**
- * What a person has asked for of a conversation's data: so far only to leave
- * something out.
+ * What a person has asked for of a conversation's data: to leave something out,
+ * and to keep something in every message.
  *
  * A selection names a piece by its address with no version and no digest, so it
  * follows the live revision: an edit to an excluded section does not lift the
- * exclusion, and a new item added to it is covered too. The refs are held in
- * their canonical text form, which is what a host sends and what a wall is made
- * from (`grounding/walls.ts`).
+ * exclusion, a new item added to it is covered too, and a pinned piece is sent as
+ * it reads at the next message. The refs are held in their canonical text form,
+ * which is what a host sends and what a wall is made from (`grounding/walls.ts`).
+ *
+ * An exclusion beats a pin. A pin the walls cover stays in the selection and is
+ * not sent, and the host says it is blocked.
  */
 export type Selection = {
   readonly conversationId: string;
@@ -219,6 +252,8 @@ export type Selection = {
   readonly revision: number;
   /** Canonical refs, in the order they were excluded. */
   readonly exclude: readonly string[];
+  /** Canonical refs, in the order they were pinned. */
+  readonly pin: readonly string[];
 };
 
 export type SelectionChange = {
@@ -228,10 +263,20 @@ export type SelectionChange = {
   readonly exclude: readonly string[];
   /** Refs to stop excluding. One that is not excluded is left as it is. */
   readonly clear: readonly string[];
+  /** Refs to pin. One already pinned is left as it is. Absent is none. */
+  readonly pin?: readonly string[];
+  /** Refs to stop pinning. One that is not pinned is left as it is. Absent is none. */
+  readonly unpin?: readonly string[];
 };
 
 /** The most a conversation may exclude. A person with more than this has excluded the wrong level. */
 export const MAX_EXCLUSIONS = 100;
+
+/**
+ * The most a conversation may pin. What a pin sends is bounded by a budget as
+ * well (`context/ground.ts`); this bounds the list a person has to keep in view.
+ */
+export const MAX_PINS = 20;
 
 /**
  * What a run may not reach, asked for at the moment of reaching.
@@ -244,6 +289,15 @@ export interface Walls {
   pieces(): readonly PieceRef[];
 }
 
+/**
+ * What a run is to carry in every message of its conversation, asked for when the
+ * message is prepared and not before, so a pin made while a run waited counts when
+ * it goes on. Present on the same runs as `Walls`.
+ */
+export interface Pins {
+  pieces(): readonly PieceRef[];
+}
+
 export interface SelectionStore {
   /** A conversation with nothing selected reads as revision 0 and no refs. */
   read(conversationId: string): Selection;
@@ -253,9 +307,9 @@ export interface SelectionStore {
    * nothing is written, `applied` is false and `selection` is what is current.
    * A change that changes nothing does not move the revision.
    *
-   * The refs are stored as given: whether a conversation may exclude them is the
-   * caller's to have checked. Throws `selection_limit` when the result would hold
-   * more than `MAX_EXCLUSIONS`.
+   * The refs are stored as given: whether a conversation may exclude or pin them
+   * is the caller's to have checked. Throws `selection_limit` when the result
+   * would hold more than `MAX_EXCLUSIONS` exclusions or `MAX_PINS` pins.
    */
   change(
     conversationId: string,
@@ -264,4 +318,7 @@ export interface SelectionStore {
 
   /** The walls a run is to honour now, read from the file each time it is asked. */
   walls(conversationId: string): readonly PieceRef[];
+
+  /** The pieces a run is to carry now, read from the file each time it is asked. */
+  pins(conversationId: string): readonly PieceRef[];
 }

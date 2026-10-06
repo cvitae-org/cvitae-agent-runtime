@@ -119,7 +119,11 @@ import { scratch } from './support/db.js';
 
 /* ---------------------------------------------------------------- fixtures */
 
-type View = { revision: number; exclusions: { ref: string; state: 'live' | 'gone' }[] };
+type View = {
+  revision: number;
+  exclusions: { ref: string; state: 'live' | 'gone' }[];
+  pins: { ref: string; state: 'live' | 'gone' | 'blocked' }[];
+};
 
 const data = <T>(response: Response): T => {
   assert.ok(response.ok, `expected ok, got ${JSON.stringify(response)}`);
@@ -172,7 +176,7 @@ const world = () => {
     ref: (...path: string[]) => `cv:${cv.id}${path.map((segment) => `/${segment}`).join('')}`,
     get: async (conversationId = chat.id) => data<View>(await dispatch('selection.get', { conversationId })),
     update: (
-      change: { expectedRevision: number; exclude?: string[]; clear?: string[] },
+      change: { expectedRevision: number; exclude?: string[]; clear?: string[]; pin?: string[]; unpin?: string[] },
       conversationId = chat.id
     ) => dispatch('selection.update', { conversationId, ...change }),
     /** Closes the harness and opens another over the same file, as a restart does. */
@@ -231,7 +235,7 @@ test('the channels take exactly their fields', async () => {
       assert.equal(refused(await w.dispatch('selection.update', payload)).code, 'invalid_input', JSON.stringify(payload));
     }
 
-    assert.deepEqual(await w.get(), { revision: 0, exclusions: [] }, 'a refused payload changed something');
+    assert.deepEqual(await w.get(), { revision: 0, exclusions: [], pins: [] }, 'a refused payload changed something');
   } finally {
     w.dispose();
   }
@@ -241,7 +245,7 @@ test('nothing selected reads as revision 0, and a conversation that is not there
   const w = world();
 
   try {
-    assert.deepEqual(await w.get(), { revision: 0, exclusions: [] });
+    assert.deepEqual(await w.get(), { revision: 0, exclusions: [], pins: [] });
 
     assert.equal(refused(await w.dispatch('selection.get', { conversationId: 'nope' })).code, 'not_found');
     assert.equal(refused(await w.update({ expectedRevision: 0, exclude: [w.ref()] }, 'nope')).code, 'not_found');
@@ -260,7 +264,8 @@ test('exclude and clear: refs come back in the order they were excluded, and one
       exclusions: [
         { ref: w.ref('education'), state: 'live' },
         { ref: w.ref('experience', 'acme~engineer'), state: 'live' }
-      ]
+      ],
+      pins: []
     });
 
     const second = data<View>(await w.update({ expectedRevision: 1, exclude: [w.ref('overview', 'personal')] }));
@@ -303,7 +308,7 @@ test('a change that changes nothing does not move the revision', async () => {
     assert.equal(empty.revision, 1, 'a change with nothing in it');
 
     const cleared = data<View>(await w.update({ expectedRevision: 1, clear: [w.ref('education')] }));
-    assert.deepEqual(cleared, { revision: 2, exclusions: [] });
+    assert.deepEqual(cleared, { revision: 2, exclusions: [], pins: [] });
   } finally {
     w.dispose();
   }
@@ -320,8 +325,8 @@ test('a change against a revision that is no longer current writes nothing and c
     const error = refused(stale);
 
     assert.equal(error.code, 'selection_conflict');
-    assert.deepEqual(error.details, { revision: 1, exclusions: [{ ref: w.ref('education'), state: 'live' }] });
-    assert.deepEqual(await w.get(), { revision: 1, exclusions: [{ ref: w.ref('education'), state: 'live' }] });
+    assert.deepEqual(error.details, { revision: 1, exclusions: [{ ref: w.ref('education'), state: 'live' }], pins: [] });
+    assert.deepEqual(await w.get(), { revision: 1, exclusions: [{ ref: w.ref('education'), state: 'live' }], pins: [] });
 
     // A revision from the future is just as stale.
     assert.equal(refused(await w.update({ expectedRevision: 5, exclude: [w.ref('languages')] })).code, 'selection_conflict');
@@ -420,7 +425,7 @@ test('a ref that is not a ref, or names no well, is refused with its own code', 
     assert.equal(refused(await w.update({ expectedRevision: 0, exclude: [`${w.ref('experience')}/a/b`] })).code, 'invalid_ref');
     assert.equal(refused(await w.update({ expectedRevision: 0, exclude: ['tickets:desk/open'] })).code, 'unknown_well');
     assert.equal(refused(await w.update({ expectedRevision: 0, clear: ['not a ref'] })).code, 'invalid_ref');
-    assert.deepEqual(await w.get(), { revision: 0, exclusions: [] });
+    assert.deepEqual(await w.get(), { revision: 0, exclusions: [], pins: [] });
   } finally {
     w.dispose();
   }
@@ -451,7 +456,7 @@ test('a discovery conversation excludes whole saved offers, and an offer convers
     const offerId = randomUUID();
 
     const view = data<View>(await w.update({ expectedRevision: 0, exclude: [`offers:${offerId}`] }, discovery.id));
-    assert.deepEqual(view, { revision: 1, exclusions: [{ ref: `offers:${offerId}`, state: 'gone' }] });
+    assert.deepEqual(view, { revision: 1, exclusions: [{ ref: `offers:${offerId}`, state: 'gone' }], pins: [] });
 
     for (const ref of [`offers:${offerId}/posting`, w.ref('experience'), `preferences:${offerId}`]) {
       assert.equal(
@@ -469,7 +474,7 @@ test('a discovery conversation excludes whole saved offers, and an offer convers
         `an offer conversation accepted ${ref}`
       );
     }
-    assert.deepEqual(await w.get(offer.id), { revision: 0, exclusions: [] });
+    assert.deepEqual(await w.get(offer.id), { revision: 0, exclusions: [], pins: [] });
   } finally {
     w.dispose();
   }
@@ -489,7 +494,7 @@ test('an exclusion that is no longer allowed can still be cleared', async () => 
     assert.equal((await w.get()).exclusions.length, 1);
 
     const cleared = data<View>(await w.update({ expectedRevision: 1, clear: ['offers:left-behind'] }));
-    assert.deepEqual(cleared, { revision: 2, exclusions: [] });
+    assert.deepEqual(cleared, { revision: 2, exclusions: [], pins: [] });
   } finally {
     w.dispose();
   }
@@ -557,7 +562,7 @@ test('one conversation excluding something does not exclude it from another', as
     const second = w.harness.conversations.create({ kind: 'profile', id: w.cv.id });
     data(await w.update({ expectedRevision: 0, exclude: [w.ref('education')] }));
 
-    assert.deepEqual(await w.get(second.id), { revision: 0, exclusions: [] });
+    assert.deepEqual(await w.get(second.id), { revision: 0, exclusions: [], pins: [] });
     assert.equal(w.harness.conversations.read(second.id)?.conversation.id, second.id);
   } finally {
     w.dispose();
@@ -599,7 +604,7 @@ test('the migration adds the tables and leaves a conversation from before it wit
       (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'grounding_selection%' ORDER BY name").all() as { name: string }[]).map((row) => row.name),
       ['grounding_selection', 'grounding_selection_revision']
     );
-    assert.deepEqual(createSelectionStore(db).read(old.id), { conversationId: old.id, revision: 0, exclude: [] });
+    assert.deepEqual(createSelectionStore(db).read(old.id), { conversationId: old.id, revision: 0, exclude: [], pin: [] });
     assert.deepEqual(db.pragma('foreign_key_check'), []);
   } finally {
     db.close();
