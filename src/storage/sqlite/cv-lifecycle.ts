@@ -1,15 +1,63 @@
-import { CvContextError } from '../../contracts/index.js';
-import type { CvContextStore, CvLifecycle, CvProposalBase, DocumentBody, DocumentRecord, DocumentStore, ChunkIndex, StoredCvProposal, CvClearResult } from '../../contracts/index.js';
+import { CvContextError, OperationError } from '../../contracts/index.js';
+import type { CvContextStore, CvLifecycle, CvProposalBase, CvProposalDetails, DocumentBody, DocumentChange, DocumentRecord, DocumentStore, DocumentValue, ChunkIndex, StoredCvProposal, CvClearResult } from '../../contracts/index.js';
+import { ChangesDoNotApply, applyCv, cvChangesSchema, outside, same, touched } from '../../capabilities/cv/diff.js';
+import { asCvDocument } from '../../capabilities/cv/document.js';
+import { sectionOf } from '../../capabilities/cv/target.js';
 import type { Db } from './open.js';
 
 type Row = {
   id: string; context_id: string; base_revision: number; generation: number;
   document: string; status: StoredCvProposal['status']; accepted_record: string | null; created_at: number;
+  target: string | null; changes: string | null;
 };
 const fromRow = (row: Row): StoredCvProposal => ({
   id: row.id, base: { contextId: row.context_id, revision: row.base_revision, generation: row.generation },
-  document: JSON.parse(row.document) as DocumentBody, status: row.status, createdAt: row.created_at
+  document: JSON.parse(row.document) as DocumentBody,
+  // Kept when they were made with it; a proposal from before has neither.
+  ...(row.target === null ? {} : { target: row.target }),
+  ...(row.changes === null ? {} : { changes: JSON.parse(row.changes) as DocumentChange[] }),
+  status: row.status, createdAt: row.created_at
 });
+
+/**
+ * What an accept writes: the stored CV with the proposal's changes applied.
+ *
+ * Only what the proposal says it changes is written. A change outside the section
+ * it was aimed at is refused whoever stored it, and a list that does not apply to
+ * the document, or that does not make the document the proposal holds, is refused
+ * as a conflict and writes nothing. The second is what lets a person trust that
+ * what was shown is what was saved: the changes are the proposal.
+ */
+const written = (row: Row, current: DocumentBody | undefined): DocumentBody => {
+  const document = JSON.parse(row.document) as DocumentBody;
+  if (row.changes === null) return document;
+
+  const parsed = cvChangesSchema.safeParse(JSON.parse(row.changes));
+  if (!parsed.success || row.target === null) {
+    throw new OperationError('proposal_out_of_scope', 'The changes of this proposal cannot be read, so it cannot be accepted.');
+  }
+
+  const section = sectionOf(row.target, row.context_id);
+  const elsewhere = outside(parsed.data, section);
+  if (elsewhere.length > 0) {
+    throw new OperationError(
+      'proposal_out_of_scope',
+      `This proposal also changes ${touched(elsewhere).join(', ')}, which it was not aimed at (${section}).`
+    );
+  }
+
+  let result: DocumentBody;
+  try {
+    result = applyCv(asCvDocument(current), parsed.data) as unknown as DocumentBody;
+  } catch (error) {
+    if (error instanceof ChangesDoNotApply) throw new CvContextError('context_conflict', error.message);
+    throw error;
+  }
+  if (!same(result as unknown as DocumentValue, document as unknown as DocumentValue)) {
+    throw new CvContextError('context_conflict', 'The changes of this proposal do not make the document it holds.');
+  }
+  return result;
+};
 
 export const createCvLifecycle = (
   db: Db, contexts: CvContextStore, documents: DocumentStore, chunks: ChunkIndex,
@@ -61,7 +109,7 @@ export const createCvLifecycle = (
       db.prepare('INSERT INTO cv_clear_receipts VALUES (?, ?, ?, ?)').run(operationId, contextId, expectedRevision, JSON.stringify(result));
       return result;
     }).immediate,
-    propose: db.transaction((runId: string, base: CvProposalBase, document: DocumentBody): StoredCvProposal => {
+    propose: db.transaction((runId: string, base: CvProposalBase, document: DocumentBody, details?: CvProposalDetails): StoredCvProposal => {
       const context = requiredContext(base.contextId);
       const run = db.prepare('SELECT context_id, context_generation FROM runs WHERE id = ?').get(runId) as
         { context_id: string | null; context_generation: number | null } | undefined;
@@ -72,14 +120,16 @@ export const createCvLifecycle = (
       const stored = db.prepare('SELECT * FROM cv_proposals WHERE id = ?').get(runId) as Row | undefined;
       if (stored) {
         if (stored.context_id !== base.contextId || stored.base_revision !== base.revision ||
-            stored.generation !== base.generation || stored.document !== JSON.stringify(document)) {
+            stored.generation !== base.generation || stored.document !== JSON.stringify(document) ||
+            stored.target !== (details?.target ?? null) || stored.changes !== (details === undefined ? null : JSON.stringify(details.changes))) {
           throw new CvContextError('context_conflict', 'A run cannot replace an already stored proposal.');
         }
         return fromRow(stored);
       }
-      db.prepare(`INSERT INTO cv_proposals (id, context_id, base_revision, generation, document, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(runId, base.contextId, base.revision, base.generation,
-        JSON.stringify(document), context.generation === base.generation ? 'pending' : 'invalidated', now());
+      db.prepare(`INSERT INTO cv_proposals (id, context_id, base_revision, generation, document, status, created_at, target, changes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(runId, base.contextId, base.revision, base.generation,
+        JSON.stringify(document), context.generation === base.generation ? 'pending' : 'invalidated', now(),
+        details?.target ?? null, details === undefined ? null : JSON.stringify(details.changes));
       return fromRow(proposal(base.contextId, runId));
     }).immediate,
     list: (contextId) => {
@@ -91,7 +141,7 @@ export const createCvLifecycle = (
       if (row.status === 'accepted') return JSON.parse(row.accepted_record!) as DocumentRecord;
       if (row.status !== 'pending') throw new CvContextError('context_conflict', 'This proposal is no longer pending.');
       return guard(contextId, row.generation, () => {
-        const record = documents.update(contextId, 'cv', () => JSON.parse(row.document) as DocumentBody,
+        const record = documents.update(contextId, 'cv', (current) => written(row, current),
           { expectedRevision: row.base_revision });
         chunks.clear(contextId);
         db.prepare("UPDATE cv_proposals SET status = 'accepted', accepted_record = ? WHERE id = ?").run(JSON.stringify(record), id);

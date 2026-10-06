@@ -111,6 +111,7 @@ import { createRetriever } from '../retrieval/search.js';
 import { createToolRegistry } from '../tools/registry.js';
 import { defaultTools } from '../tools/index.js';
 import { capabilities as defaultCapabilities } from '../capabilities/index.js';
+import { cvChangesSchema } from '../capabilities/cv/diff.js';
 import { CV_ID, CV_KIND, cvDocumentSchema, normaliseCv } from '../capabilities/cv/document.js';
 import { cvHolds } from '../capabilities/cv/walls.js';
 import { CV_WELL, cvOf } from '../capabilities/cv/well.js';
@@ -578,7 +579,12 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
       let final = result;
       if (run?.contextId && !run.offerSnapshotId && run.capability === 'edit_cv' && result.data.changed === true && result.data.base) {
         const proposal = cvLifecycle.propose(runId, result.data.base as CvProposalBase,
-          normaliseCv(cvDocumentSchema.parse(result.data.document)));
+          normaliseCv(cvDocumentSchema.parse(result.data.document)),
+          // What the edit was aimed at and what it changed, which an accept writes
+          // and nothing else. Parsed, so that what is stored is what a host is told.
+          typeof result.data.target === 'string' && result.data.changes !== undefined
+            ? { target: result.data.target, changes: cvChangesSchema.parse(result.data.changes) }
+            : undefined);
         final = { ...result, data: { ...result.data, proposalId: proposal.id } };
       }
       if (run?.offerSnapshotId) {

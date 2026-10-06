@@ -650,6 +650,9 @@ test('the other capabilities take no grounding field and are not given one', asy
     assert.equal(capabilities.ask_profile?.input.safeParse({ question: 'q', grounding: { once: [] } }).success, true);
     for (const [name, capability] of Object.entries(capabilities)) {
       if (name === 'ask_profile') continue;
+      // An edit asks for the section it is aimed at once it is aimed at one, and for
+      // nothing before that: `grounding-edits.test.ts` holds it to that.
+      if (name === 'edit_cv') continue;
       assert.equal(capability.needs, undefined, `${name} says what it needs`);
     }
   } finally {

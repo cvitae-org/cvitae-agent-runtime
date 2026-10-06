@@ -46,6 +46,13 @@ takes `offerIds`, `preferences` and `cite`, the result of `ask_profile` may carr
 conversation about a CV may exclude a whole saved offer. Without it, offer no
 offer picker, and send none of those fields.
 
+The feature `grounding-edits` says an edit can be aimed at one section by its ref
+and says what it changed (see "Editing one section"): `edit_cv` takes
+`input.target`, its result carries `target` and `changes`, a stored proposal
+carries both in `profile.proposals.list`, and an accept writes those changes and
+nothing else. Without it, send `section` as before and work out the difference
+between the stored CV and a proposal yourself.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -1043,3 +1050,156 @@ part of the CV that no offer mentions, or for `cite`.
 4. Send `cite: true`. Show each number in an answer as a chip that opens what it
    stands for (`cited`), and show `unresolved` numbers as not found, not as links.
 5. Show a preview before sending, with `size.parts.offers` against the limit.
+
+## Editing one section
+
+A person changes one section of a CV by saying what to change. The runtime sends
+the model that section only, takes one section back, and proposes the CV with it
+replaced. Nothing is saved until the proposal is accepted. This is how a person
+sees what the model did, and how an accept writes it.
+
+### Aiming an edit: `input.target`
+
+`edit_cv` takes the section as a ref, the same address an exclusion, a pin and a
+record entry call it by:
+
+| Section | `target` |
+| --- | --- |
+| personal details | `cv:<context id>/overview/personal` |
+| summary | `cv:<context id>/overview/role_description` |
+| skills | `cv:<context id>/overview/skills` |
+| jobs | `cv:<context id>/experience` |
+| education | `cv:<context id>/education` |
+| certificates | `cv:<context id>/certificates` |
+| spoken languages | `cv:<context id>/languages` |
+
+A `target` names a whole section of the conversation's own CV, and nothing else.
+The `<context id>` is the one of the run (`cv` for a run in no context). A version
+(`@3`) or a digest (`#...`) on it is ignored: the edit is made on what is stored.
+
+- `section` (`"experience"`, `"skills"`, ...) still works. Give both and they must
+  name the same section, or the run fails as `invalid_input`.
+- Give neither and the section is chosen by a model from the instruction, as before.
+  That is one more model call; a `target` or a `section` skips it.
+- A ref that does not parse is `invalid_ref`. A ref that parses and is not a section
+  of this CV is `invalid_selection`: another well (`offers:...`), another CV, the
+  whole CV, the whole overview, one entry of a list (`cv:<id>/experience/acme~dev`),
+  or a name that is not a section. The message gives examples of a ref that would
+  do. Entry-level edits are not offered: an edit returns a whole section.
+- All of these are refused before any model is asked.
+
+### When the section is excluded
+
+An edit aimed at something the conversation has excluded fails as `target_excluded`
+and the message says so ("The experience of this CV is excluded from the
+conversation ..."). Show it as the reason, with a way to include the section again.
+
+- When the whole section is excluded (a wall on the section, on the overview for an
+  overview item, or on the whole CV) this is said before anything runs: no model
+  call, and no step in the run's events.
+- When a list section has only entries left that are all excluded, it is found out
+  when the CV is read: the same code and message, still no model call.
+- An instruction that names no section is routed first, and what it is routed to is
+  checked when the CV is read.
+- An exclusion elsewhere does not stop the edit. What is excluded is not sent to the
+  model, and the proposal keeps it as it was stored. It is in none of the changes.
+
+### What an edit returns
+
+```json
+{
+  "document": { "...": "the whole CV with the section revised" },
+  "section": "experience",
+  "target": "cv:<context id>/experience",
+  "changes": [
+    { "op": "replace", "path": ["experience", 0, "title"], "before": "Senior Engineer", "after": "Staff Engineer" }
+  ],
+  "changed": true,
+  "base": { "contextId": "<context id>", "revision": 7, "generation": 0 },
+  "proposalId": "<run id>"
+}
+```
+
+`changed` is `changes.length > 0`. When it is false there is nothing to accept and
+no `proposalId`. `base` is absent when the document was sent with the request.
+`target` and `changes` are new: a client that ignores them gets what it got before.
+
+### The changes
+
+A change is one of three things, in the vocabulary of a JSON patch plus what it
+found:
+
+| `op` | Fields | Meaning |
+| --- | --- | --- |
+| `replace` | `path`, `before`, `after` | the value at `path` was `before` and is `after` |
+| `add` | `path`, `after` | `after` is a new key of an object, or is inserted at an index of a list |
+| `remove` | `path`, `before` | the key or index held `before` and is gone |
+
+- `path` is the keys and indices from the root of the CV, so
+  `["experience", 1, "highlights", 0]` is the first highlight of the second job. The
+  first place is always the section: `personal`, `role_description`, `skills`,
+  `experience`, `education`, `certificates` or `languages`. For skills the three
+  lists the runtime derives from the rows (`programming_languages`, `frameworks`,
+  `libraries_and_tools`) appear in the changes as well.
+- They are applied in order, each to what the one before left. An index is the
+  index at that moment. So a person can be shown the list top to bottom and an
+  insertion does not shift what the list below it says.
+- Two lists are lined up before they are compared: entries that are the same in both
+  stay where they are. A job with one new bullet is one `add`, and an entry moved to
+  the top is a `remove` and an `add`. Past 250,000 comparisons the lists are compared
+  in order instead, which is a longer list of changes with the same result.
+- `before` is checked when a change is applied. A change that finds something else
+  where it expected `before` does not apply.
+- At most 2,000 changes, and a path of at most 12 places.
+- Dates are as stored: a job that has not ended has `finished: null`.
+
+Show a person the changes as the difference, not the whole document, and not a
+sentence from the model: the changes are exactly what an accept will write.
+
+### Proposals and accepting
+
+`profile.proposals.list` returns `target` and `changes` with every proposal an edit
+made once this feature exists. A proposal made before has neither: show it as you
+did, as the document it holds.
+
+`profile.proposals.accept` checks the revision as before (`document_conflict` if the
+CV moved on since the proposal was made; the proposal stays pending). Then:
+
+- the changes are applied to the stored CV, and what is written is the stored CV
+  with exactly those changes. The result must be the document the proposal holds,
+  or nothing is written;
+- a change outside the section the proposal was aimed at is refused as
+  `proposal_out_of_scope`, and so is a proposal whose changes cannot be read or that
+  has no target. These cannot come from the runtime's own edits; they say a stored
+  proposal was altered;
+- changes that do not apply to the stored CV, or that do not make the document the
+  proposal holds, are `context_conflict`. The message names the position of the
+  change ("Change 3 does not apply: ...") and never what the CV held.
+
+An accept that is repeated is the same accept. A discarded or invalidated proposal
+cannot be accepted.
+
+### Codes
+
+- `invalid_ref`, `invalid_selection`: the `target`, as above.
+- `invalid_input`: a `target` and a `section` that name different sections, or no
+  instruction.
+- `target_excluded`: the section is excluded from the conversation.
+- `proposal_out_of_scope`: on an accept, a proposal that reaches outside its section
+  or cannot be read.
+- `context_conflict`, `document_conflict`: on an accept, as above.
+
+### Suggested UI
+
+1. Check `grounding-edits` in `protocol.get`. Without it, send `section` and show the
+   difference as before.
+2. Let the person pick the section (a row in the CV view, or a menu), then say what
+   to change. Send `target` with the instruction.
+3. Show the proposal from `changes`: one line per change, with `before` and `after`,
+   grouped by entry (the first two places of the path after the section). An `add` or
+   a `remove` of a whole entry is the entry shown as added or removed.
+4. Offer Accept and Discard. On `document_conflict` say the CV changed since, and
+   offer to make the edit again. Do not retry an accept that failed with
+   `proposal_out_of_scope`: it is not a race.
+5. Disable the edit of a section that is excluded, with the reason, and send nothing.
+   `target_excluded` is still the answer if it was excluded after.
