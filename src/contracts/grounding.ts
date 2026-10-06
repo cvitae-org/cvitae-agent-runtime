@@ -195,6 +195,12 @@ export type SentField = {
 export type Grounded = {
   /** The blocks as the model reads them, with no heading. Empty when nothing was assembled. */
   readonly text: string;
+  /**
+   * The same blocks one by one, in the order `entries` has them, when a step asks to
+   * number them for a citation. `text` is these joined, and a step that makes no
+   * blocks of its own leaves this out.
+   */
+  readonly blocks?: readonly string[];
   /** One `included` entry for each piece in `text`, in the order its block comes. */
   readonly entries: readonly RecordEntry[];
   /** Refs asked for and held back by an exclusion. Already recorded as `blocked`. */

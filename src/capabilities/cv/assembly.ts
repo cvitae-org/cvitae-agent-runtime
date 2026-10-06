@@ -55,8 +55,14 @@ export const GROUND_STEP = 'ground';
 /** How many passages `auto` looks at. It adds the pieces they came from, so at most this many. */
 const AUTO_HITS = 6;
 
-const VIA = { pin: 'ground:pin', once: 'ground:once', auto: 'ground:auto' } as const;
-type Via = (typeof VIA)[keyof typeof VIA];
+export const VIA = {
+  pin: 'ground:pin',
+  once: 'ground:once',
+  auto: 'ground:auto',
+  evidence: 'ground:evidence',
+  offer: 'ground:offer'
+} as const;
+export type Via = (typeof VIA)[keyof typeof VIA];
 
 /* ---------------------------------------------------------------- rendering */
 
@@ -143,7 +149,7 @@ const render = (section: string, item: unknown): string => {
 
 /* ------------------------------------------------------------------- leaves */
 
-type Leaf = {
+export type Leaf = {
   readonly section: string;
   readonly key: string;
   /** What the person's own words are, as stored: what the entry's digest is of. */
@@ -201,10 +207,26 @@ const leavesOf = (view: CvView, ref: PieceRef): { section: string; key: string }
   return key === undefined ? keys.map((each) => ({ section, key: each })) : keys.includes(key) ? [{ section, key }] : [];
 };
 
-const leafRef = (scope: string, section: string, key: string): string => cvRef(scope, section, key);
+export const leafRef = (scope: string, section: string, key: string): string => cvRef(scope, section, key);
+
+/**
+ * Every leaf of the CV a model may be shown, in document order: the overview items
+ * and then each list section's entries. A piece the walls cover is not in `shown`,
+ * and one that says nothing has no text, so neither is here.
+ */
+export const allLeaves = (view: CvView): Leaf[] => {
+  const found: Leaf[] = [];
+  const add = (section: string, key: string): void => {
+    const leaf = leafAt(view, section, key);
+    if (typeof leaf === 'object') found.push(leaf.leaf);
+  };
+  for (const item of OVERVIEW_ITEMS) add(OVERVIEW, item);
+  for (const section of LIST_SECTIONS) for (const key of cvKeys(view.original)[section]) add(section, key);
+  return found;
+};
 
 /** The entry that says a leaf's block was sent. */
-const included = (scope: string, revision: number, leaf: Leaf, via: Via): RecordEntry => ({
+export const included = (scope: string, revision: number, leaf: Leaf, via: Via): RecordEntry => ({
   ref: leafRef(scope, leaf.section, leaf.key),
   version: String(revision),
   digest: digest(leaf.original),
@@ -219,7 +241,7 @@ const included = (scope: string, revision: number, leaf: Leaf, via: Via): Record
  * Nothing of the piece was read for it, so the digest is of the address: it keeps
  * an entry for one ref distinct from an entry for another and says nothing else.
  */
-const blockedEntry = (ref: string, via: Via): RecordEntry => ({
+export const blockedEntry = (ref: string, via: Via): RecordEntry => ({
   ref,
   digest: digest(ref),
   status: 'blocked',
@@ -445,6 +467,7 @@ export const assembleCv = async (asked: Asked, context: Context): Promise<Ground
 
   return {
     text: blocks.join('\n\n'),
+    blocks,
     entries: entries.filter((entry) => entry.status === 'included'),
     blocked,
     gone,
@@ -457,12 +480,14 @@ export const assembleCv = async (asked: Asked, context: Context): Promise<Ground
  * The step that assembles. It reads the pins now and not when the plan was made,
  * so a pin made while the run waited is a pin at its resume.
  */
-export const groundStep = (asked: Omit<Asked, 'pins'>): TransformStep => ({
+export const groundStep = (asked: Omit<Asked, 'pins'>, cite = false): TransformStep => ({
   kind: 'transform',
   name: GROUND_STEP,
   critical: true,
   run: async (context: StepContext) => ({
-    [GROUNDED]: await assembleCv({ ...asked, pins: context.pins?.pieces() ?? [] }, context)
+    [GROUNDED]: await assembleCv({ ...asked, pins: context.pins?.pieces() ?? [] }, context),
+    // Carried so that whoever reads the outcomes knows whether the blocks were numbered.
+    ...(cite ? { cite: true } : {})
   })
 });
 
@@ -490,7 +515,9 @@ export const cvNeeds = (grounding: GroundingInput | undefined, context: RunConte
   const left = (refs: readonly PieceRef[]): number => refs.length - open(refs).length;
   const needs: Need[] = [];
 
-  if (grounding?.reach === 'selected') {
+  // A message that compares offers has no tools whatever it asks for, and the offers
+  // are what it answers from, so what it has selected is not only the pieces.
+  if (grounding?.reach === 'selected' && (grounding.offerIds?.length ?? 0) === 0) {
     const none = open(pins).length + open(once).length === 0 && grounding.auto !== 'on';
     needs.push({
       name: 'selection',

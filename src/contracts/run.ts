@@ -13,6 +13,7 @@ import type { ToolRegistry } from './tools.js';
 import type { DocumentStore } from './document-store.js';
 import type { ChunkIndex, Retriever } from './chunk-index.js';
 import type { Limits, Pins, RecordSink, Walls } from './grounding.js';
+import type { OfferShelf } from './offer.js';
 
 /* ------------------------------------------------------------------ states */
 
@@ -321,6 +322,12 @@ export type RunContext = {
    * Present on every run that belongs to a conversation; absent on the others.
    */
   readonly limits?: Limits;
+
+  /**
+   * The saved offers, for a message that compares some (`capabilities/cv/fit.ts`).
+   * Present on the same runs as `walls`, and only when the runtime keeps offers.
+   */
+  readonly offers?: OfferShelf;
 
   /**
    * Present, and `true`, when the context is a preview's and not a run's: nothing

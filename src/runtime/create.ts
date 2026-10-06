@@ -615,6 +615,18 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     grounding: { records: groundingRecords, wells },
     selection: selectionStore,
     limits: limitStore,
+    offerShelf: {
+      read: (ids) =>
+        ids.flatMap((id) => {
+          const offer = offers.get(id);
+          return offer === undefined ? [] : [offer];
+        }),
+      // The Board is made below, and is asked at the time a message is, not now.
+      onBoard: (ids) => {
+        const onBoard = new Set(boardStore.list().map((entry) => entry.offerId));
+        return new Set(ids.filter((id) => onBoard.has(id)));
+      }
+    },
     history: createHistory({
       conversations,
       records: groundingRecords,

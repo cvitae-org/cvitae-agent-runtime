@@ -32,6 +32,7 @@ import type {
   EffectSet,
   LimitStore,
   Limits,
+  OfferShelf,
   Retriever,
   RunContext,
   RunResult,
@@ -90,6 +91,11 @@ export type RuntimeDeps = {
    * as before limits.
    */
   readonly limits?: Pick<LimitStore, 'effective'>;
+  /**
+   * The saved offers a message may compare. Absent means the runtime keeps no
+   * offers a chat run can read, and a message that names some is refused.
+   */
+  readonly offerShelf?: OfferShelf;
   /**
    * Keeps the conversation of a run whose host sent none. Absent means a run is
    * given the history and summary it was sent, and nothing else, as before.
@@ -257,6 +263,9 @@ export const buildRunContext = (
     ...(walls === undefined ? {} : { walls }),
     ...(pins === undefined ? {} : { pins }),
     ...(limits === undefined ? {} : { limits }),
+    // On the runs that have walls and no others: an offer is left out by the same
+    // conversation that leaves a piece of its CV out.
+    ...(walls === undefined || deps.offerShelf === undefined ? {} : { offers: deps.offerShelf }),
     approvals: deps.gate(fields.runId, 'plan'),
     logger: deps.logger,
     // The run id is added here rather than passed by the step, because a step

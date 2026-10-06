@@ -372,7 +372,7 @@ test('an exclusion is live while its piece is there, gone when it is not, and a 
   }
 });
 
-test('a profile conversation excludes the pieces of its own CV and nothing else', async () => {
+test('a profile conversation excludes the pieces of its own CV and whole saved offers, and nothing else', async () => {
   const w = world();
 
   try {
@@ -385,7 +385,9 @@ test('a profile conversation excludes the pieces of its own CV and nothing else'
       w.ref('experience'),
       w.ref('education', 'oxford~maths'),
       w.ref('certificates', 'anything'),
-      w.ref('languages', 'polish')
+      w.ref('languages', 'polish'),
+      // A message that compares offers leaves this one out.
+      `offers:${randomUUID()}`
     ]) {
       const view = data<View>(await w.update({ expectedRevision: (await w.get()).revision, exclude: [ref] }));
       assert.ok(view.exclusions.some((entry) => entry.ref === ref), `refused ${ref}`);
@@ -398,7 +400,9 @@ test('a profile conversation excludes the pieces of its own CV and nothing else'
       w.ref('overview', 'photo'),
       w.ref('skills'),
       w.ref('sources'),
-      `offers:${randomUUID()}`,
+      // Only the whole of an offer can be left out: nothing reads its sections behind a wall.
+      `offers:${randomUUID()}/posting`,
+      `offers:${randomUUID()}/card`,
       `preferences:${w.cv.id}`,
       `conversation:${w.chat.id}/history`,
       `cv:${w.cv.id}@3/experience`,

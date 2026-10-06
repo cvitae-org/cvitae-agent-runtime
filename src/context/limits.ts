@@ -10,6 +10,10 @@
  * sum, in the same unit they are in: characters, since there is no tokenizer in
  * this tree (`budget.ts`).
  *
+ * The offers a message compares take the posting's place: a message that compares
+ * offers carries no posting, so the two are never both at their baseline, and the
+ * ceiling stays the sum of the larger.
+ *
  * It can only lower. The ceiling below is the sum of the baselines, so a setting
  * at it binds nothing, and a setting under the floor would refuse a message that
  * carries nothing but its own summary. Outside the two the store refuses the
@@ -51,10 +55,15 @@ export type Material = {
   readonly picks: number;
   /** The posting, as far as the model is shown it. */
   readonly posting: number;
+  /**
+   * The offers a message compares, with the preferences and the parts of the CV
+   * that match them. Absent from a message that compares none.
+   */
+  readonly offers?: number;
 };
 
 export const totalOf = (material: Material): number =>
-  material.history + material.summary + material.picks + material.posting;
+  material.history + material.summary + material.picks + material.posting + (material.offers ?? 0);
 
 const number = (value: number): string => value.toLocaleString('en-US');
 
@@ -71,7 +80,8 @@ export const overLimit = (material: Material, limit: number | undefined): string
     ['history', material.history],
     ['summary', material.summary],
     ['pieces', material.picks],
-    ['posting', material.posting]
+    ['posting', material.posting],
+    ['offers', material.offers ?? 0]
   ] as const)
     .filter(([, size]) => size > 0)
     .map(([name, size]) => `${name} ${number(size)}`)
@@ -90,5 +100,8 @@ export const overLimit = (material: Material, limit: number | undefined): string
  */
 export const roomForPicks = (material: Omit<Material, 'picks'>, limit: number | undefined): number => {
   if (limit === undefined) return PICKS_BUDGET;
-  return Math.max(0, Math.min(PICKS_BUDGET, limit - material.history - material.summary - material.posting));
+  return Math.max(
+    0,
+    Math.min(PICKS_BUDGET, limit - material.history - material.summary - material.posting - (material.offers ?? 0))
+  );
 };

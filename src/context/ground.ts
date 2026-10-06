@@ -1,7 +1,7 @@
 /**
  * What a message may ask of the pieces a model is given, and how much of them.
  *
- * Three things a host can say with a message, beside the question:
+ * Things a host can say with a message, beside the question:
  *
  *   once   pieces to send with this message only. A pin is the same wish kept for
  *          the whole conversation, and lives in the conversation's selection
@@ -14,6 +14,15 @@
  *          `suggest` names the pieces it would add and sends none of them. `on`
  *          sends them. It stays `off` unless asked, until it has been measured
  *          against tools alone.
+ *   offerIds  saved offers to compare against the CV, which turns the question into
+ *          "which of these fit best" (`capabilities/cv/fit.ts`). The model has no
+ *          tools for such a message: it is given the offers as cards and the parts
+ *          of the CV that match them, and nothing else.
+ *   preferences  what the person wants of a job, as the host holds it (Studio owns
+ *          them; the runtime keeps nothing). Sent with the offers, or said to be
+ *          absent.
+ *   cite   numbers the blocks the model is given, tells it to cite them, and reads
+ *          the answer for the numbers it cited.
  *
  * The limits are the same kind of number the history's are (`conversation.ts`): a
  * ceiling in characters, declared by the one contributor it bounds, and refused
@@ -45,6 +54,29 @@ export const POSTING_LIMIT = 40_000;
 /** How many pieces one message may attach. A pin has its own limit (`MAX_PINS`). */
 export const MAX_ONCE = 12;
 
+/** How many offers a message may name. More than are compared, so the rest can be counted as cut. */
+export const MAX_OFFER_IDS = 100;
+
+/** How many offers one answer compares. The rest are cut, most recently seen first kept. */
+export const COMPARE_LIMIT = 25;
+
+/**
+ * What the offers of a message may come to, in characters: the cards, the parts of
+ * the CV that match them and the preferences. It takes the posting's place, since a
+ * message that compares offers carries no posting. Over it the message is refused
+ * and nothing is cut to fit.
+ */
+export const OFFERS_BUDGET = 30_000;
+
+/** How much of an offer its card holds, in characters. */
+export const CARD_LIMIT = 500;
+
+/** How many parts of the CV the offers of a message share between them. */
+export const MAX_EVIDENCE = 8;
+
+/** The most the preferences a host sends may come to, in characters. */
+export const PREFERENCES_LIMIT = 2_000;
+
 /** The reaches a message may ask for. */
 export const REACHES = ['free', 'selected'] as const;
 export type Reach = (typeof REACHES)[number];
@@ -69,6 +101,12 @@ const onceSchema = z
   .transform((refs) => [...new Set(refs.map((ref) => refKey(parseRef(ref))))])
   .default([]);
 
+const offerIdsSchema = z
+  .array(z.string().min(1).max(200))
+  .max(MAX_OFFER_IDS, `At most ${MAX_OFFER_IDS} offers may be named in one message.`)
+  // Once each and in the order the host named them, whatever it sent.
+  .transform((ids) => [...new Set(ids)]);
+
 /**
  * The `grounding` field of a capability's input. Absent is a message that asks
  * for none of this, and is run exactly as it was before the field existed.
@@ -77,7 +115,12 @@ export const groundingSchema = z
   .object({
     once: onceSchema,
     reach: z.enum(REACHES).default('free'),
-    auto: z.enum(AUTOS).default('off')
+    auto: z.enum(AUTOS).default('off'),
+    // None of the three has a default, so a message that does not use them is
+    // stored and planned with the fields it always had.
+    offerIds: offerIdsSchema.optional(),
+    preferences: z.string().max(PREFERENCES_LIMIT, `Preferences come to at most ${PREFERENCES_LIMIT} characters.`).optional(),
+    cite: z.boolean().optional()
   })
   .optional();
 

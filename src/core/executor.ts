@@ -63,14 +63,16 @@ export const recordSends = (context: StepContext, step: Exclude<Step, TransformS
   if (step.sends !== undefined) context.record?.sent(step.sends);
   if (step.groundedFrom === undefined) return;
 
-  const made = context.completed[step.groundedFrom]?.[GROUNDED] as Grounded | undefined;
-  if (made === undefined || !Array.isArray(made.entries)) {
-    throw new RuntimeError(
-      `Step "${step.name}" sends what step "${step.groundedFrom}" assembled, and that step assembled nothing.`,
-      'step_failed'
-    );
+  for (const from of typeof step.groundedFrom === 'string' ? [step.groundedFrom] : step.groundedFrom) {
+    const made = context.completed[from]?.[GROUNDED] as Grounded | undefined;
+    if (made === undefined || !Array.isArray(made.entries)) {
+      throw new RuntimeError(
+        `Step "${step.name}" sends what step "${from}" assembled, and that step assembled nothing.`,
+        'step_failed'
+      );
+    }
+    if (made.entries.length > 0) context.record?.add(made.entries);
   }
-  if (made.entries.length > 0) context.record?.add(made.entries);
 };
 
 export const runStep = async (

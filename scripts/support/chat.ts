@@ -28,7 +28,16 @@ import { createRecordStore } from '../../src/storage/sqlite/grounding-record.js'
 import { createSelectionStore } from '../../src/storage/sqlite/grounding-selection.js';
 import { defaultTools } from '../../src/tools/index.js';
 import { createToolRegistry } from '../../src/tools/registry.js';
-import type { ChunkHit, RecordEntry, Retriever } from '../../src/contracts/index.js';
+import { createOfferStore } from '../../src/storage/sqlite/offers.js';
+import type {
+  CapabilityMap,
+  ChunkHit,
+  OfferRecord,
+  OfferShelf,
+  RecordEntry,
+  Retriever,
+  ToolLoopRequest
+} from '../../src/contracts/index.js';
 import { spine } from './spine.js';
 import type { Spine } from './spine.js';
 
@@ -74,6 +83,17 @@ export const acmeOf = (size: number): ReturnType<typeof job> => {
   return job('Acme', 'Senior Engineer', 'a'.repeat(size - head));
 };
 
+/** A saved offer, with what a test gives it and a posting that says nothing a test would trip over. */
+export const offer = (id: string, over: Partial<OfferRecord> = {}): OfferRecord => ({
+  id,
+  text: 'A posting.',
+  firstSeenAt: 1,
+  lastSeenAt: 1,
+  processing: 'fetched',
+  disposition: 'active',
+  ...over
+});
+
 export type Request = {
   readonly kind: 'plan' | 'loop' | 'text';
   readonly system: string;
@@ -89,6 +109,12 @@ export type ChatOptions = {
   readonly search?: (revision: number) => Promise<ChunkHit[]>;
   /** `false` builds a runtime that keeps no limits, which is every runtime there was. */
   readonly limits?: boolean;
+  /** `false` builds a runtime with no saved offers to read, which is every runtime there was. */
+  readonly offers?: boolean;
+  /** What the model answers with, given what it was asked. By default one sentence with no number in it. */
+  readonly answer?: (request: ToolLoopRequest) => string;
+  /** Capabilities of a test's own, beside the real ones. */
+  readonly probes?: CapabilityMap;
 };
 
 export type Chat = {
@@ -99,10 +125,17 @@ export type Chat = {
   readonly conversations: ReturnType<typeof createConversationStore>;
   readonly limitStore: ReturnType<typeof createLimitStore>;
   readonly limits: ReturnType<typeof createLimitService>;
+  readonly offerStore: ReturnType<typeof createOfferStore>;
+  /** The ids of the offers on the Board, as the shelf is told. A test adds to it. */
+  readonly board: Set<string>;
+  /** What the shelf was asked to read, call by call: an offer that is not here was never read. */
+  readonly reads: string[][];
   /** Every request any model call was made with, in the order they were made. */
   readonly requests: Request[];
   /** How many searches of the index were made. */
   readonly searches: { count: number };
+  /** Saves an offer, as discovery would have. */
+  saveOffer(offer: OfferRecord): void;
   pin(...refs: string[]): void;
   exclude(...refs: string[]): void;
   /** Starts a run of a capability in the conversation. */
@@ -119,7 +152,9 @@ export const chat = (options: ChatOptions = {}): Chat => {
   const requests: Request[] = [];
   const searches = { count: 0 };
 
-  const s = spine(capabilities, {
+  const all = { ...capabilities, ...options.probes };
+
+  const s = spine(all, {
     ai: {
       generateObject: async (request) => {
         requests.push({ kind: 'plan', system: request.system ?? '', prompt: request.prompt ?? '', history: [], tools: [] });
@@ -137,7 +172,7 @@ export const chat = (options: ChatOptions = {}): Chat => {
           history: (request.history ?? []).map((turn) => turn.text),
           tools: request.tools.map((tool) => tool.name)
         });
-        return { text: 'An answer.', steps: 1, finishReason: 'stop', usage: {} };
+        return { text: options.answer?.(request) ?? 'An answer.', steps: 1, finishReason: 'stop', usage: {} };
       }
     },
     tools: createToolRegistry(defaultTools)
@@ -167,13 +202,28 @@ export const chat = (options: ChatOptions = {}): Chat => {
   const limitStore = createLimitStore(s.db);
   const limits = createLimitService({ store: limitStore, conversations });
 
+  const offerStore = createOfferStore(s.db);
+  const board = new Set<string>();
+  const reads: string[][] = [];
+  const shelf: OfferShelf = {
+    read: (ids) => {
+      reads.push([...ids]);
+      return ids.flatMap((id) => {
+        const offer = offerStore.get(id);
+        return offer === undefined ? [] : [offer];
+      });
+    },
+    onBoard: (ids) => new Set(ids.filter((id) => board.has(id)))
+  };
+
   const deps: RuntimeDeps = {
     ...s.deps,
     scopeCv: () => ({ ...bound(), contextGeneration: generation(), contextRevision: revision() }),
     grounding: { records, wells: defaultWells() },
     selection: selections,
-    history: createHistory({ conversations, records, walls: (id) => selections.walls(id), capabilities }),
-    ...(options.limits === false ? {} : { limits: limitStore })
+    history: createHistory({ conversations, records, walls: (id) => selections.walls(id), capabilities: all }),
+    ...(options.limits === false ? {} : { limits: limitStore }),
+    ...(options.offers === false ? {} : { offerShelf: shelf })
   };
 
   const change = (what: { exclude?: string[]; pin?: string[] }): void => {
@@ -198,8 +248,12 @@ export const chat = (options: ChatOptions = {}): Chat => {
     conversations,
     limitStore,
     limits,
+    offerStore,
+    board,
+    reads,
     requests,
     searches,
+    saveOffer: (offer) => void offerStore.save(offer),
     pin: (...refs) => change({ pin: refs }),
     exclude: (...refs) => change({ exclude: refs }),
     begin: (input, capability = 'ask_profile', over = CHAT_RUN) => beginRun(deps, { capability, input, ...over }),

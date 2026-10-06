@@ -33,6 +33,8 @@ import { plan as makePlan } from '../core/planner.js';
 import { route, validateInput } from '../core/router.js';
 import { GROUNDED, CvContextError, OperationError, RECORD_VERSION } from '../contracts/index.js';
 import type { Grounded, RecordEntry, RecordStore, StepRef } from '../contracts/index.js';
+import { FIT_STEP } from '../capabilities/cv/fit.js';
+import type { Fit } from '../capabilities/cv/fit.js';
 import { isPrepared, planDigestOf } from '../grounding/plan.js';
 import { defaultWells } from './grounding.js';
 import { checkNeeds } from './needs.js';
@@ -63,7 +65,12 @@ export type Preview = {
   readonly planDigest?: string;
   /** `full` only: the entries the message is made of, and the pieces held back. */
   readonly entries?: readonly RecordEntry[];
-  /** `full` only: what was done with the pieces asked for, when any were. */
+  /**
+   * `full` only: which offers a message that compares offers would compare, which
+   * it leaves out and why, and whether it carries preferences.
+   */
+  readonly offers?: Pick<Fit, 'compared' | 'left' | 'preferences'>;
+  /** `full` only: what was done with the pieces asked for, when any were. Every step that assembles says its part. */
   readonly grounding?: {
     readonly included: readonly string[];
     readonly blocked: readonly string[];
@@ -176,7 +183,7 @@ export const previewRun = async (deps: RuntimeDeps, request: PreviewRequest): Pr
   // prepares runs, and a step that would call a model says what it would send.
   const plan = await makePlan(capability, given.input, context);
   const completed: Record<string, Record<string, unknown>> = {};
-  let grounded: Grounded | undefined;
+  const grounded: Grounded[] = [];
   let ordinal = 0;
 
   for (const stage of plan.stages) {
@@ -187,7 +194,8 @@ export const previewRun = async (deps: RuntimeDeps, request: PreviewRequest): Pr
       try {
         if (step.kind === 'transform') {
           completed[step.name] = { ...(await step.run(at)) };
-          grounded = (completed[step.name]?.[GROUNDED] as Grounded | undefined) ?? grounded;
+          const made = completed[step.name]?.[GROUNDED] as Grounded | undefined;
+          if (made !== undefined) grounded.push(made);
         } else if (step.kind !== 'generate' || step.directText?.(at) === undefined) {
           // A generation the run would answer by itself sends nothing, so it says nothing.
           recordSends(at, step);
@@ -201,21 +209,23 @@ export const previewRun = async (deps: RuntimeDeps, request: PreviewRequest): Pr
   }
 
   const entries = kept.read(runId)?.entries.filter(isPrepared) ?? [];
+  const fit = completed[FIT_STEP]?.fit as Fit | undefined;
   return {
     mode: 'full',
     ...base,
     degraded,
     planDigest: planDigestOf(entries),
     entries,
-    ...(grounded === undefined
+    ...(fit === undefined ? {} : { offers: { compared: fit.compared, left: fit.left, preferences: fit.preferences } }),
+    ...(grounded.length === 0
       ? {}
       : {
           grounding: {
-            included: grounded.entries.map((entry) => entry.ref),
-            blocked: grounded.blocked,
-            gone: grounded.gone,
-            suggested: grounded.suggested,
-            ...(grounded.auto === undefined ? {} : { auto: grounded.auto })
+            included: grounded.flatMap((each) => each.entries.map((entry) => entry.ref)),
+            blocked: grounded.flatMap((each) => each.blocked),
+            gone: grounded.flatMap((each) => each.gone),
+            suggested: grounded.flatMap((each) => each.suggested),
+            ...(grounded.some((each) => each.auto === 'failed') ? { auto: 'failed' as const } : {})
           }
         })
   };

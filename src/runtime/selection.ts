@@ -15,7 +15,8 @@
  * An exclusion beats a pin, and a pin an exclusion covers is reported `blocked`.
  *
  *   a profile conversation    the pieces of its own CV: the whole CV, a section,
- *                             an overview item, a list entry
+ *                             an overview item, a list entry; and a whole saved
+ *                             offer, which a message that compares offers leaves out
  *   a discovery conversation  a whole saved offer, by its id
  *   an offer conversation     nothing yet: its posting and its CV are a captured
  *                             snapshot, and no reader of it is behind a wall
@@ -137,8 +138,12 @@ export const createSelectionService = (deps: SelectionDeps): SelectionService =>
       deps.wells.check(ref);
 
       if (kind === 'profile') {
-        if (ref.well !== CV_WELL) refuse('A profile conversation can exclude pieces of its CV only.');
-        checkCv(ref, subjectId || CV_ID);
+        if (ref.well === OFFERS_WELL) {
+          if (ref.path.length > 0) refuse('A profile conversation can exclude whole saved offers only, as offers:<id>.');
+        } else {
+          if (ref.well !== CV_WELL) refuse('A profile conversation can exclude pieces of its CV and whole saved offers only.');
+          checkCv(ref, subjectId || CV_ID);
+        }
       } else if (kind === 'discovery') {
         if (ref.well !== OFFERS_WELL || ref.path.length > 0) {
           refuse('A discovery conversation can exclude whole saved offers only, as offers:<id>.');

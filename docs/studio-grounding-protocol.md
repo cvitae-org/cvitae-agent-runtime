@@ -39,6 +39,13 @@ exists, `run.context.start` and `run.offer.start` take `approved`, and
 `runs.grounding` also answers `planDigest`. Without it, show no preview and send
 no `approved` field.
 
+The feature `grounding-offers` says a person can ask which of their saved offers
+fit their CV best (see "Comparing saved offers with the CV"): `input.grounding`
+takes `offerIds`, `preferences` and `cite`, the result of `ask_profile` may carry
+`offers`, `cited` and `unresolved`, `run.preview` may answer `offers`, and a
+conversation about a CV may exclude a whole saved offer. Without it, offer no
+offer picker, and send none of those fields.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -260,6 +267,10 @@ was allowed once can always be removed.
   (`overview/personal`, `overview/role_description`, `overview/skills`) or one
   entry of a list section (`experience/acme~senior-engineer`).
 - A discovery conversation, whole saved offers: `offers:<offer id>`.
+- A conversation about a CV, whole saved offers too, as `offers:<offer id>`: an
+  offer it leaves out is not compared (see "Comparing saved offers with the CV").
+  Nothing finer: `offers:<id>/card` and `offers:<id>/posting` are
+  `invalid_selection`, and so is anything else that is not a piece of the CV.
 - A conversation about one offer excludes nothing yet.
 - The preferences well is Studio's, and the runtime reads none of it.
 
@@ -603,6 +614,11 @@ entry.
 | Refs in `pin` or `unpin` of one update | 50 each | `invalid_input` |
 | Attachments to one message | 12 | `invalid_input` |
 | Characters of pieces in one message | 12,000 | `grounding_budget` |
+| Offers named in one message | 100 | `invalid_input` |
+| Offers compared in one message | 25 | the rest are cut and said, as `offers.left.cut` |
+| Characters of preferences | 2,000 | `invalid_input` |
+| Characters of a card | 500 | a card is made to fit, and is never refused |
+| Characters of the offers, the preferences and the parts of the CV that match | 30,000 | the parts of the CV that do not fit are left out; the cards and the preferences are not cut |
 | Characters of everything a message is made of | the conversation's limit, when set | `context_limit` |
 
 ## Suggested pin and attach UI
@@ -685,7 +701,8 @@ answer is the same as `limits.get`'s, as it is now.
 ## What happens over the limit
 
 The material of a message is the history, the summary, the pieces and the
-posting, each as the model is shown it. If it comes to more than the effective
+posting, each as the model is shown it, and, for a message that compares offers,
+the offers (see "Comparing saved offers with the CV"). If it comes to more than the effective
 limit the message is **refused before any model call** as `context_limit`, and
 the message says how much each part came to. Nothing is cut to fit: half of a
 piece sent under the name of the whole is something the record could not say.
@@ -750,7 +767,7 @@ it which tools to offer.
 
 - `size.parts` is what the message is made of, in characters, as it is held to the
   limit (see "A limit on the whole message"): `history`, `summary`, `posting`
-  and `picks`. A capability that is not measured answers `{}` and `0`; only
+  and `picks`, and `offers` for a message that compares some (absent otherwise). A capability that is not measured answers `{}` and `0`; only
   `ask_profile` is. `limit` is the one that binds, or `null`.
 - `degraded` names what a run would go without, as a run's own `degraded` does:
   a pin that a conversation excluded is `pins`.
@@ -819,3 +836,210 @@ caught. The run's own record says what it was given.
    rows as the "based on" list) and `grounding.suggested`.
 4. Send with `approved: { planDigest }`.
 5. On `plan_conflict`, do not send. Preview again and show what changed.
+
+# Comparing saved offers with the CV
+
+A person who has saved some offers can ask which of them fit their CV best. A
+runtime that lists `grounding-offers` in `protocol.get` supports all of this. It
+changes nothing for a message that names no offers: that message, and what comes
+back for it, are what they were.
+
+Nothing here asks a model to decide anything. The runtime turns the offers into
+short cards, finds the parts of the CV that mention what the offers ask for, and
+puts those in front of a model that has **no tools**. Every block the model reads is
+an entry of the record, so a claim in the answer can be held against the block it
+came from.
+
+## input.grounding
+
+```json
+{
+  "question": "Which of these fits me best?",
+  "grounding": {
+    "offerIds": ["8f1c2a54-...", "3be7d9a0-..."],
+    "preferences": "Remote, no on-call, B2B.",
+    "cite": true
+  }
+}
+```
+
+- `offerIds`: the saved offers to compare, at most 100, each once (a repeat is
+  dropped, and which offers are compared does not depend on the order the host
+  sent them in; `left.missing` and `left.excluded` follow it). More is
+  `invalid_input`. An empty list is a message that compares none.
+- `preferences`: what the person wants of a job, in their words, at most 2,000
+  characters. Studio keeps the person's preferences and the runtime keeps none:
+  send them with the message, or leave them out. Blank is the same as absent.
+- `cite`: `true` numbers every block the model is given and tells it to cite the
+  numbers (see "Citations"). Default: off. It does nothing when there is nothing to
+  number.
+- A message that compares offers is only ever answered from what it is given.
+  `reach` has no effect on it, and the model is offered no tools and is not asked
+  which to offer.
+- `offerIds` may come with `once` and with the pins of the conversation: those
+  pieces of the CV are sent first, as they are for any message.
+- `preferences` and `cite` without `offerIds` are not an error. `preferences` are
+  ignored, and `cite` numbers the pieces, if there are any.
+
+Only a conversation about a CV compares offers. A message that names offers in a
+conversation about one saved offer, or in a run that has no conversation, fails as
+`needs_unmet` before any model call: "offers: Offers can be compared only in a
+conversation about a CV."
+
+## Which offers are compared
+
+Each id is one of five things, decided in this order and told apart in the result:
+
+| | Meaning | Said as |
+| --- | --- | --- |
+| excluded | the conversation left the whole offer out (`offers:<id>`). It is never read | `left.excluded` |
+| missing | no saved offer has that id | `left.missing` |
+| on the Board | the offer is on the Board and has its own preparation. An archived entry is not on it | `left.board` |
+| cut | more are left than the 25 that are compared | `left.cut` |
+| compared | everything else | `compared` |
+
+The offers compared are the ones **seen most recently** (`lastSeenAt`, then the
+offer's id, so the same ids always give the same list). Nothing rates an offer yet,
+and recency is the one order the store can vouch for. An offer on the Board does not
+take one of the 25 places.
+
+If nothing can be compared the message fails as `needs_unmet` before any model call,
+and the message says why:
+
+> offers: None of the 3 offers named can be compared: 1 is left out of this
+> conversation, 1 not saved, 1 already on the Board.
+
+If some are compared and some are not, the message is answered, and `degraded`
+names `offers`.
+
+## What the model is given
+
+A model is told it has no tools and has only what follows, to put the offers in
+order and say why, to name the employer or role in the CV each claim came from, and
+to say plainly when what it was given does not say. Then, in this order, and each
+under a label that says it is source data and not instructions:
+
+1. the pieces of the CV the pins and attachments chose (`SELECTED CV PARTS`), as
+   always;
+2. `PREFERENCES — SOURCE DATA`: the preferences as the person wrote them, trimmed,
+   or "None were supplied.";
+3. `SAVED OFFERS TO COMPARE — SOURCE DATA`: one card per offer;
+4. `PARTS OF THE CV THAT MENTION THEIR SKILLS — SOURCE DATA`: the evidence, or "None
+   of the skills the offers list appears in the CV."
+
+A card is the offer's own fields and the start of its posting, at most 500
+characters, and never half a skill or half a word:
+
+```
+Offer: Backend Engineer at Initech Labs
+Where: Krakow, hybrid
+Level: senior, B2B
+Salary: 20000 PLN
+Skills: Python, Postgres
+Posting: We build billing in Python for banks across Poland and need someone ...
+```
+
+Its labels are English whatever language the posting is in.
+
+**The evidence** is the CV's own words, found without a model: the skills an offer
+lists are compared, as whole words and without regard to case, with what each part
+of the CV says. A skill shorter than two characters is not compared, and the personal
+details are never evidence. A part counts once for each skill of each offer that it
+mentions. The best eight stay, put in the order of the CV. The search index is not
+used. A part a pin or an attachment already sends is not sent a second time.
+
+**The room.** The offers, the preferences and the evidence come to at most 30,000
+characters. The cards and the preferences are what was asked for and are never cut;
+evidence is kept best first while it fits, and what does not fit is left out whole.
+This is counted as the posting is, in the limit of the conversation: a message that
+compares offers carries no posting, so the two are not both at their baseline.
+
+## What a message gets back
+
+```json
+"offers": {
+  "compared": ["8f1c2a54-..."],
+  "left": { "excluded": [], "missing": ["3be7d9a0-..."], "board": [], "cut": [] },
+  "preferences": "supplied"
+},
+"grounding": {
+  "included": ["offers:8f1c2a54-.../card", "cv:ctx/overview/skills", "cv:ctx/experience/acme~senior-engineer"],
+  "blocked": [],
+  "gone": ["offers:3be7d9a0-..."],
+  "suggested": []
+},
+"cited": ["offers:8f1c2a54-.../card"],
+"unresolved": [9]
+```
+
+- `offers` is there when the message compared offers, and absent otherwise.
+  `compared` is in the order the cards were given. `preferences` is `supplied` or
+  `absent`.
+- `grounding` lists what every step sent, the pieces first. An offer the
+  conversation left out is `blocked` as `offers:<id>`, one that is not saved is
+  `gone`.
+- `cited` and `unresolved` are there only when `cite` was on and there was
+  something to number.
+
+## The record
+
+- A card is an `included` entry `offers:<id>/card`, `origin: server`,
+  `via: ground:offer`, with no version. `digest` is of what the card was made from,
+  and moves if the offer changes in any way a card is made of; `shown` is of the card
+  as the model read it. An offer being seen again does not move either.
+- A part of the CV found as evidence is an `included` entry as a piece is, with
+  `via: ground:evidence`.
+- The preferences are an `included` entry `preferences:request`, `origin: client`,
+  `via: input`: the host's own words, said to be so.
+- An offer the conversation left out is a `blocked` entry `offers:<id>`,
+  `via: ground:offer`, written when the message is assembled. It is never read.
+- The record is written before the model call, as always.
+
+## Citations
+
+With `cite: true` every block the model is given is numbered `[1]`, `[2]`, ... in
+the order the record lists them, across the sections: the number of a block is its
+place among the `included` entries of the record that were sent. What is said of the
+preferences being absent, or of the CV matching nothing, is the runtime's own
+statement and carries no number. The model is told to write the number after a
+statement that rests on a block, and no number that is not given.
+
+The answer is then read for `[3]` and `[2, 5]`, and nothing else. `cited` is the
+refs of the entries those numbers stand for, once each, in the order they first
+appear. `unresolved` is the numbers that stand for no entry, `[0]` included. No
+entry is guessed for one. A model can still cite wrongly: a number that does resolve
+says which block the claim was attributed to, not that the block says it. The host
+shows it as that, and opens the block.
+
+## When the answer cannot be given
+
+- `needs_unmet`: nothing can be compared, or this is not a conversation about a CV.
+- `invalid_input`: more than 100 ids, an empty id, preferences over 2,000
+  characters, or `cite` that is not a boolean.
+- `context_limit`: the message is over the conversation's limit. The message says
+  `offers` and how much they came to. Before any model call.
+- A run that waited for an approval and is resumed after an offer it was given
+  changed, or was left out since, fails as `grounding_stale` with the address of its
+  card in the message. An offer that has gone onto the Board since is not stale: the
+  person approved a comparison that had it.
+
+## Preview
+
+`run.preview` of a message that compares offers answers `size.parts.offers` (both
+modes), and with `full` the field `offers` as above and `entries` that include the
+cards, the evidence and the preferences. `planDigest` moves with the cards and the
+evidence that are sent, with the preferences, and with the offers that are compared;
+it does not move for an offer that was not named, for an offer seen again, for a
+part of the CV that no offer mentions, or for `cite`.
+
+## Suggested UI
+
+1. Check `grounding-offers` in `protocol.get`. Without it, offer no picker.
+2. Let the person pick saved offers, not more than 25 at a time. Show `offers.left`
+   after a message as notes next to the offers it names: left out of the
+   conversation, not saved, on the Board, beyond the ones compared. Do not call
+   them errors.
+3. Offer a place for the person's preferences, and send them with the message.
+4. Send `cite: true`. Show each number in an answer as a chip that opens what it
+   stands for (`cited`), and show `unresolved` numbers as not found, not as links.
+5. Show a preview before sending, with `size.parts.offers` against the limit.

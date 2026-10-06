@@ -53,10 +53,11 @@ type Sends = {
 
   /**
    * The name of an earlier step that made part of this call's input and says what
-   * it is made of (`Grounded`). Its entries are recorded as the call goes out, for
-   * the same reason `sends` is: a call that never goes out has sent nothing.
+   * it is made of (`Grounded`), or the names of several. Their entries are recorded
+   * as the call goes out, for the same reason `sends` is: a call that never goes
+   * out has sent nothing.
    */
-  readonly groundedFrom?: string;
+  readonly groundedFrom?: string | readonly string[];
 };
 
 /**
