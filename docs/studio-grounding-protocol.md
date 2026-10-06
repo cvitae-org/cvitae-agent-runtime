@@ -26,6 +26,13 @@ conversation the runtime keeps"). Without it, keep sending `history` and
 `summary` as before, and know that they stay outside the guarantee. With it,
 stop sending them.
 
+The feature `grounding-assembly` says a person can choose what a message is made
+from (see "Choosing what a message is made from"): `selection.update` takes `pin`
+and `unpin`, `selection.get` returns `pins`, `ask_profile` takes `input.grounding`
+and says what it did with it, and an entry in a record may have the status
+`blocked`. Without it, show no pin toggle and no attach chip, and send no
+`grounding` field.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -105,17 +112,21 @@ An entry names a piece and says what happened to it. It never holds the text.
 - `shown` is present only when what the model received is not the whole
   original, for example a posting that was cut to fit. It is the digest of the
   part that was sent. Show such an entry as "partly shown".
-- `status` is `included` or `read`.
+- `status` is `included`, `read` or `blocked`.
   - `included`: the piece was in a model call or in a result handed to the
     model. The record says exactly which.
   - `read`: the run read it through a port. Whether and in what form it reached
     the model is not known. Reads are recorded on top of `included` entries on
     purpose. Do not list them as "based on".
+  - `blocked`: a message asked for the piece and the runtime held it back,
+    because the conversation excludes it. Its `digest` is of the address, since
+    nothing of the piece was read. Do not list it as "based on".
   - A status you do not know means the piece did not reach the model.
 - `origin` is `server` or `client`. `client` is whatever the app sent in the
   request. The runtime did not read it from a well and does not vouch for it.
 - `via` is the channel it arrived by: `input`, `tool:read_cv`,
-  `tool:search_profile`, `port:documents`, `port:retrieval`.
+  `tool:search_profile`, `port:documents`, `port:retrieval`, and for a piece a
+  message was made from, `ground:pin`, `ground:once` or `ground:auto`.
 
 ## What is recorded
 
@@ -391,3 +402,218 @@ offer toggle without the flag.
    offer's key is its id, and an offer saved again under a new id is not
    excluded. Earlier answers stay on screen. Say that the model no longer sees
    the ones built on an excluded offer.
+
+# Choosing what a message is made from
+
+Until now the model looked for what it needed with its tools, and the selection
+could only take pieces away. A person can also say which pieces of the CV a
+message is made from. A runtime that lists `grounding-assembly` in
+`protocol.get` supports all of this, and a message that asks for none of it is
+run as it always was: with no `input.grounding`, no pins and no exclusions the
+payloads of a run are byte for byte what they were.
+
+Three ways to choose, from the most lasting to the least:
+
+- A **pin** keeps a piece in every message of one conversation until it is
+  unpinned. It belongs to the conversation's selection.
+- An **attachment** (`once`) sends a piece with one message only.
+- **`auto`** lets the runtime add pieces it picked for the question.
+
+An exclusion beats all three: an excluded piece is never sent, pinned or not.
+
+## Pins
+
+`selection.get` has one more field, next to `exclusions`:
+
+```json
+{
+  "revision": 4,
+  "exclusions": [],
+  "pins": [
+    { "ref": "cv:9d5e0c1a-5b0e-4d56-9a3a-3f0f6f2f7c11/experience/acme~senior-engineer", "state": "live" },
+    { "ref": "cv:9d5e0c1a-5b0e-4d56-9a3a-3f0f6f2f7c11/overview/skills", "state": "blocked" }
+  ]
+}
+```
+
+- `pins` are in the order they were pinned. A conversation with none answers an
+  empty list.
+- `state` is `live` (the piece is in the CV now), `gone` (nothing carries that
+  address any more, as for an exclusion) or `blocked` (an exclusion covers it
+  now, whatever else is true). A `gone` pin sends nothing until something has
+  that address again. A `blocked` pin is kept, and sends nothing until the
+  exclusion is cleared.
+- Pins share the revision with the exclusions. One `selection.update` may carry
+  both, and a change that changes nothing leaves the revision alone.
+
+`selection.update {conversationId, expectedRevision, exclude, clear, pin, unpin}`.
+`pin` and `unpin` are lists of at most 50 refs each, both optional.
+
+- Applied in this order: `clear`, `unpin`, `exclude`, `pin`. A piece pinned twice
+  is one pin, and an `unpin` of what is not pinned changes nothing.
+- A pin is a section or an entry of the conversation's own CV, with no `@version`
+  and no `#digest`: `cv:<id>/experience`, `cv:<id>/overview/skills`,
+  `cv:<id>/experience/acme~senior-engineer`. Not the whole CV, not another
+  CV, not an offer, and only a conversation about a CV can pin. Anything else is
+  `invalid_selection` with a message to show, `invalid_ref` for an address that
+  does not parse. Unpinning is not held to this, as clearing is not.
+- A conversation pins at most 20 pieces. More is `selection_limit`, and nothing
+  of that change is kept.
+- `selection_conflict` carries the current `revision`, `exclusions` and `pins`.
+- A pin is kept across restarts and goes with its conversation.
+
+A pin applies to every message of the conversation, whether or not the message
+has an `input.grounding`.
+
+## input.grounding
+
+`ask_profile` takes one more optional field, `grounding`:
+
+```json
+{
+  "question": "What did I do at Acme?",
+  "grounding": {
+    "once": ["cv:9d5e0c1a-5b0e-4d56-9a3a-3f0f6f2f7c11/education"],
+    "reach": "free",
+    "auto": "off"
+  }
+}
+```
+
+- `once`: pieces to send with this message only, at most 12, written like a pin.
+  An address with a version or a digest, or one that is not an address, is
+  `invalid_input`. The same piece written two ways counts once. An address that
+  is not a section or an entry of this conversation's own CV fails the run as
+  `invalid_selection` before any model call. Default: none.
+- `reach`: `free` leaves the model its tools, as before. `selected` takes them
+  away: the model answers from the pieces and the conversation summary, and from
+  nothing else. No call to pick tools is made either. Default: `free`.
+- `auto`: `off` adds nothing. `suggest` names the pieces the runtime would add
+  and sends none. `on` sends them. Default: `off`, and it stays the default until
+  it has been measured against the tools alone.
+- Keys it does not know are ignored.
+
+### What the model is given
+
+The pieces come first in the order they were asked for: the pins, then the
+attachments, then what `auto` adds. A piece asked for twice is sent once, by the
+first to ask. They are written out as plain text, one block each, under a label
+that says they are source data and not instructions:
+
+```
+SELECTED CV PARTS — SOURCE DATA:
+Experience, Senior Engineer at Acme:
+2021 - present
+- Led the migration to Postgres
+
+Skills:
+Languages: TypeScript, Go
+```
+
+A section is each of its entries, and the overview is its three items, name and
+contact details first. A part with nothing in it sends nothing.
+
+- All the pieces of one message together come to at most 12,000 characters, the
+  blocks and the two-character separator between them counted. More is refused
+  as `grounding_budget`, before any model call, and nothing is cut to fit: half
+  of a piece under the name of the whole is not a thing the record could say.
+  The message says how much it came to. Ask the person to unpin or detach
+  something, or to choose entries instead of whole sections.
+- `auto: on` adds only what still fits. It searches the CV for the question, looks
+  at the six best passages and adds the pieces they came from. A search that
+  does not answer is not an error: the message goes on without it and the result
+  says `auto: "failed"`.
+- A piece the runtime sends is as the CV holds it now. The model is given no
+  revision of it.
+
+### What a message gets back
+
+When any piece was asked for (a pin, an attachment or `auto`) the result of
+`ask_profile` carries one more field. It is absent otherwise, so the result of a
+message that asked for nothing is the one it always was.
+
+```json
+"grounding": {
+  "included": ["cv:9d5e0c1a-.../experience/acme~senior-engineer"],
+  "blocked": ["cv:9d5e0c1a-.../overview/personal"],
+  "gone": ["cv:9d5e0c1a-.../experience/initech~analyst"],
+  "suggested": [],
+  "auto": "failed"
+}
+```
+
+- `included`: what was sent, as the entries of the record name it.
+- `blocked`: what was asked for and held back because the conversation excludes
+  it. It names the address that was asked for: a section when the section was
+  asked for, and the entry when only that entry is excluded. Say so next to the
+  piece, and do not call it an error: the message was answered without it.
+- `gone`: what was asked for and is not in the CV any more.
+- `suggested`: with `auto: suggest`, the pieces the runtime would add. Offer them
+  as chips the person can attach to the next message. Nothing of them was sent.
+- `auto`: present only as `failed`.
+- When something was asked for and held back, `degraded` of the run names
+  `pins` or `once` (or both), the same way an optional need is named. A piece
+  that is only `gone` does not count as held back.
+
+### The record
+
+Each piece sent is an `included` entry with `origin: server`, `version` the
+document revision and `digest` of the piece as stored, and `via` of
+`ground:pin`, `ground:once` or `ground:auto`. It is written before the model call
+that is given it, like any entry. Each piece held back is a `blocked` entry with
+the same `via`. A client that does not know `blocked` must ignore it, as for any
+status it does not know.
+
+Assembling reads the CV through the document port, so the record also has a
+`read` entry for the whole CV, `via: port:documents`. It is not a "based on"
+entry.
+
+### When the answer cannot be given
+
+- `reach: selected` with nothing to answer from fails the run as `needs_unmet`
+  before any model call, and the message says what was missing. Something to
+  answer from is a pin or an attachment that is not excluded, or `auto: on`.
+  A `reach: selected` message whose only pieces are blocked is this case.
+- `needs_unmet` is also what a resumed run gets when what it requires is no
+  longer there.
+- `grounding_budget`: see above.
+- A run that waited for an approval and is resumed after a piece it was made from
+  changed, was excluded since, or is gone, fails as `grounding_stale` with the
+  addresses in the message. The run's answer would rest on text that is no
+  longer the CV's, so it is not given. Ask the question again.
+- An edit to the CV reaches the next message as the CV is then, with the pin
+  unchanged: a pin holds an address and not the text it had when it was pinned.
+
+## Limits
+
+| What | Limit | Over it |
+| --- | --- | --- |
+| Pins in one conversation | 20 | `selection_limit` |
+| Refs in `pin` or `unpin` of one update | 50 each | `invalid_input` |
+| Attachments to one message | 12 | `invalid_input` |
+| Characters of pieces in one message | 12,000 | `grounding_budget` |
+
+## Suggested pin and attach UI
+
+1. Check `grounding-assembly` in `protocol.get`. Without it, show none of this.
+2. A pin toggle on each section and entry of the CV, shown beside the exclude
+   toggle. Pinning sends `selection.update` with `pin`, with the same
+   `expectedRevision` handling. Show `pins` from the answer. A piece that is
+   both pinned and excluded is `blocked`: show it dimmed and say that the
+   exclusion wins.
+3. Show a `gone` pin as "no longer matches anything", like a gone exclusion, with
+   a way to unpin it.
+4. A chip for an attachment on the message being written, which goes in
+   `grounding.once` and is not kept for the next message.
+5. When the result has `grounding.suggested`, show each as a chip. Choosing one
+   attaches it to the next message.
+6. Show `grounding.blocked` as "held back" next to the answer, and `gone` as
+   "no longer in your CV".
+7. Offer "answer from these only" as `reach: selected`, and turn it off for a
+   message with nothing pinned or attached: it would be `needs_unmet`.
+8. Show the size a message will come to, in characters, against the 12,000, so
+   `grounding_budget` is a thing the person saw coming.
+9. In the "based on" list, group what a message was made from separately from what
+   the model went and read: entries with `via` of `ground:*` were chosen by the
+   person (or by `auto`), and entries with `via` of `tool:*` were looked up by the
+   model.
