@@ -25,17 +25,18 @@
  */
 
 import { z } from 'zod';
-import { PICKS_BUDGET, groundingSchema } from '../context/ground.js';
+import { PICKS_BUDGET, POSTING_LIMIT, groundingSchema } from '../context/ground.js';
 import {
   SUMMARY_BUDGET,
   historySchema,
   summarySchema
 } from '../context/conversation.js';
 import { compose, excerpt, labelled } from '../context/render.js';
+import type { Material } from '../context/limits.js';
 import { selectTools } from '../context/tools.js';
 import { GROUNDED } from '../contracts/index.js';
 import type { Capability, Grounded, Plan, RunContext, StepContext } from '../contracts/index.js';
-import { GROUND_STEP, cvNeeds, groundStep } from './cv/assembly.js';
+import { GROUND_STEP, cvNeeds, groundStep, sizeNeeds } from './cv/assembly.js';
 import { READ_CV_TOOL } from './cv/tools.js';
 
 export const inputSchema = z.object({
@@ -146,10 +147,18 @@ const picksOf = (input: AskProfileInput, context: RunContext): boolean =>
   || (input.grounding?.auto ?? 'off') !== 'off'
   || (context.pins?.pieces().length ?? 0) > 0;
 
-const SELECTION_CONTEXT_TURNS = 2;
+/**
+ * What goes along with the pieces in a message, as the model is shown it. The
+ * history is measured as its schema is, and the summary and the posting as far
+ * as they are shown (`plan`).
+ */
+const restOf = (input: AskProfileInput): Omit<Material, 'picks'> => ({
+  history: input.history.reduce((total, turn) => total + turn.text.length, 0),
+  summary: excerpt(input.summary, SUMMARY_BUDGET).text.length,
+  posting: excerpt(input.offerText ?? '', POSTING_LIMIT).text.length
+});
 
-/** How much of a captured posting the model is shown. */
-const POSTING_LIMIT = 40_000;
+const SELECTION_CONTEXT_TURNS = 2;
 
 /** What a record says the model was shown of a field, when that differs from the field as given. */
 const shownIf = (given: string | undefined, received: string): { shown?: string } =>
@@ -185,7 +194,12 @@ export const askProfile: Capability<AskProfileInput> = {
    * is the exception to "a plan is made from the input alone", and it is worth
    * knowing that the exception exists.
    */
-  needs: (input, context) => cvNeeds(input.grounding, context),
+  needs: (input, context) => [
+    ...cvNeeds(input.grounding, context),
+    // Before the plan, which may ask a model which tools to offer: a message
+    // that is going to be refused for its size is refused before anything is spent.
+    ...sizeNeeds(input.grounding, restOf(input), context)
+  ],
 
   plan: async (input, context: RunContext): Promise<Plan> => {
     const picks = picksOf(input, context);
@@ -221,7 +235,8 @@ export const askProfile: Capability<AskProfileInput> = {
                   groundStep({
                     once: input.grounding?.once ?? [],
                     auto: input.grounding?.auto ?? 'off',
-                    question: goalOf(input)
+                    question: goalOf(input),
+                    rest: restOf(input)
                   })
                 ]
               }

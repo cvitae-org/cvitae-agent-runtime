@@ -1,3 +1,4 @@
+import { groundingLimits0044 } from './migrations/0044-grounding-limits.js';
 import { groundingPins0043 } from './migrations/0043-grounding-pins.js';
 import { discoveryTurnScope0042 } from './migrations/0042-discovery-turn-scope.js';
 import { groundingSelection0041 } from './migrations/0041-grounding-selection.js';
@@ -99,7 +100,8 @@ export const migrations: readonly Migration[] = [
   { version: 40, sql: groundingRecord0040 },
   { version: 41, sql: groundingSelection0041 },
   { version: 42, sql: discoveryTurnScope0042 },
-  { version: 43, sql: groundingPins0043 }
+  { version: 43, sql: groundingPins0043 },
+  { version: 44, sql: groundingLimits0044 }
 ];
 
 export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.version), 0);

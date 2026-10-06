@@ -576,7 +576,12 @@ entry.
   A `reach: selected` message whose only pieces are blocked is this case.
 - `needs_unmet` is also what a resumed run gets when what it requires is no
   longer there.
-- `grounding_budget`: see above.
+- `grounding_budget`: see above. It is said before the plan is made, so before any
+  model is asked, and a message refused for its size makes no model call at all.
+  A runtime that lists `grounding-budget` does this; an older one said it after
+  the model had been asked which tools to offer.
+- `context_limit`: the message is over the conversation's limit
+  (see "A limit on the whole message" below). Also before any model call.
 - A run that waited for an approval and is resumed after a piece it was made from
   changed, was excluded since, or is gone, fails as `grounding_stale` with the
   addresses in the message. The run's answer would rest on text that is no
@@ -592,6 +597,7 @@ entry.
 | Refs in `pin` or `unpin` of one update | 50 each | `invalid_input` |
 | Attachments to one message | 12 | `invalid_input` |
 | Characters of pieces in one message | 12,000 | `grounding_budget` |
+| Characters of everything a message is made of | the conversation's limit, when set | `context_limit` |
 
 ## Suggested pin and attach UI
 
@@ -617,3 +623,80 @@ entry.
    the model went and read: entries with `via` of `ground:*` were chosen by the
    person (or by `auto`), and entries with `via` of `tool:*` were looked up by the
    model.
+
+# A limit on the whole message
+
+Each part of a message has a ceiling of its own: the history 6,000 characters
+and 12 turns, the summary 1,500, the pieces 12,000 and the posting 40,000. A
+model whose window is smaller than all of them together needs a ceiling over the
+sum, and a person sets it. A runtime that lists `grounding-budget` in
+`protocol.get` supports all of this. With nothing set the payloads of a run are
+byte for byte what they were.
+
+The amount is in **characters**, because there is no tokenizer in the runtime
+and a token count would be a guess drawn to look like a measurement. It can only
+lower: the ceiling below is the sum of the parts' own ceilings, so a setting at
+it binds nothing.
+
+| | Characters |
+| --- | --- |
+| Floor | 2,000 |
+| Ceiling | 60,000 |
+
+## limits.get
+
+Request `{ conversationId? }`. Without a conversation it is the global setting
+that is read. A conversation that does not exist is `not_found`.
+
+```json
+{
+  "baseline": { "history": 6000, "historyTurns": 12, "summary": 1500, "picks": 12000, "posting": 40000 },
+  "floor": 2000,
+  "ceiling": 60000,
+  "global": null,
+  "conversation": 20000,
+  "effective": 20000
+}
+```
+
+`global` and `conversation` are what is set, `null` when nothing is. `effective`
+is what binds: the conversation's own when it has one, even above the global
+one, else the global one, else `null`. Draw the setting from `floor`, `ceiling`
+and `baseline` and not from numbers of your own.
+
+## limits.set
+
+Request `{ conversationId?, context }`, `context` a whole number of characters
+or `null` to remove the setting. Without a conversation it is the global one. The
+answer is the same as `limits.get`'s, as it is now.
+
+- An amount outside the floor and the ceiling, or not a whole number, is
+  `invalid_limit`. The runtime does not clamp it: a limit that is quietly
+  changed is a number a person sees and the runtime does not honour.
+- A conversation that does not exist is `not_found`.
+- A conversation that is deleted takes its setting with it.
+
+## What happens over the limit
+
+The material of a message is the history, the summary, the pieces and the
+posting, each as the model is shown it. If it comes to more than the effective
+limit the message is **refused before any model call** as `context_limit`, and
+the message says how much each part came to. Nothing is cut to fit: half of a
+piece sent under the name of the whole is something the record could not say.
+There is also no step down to a smaller selection yet.
+
+`auto: on` adds pieces only while the message stays within the limit.
+
+The limit applies to `ask_profile` messages, for a profile conversation and for
+a conversation about a saved offer. The discovery chat is not limited by it yet.
+
+## Suggested UI
+
+1. Check `grounding-budget` in `protocol.get`. Without it, show none of this.
+2. A setting for everything, and a way to give one conversation its own, both
+   from `limits.get`. A text field is not enough: show the floor and the ceiling
+   and say that the amount is in characters.
+3. Show the size a message will come to against `effective`. `context_limit` is
+   then something the person saw coming and not a refusal.
+4. On `context_limit`, show the message as it is and offer what changes it:
+   unpin, detach, or raise the limit.

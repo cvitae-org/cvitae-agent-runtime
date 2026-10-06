@@ -216,6 +216,12 @@ export type Need = {
   readonly required: boolean;
   /** Why it cannot be met, in plain words. Absent when it can. */
   readonly unmet?: string;
+  /**
+   * The code a required need that is not met fails the run with, when it has one
+   * of its own: a limit has a name a host words, and `needs_unmet` would only say
+   * that something was not as it should be. The message is then `unmet` alone.
+   */
+  readonly code?: string;
 };
 
 /**

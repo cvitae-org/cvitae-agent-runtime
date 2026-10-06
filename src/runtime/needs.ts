@@ -25,7 +25,11 @@ export const checkNeeds = <TInput extends Record<string, unknown>>(
 
   const required = unmet.find((need) => need.required);
   if (required !== undefined) {
-    throw new OperationError('needs_unmet', `${required.name}: ${required.unmet}`);
+    // A need with a code of its own is said by it, and says only why: its name
+    // would be the code again.
+    throw required.code === undefined
+      ? new OperationError('needs_unmet', `${required.name}: ${required.unmet}`)
+      : new OperationError(required.code, required.unmet ?? required.name);
   }
   return unmet.map((need) => need.name);
 };

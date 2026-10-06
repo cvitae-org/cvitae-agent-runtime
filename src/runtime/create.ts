@@ -59,6 +59,7 @@ import { migrate } from '../storage/sqlite/migrate.js';
 import { createRunStore } from '../storage/sqlite/run-store.js';
 import { createRecordStore } from '../storage/sqlite/grounding-record.js';
 import { createSelectionStore } from '../storage/sqlite/grounding-selection.js';
+import { createLimitStore } from '../storage/sqlite/grounding-limits.js';
 import { createEventLog } from '../storage/sqlite/event-log.js';
 import { createApprovalGate, createApprovalStore } from '../storage/sqlite/approvals.js';
 import { createDocumentStore } from '../storage/sqlite/document-store.js';
@@ -124,6 +125,8 @@ import { defaultWells } from './grounding.js';
 import { createHistory } from './history.js';
 import { createSelectionService } from './selection.js';
 import type { SelectionService } from './selection.js';
+import { createLimitService } from './limits.js';
+import type { LimitService } from './limits.js';
 import type {
   AiLog,
   AiLogEntry,
@@ -287,6 +290,11 @@ export type Harness = {
    * conversation can enforce.
    */
   readonly selection: SelectionService;
+  /**
+   * The most the material of one message may come to: one setting for everything
+   * and one a conversation may have of its own, in characters.
+   */
+  readonly limits: LimitService;
   readonly events: EventLog;
   readonly documents: DocumentStore;
   /** Checked context lifecycle; legacy work must settle before transition. */
@@ -397,6 +405,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   const runs = createRunStore(db);
   const groundingRecords = createRecordStore(db);
   const selectionStore = createSelectionStore(db);
+  const limitStore = createLimitStore(db);
   const wells = defaultWells();
   const events = createEventLog(db);
   const approvals = createApprovalStore(db, options.now);
@@ -598,6 +607,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     index: chunks,
     grounding: { records: groundingRecords, wells },
     selection: selectionStore,
+    limits: limitStore,
     history: createHistory({
       conversations,
       records: groundingRecords,
@@ -697,6 +707,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     // The read half only: the type says so, and so does handing out a wrapper
     // that has no `append` for a caller that ignores the type.
     groundingRecords: { read: (runId) => groundingRecords.read(runId) },
+    limits: createLimitService({ store: limitStore, conversations }),
     selection: createSelectionService({
       store: selectionStore,
       conversations,

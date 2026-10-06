@@ -441,6 +441,23 @@ export const payloads = {
     clear: z.array(z.string().min(1).max(1024)).max(50).default([]),
     pin: z.array(z.string().min(1).max(1024)).max(50).default([]),
     unpin: z.array(z.string().min(1).max(1024)).max(50).default([])
+  }).strict(),
+
+  /**
+   * The most the material of one message may come to, in characters, as it is set
+   * for everything and for one conversation, with the numbers a window draws it
+   * from. Without a conversation it is the global setting that is read.
+   */
+  'limits.get': z.object({ conversationId: conversationId.optional() }).strict(),
+
+  /**
+   * Sets the limit, or removes it with `null`: for the one conversation named, or
+   * for everything when none is. The amount is not checked here: outside the floor
+   * and the ceiling it is refused as `invalid_limit`, which says what they are.
+   */
+  'limits.set': z.object({
+    conversationId: conversationId.optional(),
+    context: z.number().nullable()
   }).strict()
 } as const;
 

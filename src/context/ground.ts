@@ -36,6 +36,12 @@ import { isRef, parseRef, refKey } from '../grounding/index.js';
  */
 export const PICKS_BUDGET = 12_000;
 
+/**
+ * How much of a captured posting a model is shown, in characters. What a record
+ * says it was shown of the posting when it was longer.
+ */
+export const POSTING_LIMIT = 40_000;
+
 /** How many pieces one message may attach. A pin has its own limit (`MAX_PINS`). */
 export const MAX_ONCE = 12;
 

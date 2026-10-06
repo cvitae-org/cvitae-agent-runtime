@@ -30,6 +30,8 @@ import type {
   ChunkIndex,
   DocumentStore,
   EffectSet,
+  LimitStore,
+  Limits,
   Retriever,
   RunContext,
   RunResult,
@@ -82,6 +84,12 @@ export type RuntimeDeps = {
    * nothing is pinned, as before assembly.
    */
   readonly selection?: Pick<SelectionStore, 'walls'> & Partial<Pick<SelectionStore, 'pins'>>;
+  /**
+   * What a person has set as the most the material of a message may come to.
+   * Absent means nothing is set and each part is held to its own baseline only,
+   * as before limits.
+   */
+  readonly limits?: Pick<LimitStore, 'effective'>;
   /**
    * Keeps the conversation of a run whose host sent none. Absent means a run is
    * given the history and summary it was sent, and nothing else, as before.
@@ -217,6 +225,15 @@ export const buildRunContext = (
       ? undefined
       : { pieces: () => selection.pins!(conversationId!) };
 
+  // What the person has set as the most a message's material may come to, on every
+  // run that belongs to a conversation, asked again at every message. A saved
+  // offer's conversation has a limit too: it is the amount of text that is
+  // bounded, and not what the text is about.
+  const limits: Limits | undefined =
+    conversationId === undefined || deps.limits === undefined
+      ? undefined
+      : { context: () => deps.limits!.effective(conversationId!) };
+
   // Cut first and recorded after, so the record sees the stored document through
   // the cut one and can say what of it the model was shown.
   const ports =
@@ -237,6 +254,7 @@ export const buildRunContext = (
     ...(record === undefined ? {} : { record }),
     ...(walls === undefined ? {} : { walls }),
     ...(pins === undefined ? {} : { pins }),
+    ...(limits === undefined ? {} : { limits }),
     approvals: deps.gate(fields.runId, 'plan'),
     logger: deps.logger,
     // The run id is added here rather than passed by the step, because a step

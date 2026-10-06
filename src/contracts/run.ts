@@ -12,7 +12,7 @@ import type { AiLogger, EffectSet } from './effects.js';
 import type { ToolRegistry } from './tools.js';
 import type { DocumentStore } from './document-store.js';
 import type { ChunkIndex, Retriever } from './chunk-index.js';
-import type { Pins, RecordSink, Walls } from './grounding.js';
+import type { Limits, Pins, RecordSink, Walls } from './grounding.js';
 
 /* ------------------------------------------------------------------ states */
 
@@ -315,6 +315,12 @@ export type RunContext = {
    * message is prepared. Present on the same runs as `walls`.
    */
   readonly pins?: Pins;
+
+  /**
+   * What the person has set as the most the material of a message may come to.
+   * Present on every run that belongs to a conversation; absent on the others.
+   */
+  readonly limits?: Limits;
   readonly approvals: ApprovalGate;
   readonly logger: AiLogger;
 

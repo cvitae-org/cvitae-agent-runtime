@@ -298,6 +298,40 @@ export interface Pins {
   pieces(): readonly PieceRef[];
 }
 
+/**
+ * The most that the material of one message may come to, in characters, asked for
+ * when the message is prepared. Present on every run that belongs to a
+ * conversation. `context()` is `undefined` when nothing limits the run beyond what
+ * each part is held to already (`context/limits.ts`).
+ */
+export interface Limits {
+  /** The limit this run's conversation lives under now. `undefined` when there is none. */
+  context(): number | undefined;
+}
+
+/**
+ * Where a person's maximum-context setting is kept: one for everything, and one
+ * for a conversation that has its own (`/limit`).
+ *
+ * The amount is in characters, between the floor and the ceiling of
+ * `context/limits.ts`, and the store refuses anything outside them. Absent means
+ * no setting, and a conversation with none lives under the global one.
+ */
+export interface LimitStore {
+  /** The limit the conversation lives under: its own, else the global one. */
+  effective(conversationId: string): number | undefined;
+
+  /** What is set, each on its own. `undefined` is not set. */
+  read(conversationId?: string): { readonly global?: number; readonly conversation?: number };
+
+  /**
+   * Sets a limit, or removes it with `undefined`. Without a conversation it is the
+   * global one. Throws `invalid_limit` outside the floor and the ceiling, and
+   * `not_found` for a conversation that does not exist.
+   */
+  set(conversationId: string | undefined, context: number | undefined): void;
+}
+
 export interface SelectionStore {
   /** A conversation with nothing selected reads as revision 0 and no refs. */
   read(conversationId: string): Selection;

@@ -589,7 +589,8 @@ test('the migration adds the pin table and leaves what a database had before it 
       (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as { name: string }[]).map((row) => row.name);
     const before = tables();
 
-    migrate(db);
+    // Up to this migration and no further: a later one adds tables of its own.
+    migrate(db, migrations.filter((step) => step.version <= 43));
 
     assert.deepEqual(tables(), [...before, 'grounding_pin'].sort(), 'it adds one table and nothing else');
     assert.deepEqual(createSelectionStore(db).read(old.id), {

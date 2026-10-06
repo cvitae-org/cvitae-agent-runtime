@@ -41,6 +41,8 @@ import type {
 } from '../../contracts/index.js';
 import { PICKS_BUDGET } from '../../context/ground.js';
 import type { Auto, GroundingInput } from '../../context/ground.js';
+import { overLimit, roomForPicks } from '../../context/limits.js';
+import type { Material } from '../../context/limits.js';
 import { digest, isWalled, parseRef, refKey } from '../../grounding/index.js';
 import { CV_ID } from './document.js';
 import { viewOf } from './walls.js';
@@ -235,9 +237,14 @@ export type Asked = {
   readonly auto: Auto;
   /** What a search for pieces the runtime would add is made from. */
   readonly question: string;
+  /**
+   * What goes along with the pieces in the same message, when a limit may apply:
+   * the pieces are held to what is left of the conversation's limit after these.
+   */
+  readonly rest?: Omit<Material, 'picks'>;
 };
 
-type Context = Pick<RunContext, 'documents' | 'retrieval' | 'walls' | 'record' | 'signal' | 'contextId'>;
+type Context = Pick<RunContext, 'documents' | 'retrieval' | 'walls' | 'record' | 'signal' | 'contextId' | 'limits'>;
 
 const own = (ref: PieceRef, scope: string): PieceRef => {
   if (ref.well !== CV_WELL || ref.scope !== scope || ref.path.length === 0) {
@@ -249,19 +256,33 @@ const own = (ref: PieceRef, scope: string): PieceRef => {
   return ref;
 };
 
+/** What a sync pass over the pins and attachments came to, before anything the runtime adds. */
+type Collected = {
+  readonly scope: string;
+  readonly view: CvView | undefined;
+  readonly revision: number;
+  readonly blocks: string[];
+  readonly entries: RecordEntry[];
+  readonly blocked: string[];
+  readonly gone: string[];
+  readonly seen: Set<string>;
+  /** Characters the blocks come to as sent, separators counted. */
+  size: number;
+};
+
 /**
- * Renders what was asked for, and makes the entries that say so.
+ * Renders the pins and then the attachments, each in its own order, and a leaf
+ * asked for twice is sent once, by the first to ask.
  *
- * Pins are first and then the attachments, each in its own order, and a leaf
- * asked for twice is sent once, by the first to ask. `auto` comes last and only
- * adds what is left of the budget.
+ * Reads and decides, and says nothing to the record: it is what both the
+ * assembly and a measurement made before a plan are made of, so that what is
+ * measured is the text that would be sent and not a second reckoning of it.
+ * `undefined` is a message that asks for nothing of a conversation with no CV.
  */
-export const assembleCv = async (asked: Asked, context: Context): Promise<Grounded> => {
+const collect = (asked: Pick<Asked, 'pins' | 'once'>, context: Context): Collected | undefined => {
   const scope = context.contextId;
   if (scope === undefined) {
-    if (asked.pins.length === 0 && asked.once.length === 0) {
-      return { text: '', entries: [], blocked: [], gone: [], suggested: [] };
-    }
+    if (asked.pins.length === 0 && asked.once.length === 0) return undefined;
     throw new OperationError('invalid_selection', 'Pieces can be sent only with a run that is about a CV.');
   }
 
@@ -270,16 +291,22 @@ export const assembleCv = async (asked: Asked, context: Context): Promise<Ground
   const view = found === undefined ? undefined : viewOf(found);
   const revision = found?.revision ?? 0;
 
-  const blocks: string[] = [];
-  const entries: RecordEntry[] = [];
-  const blocked: string[] = [];
-  const gone: string[] = [];
-  const seen = new Set<string>();
-  let size = 0;
+  const collected: Collected = {
+    scope,
+    view,
+    revision,
+    blocks: [],
+    entries: [],
+    blocked: [],
+    gone: [],
+    seen: new Set<string>(),
+    size: 0
+  };
+  const { blocks, entries, blocked, gone, seen } = collected;
 
   const send = (leaf: Leaf, via: Via): void => {
     // The separator is counted, so the text is never longer than its budget says.
-    size += leaf.text.length + (blocks.length === 0 ? 0 : 2);
+    collected.size += leaf.text.length + (blocks.length === 0 ? 0 : 2);
     blocks.push(leaf.text);
     entries.push(included(scope, revision, leaf, via));
   };
@@ -327,13 +354,55 @@ export const assembleCv = async (asked: Asked, context: Context): Promise<Ground
     }
   }
 
+  return collected;
+};
+
+/** What the pieces a message names come to, in characters, as they would be sent. */
+export const measurePicks = (asked: Pick<Asked, 'pins' | 'once'>, context: Context): number =>
+  collect(asked, context)?.size ?? 0;
+
+/**
+ * Why pieces that come to `size` may not be sent, or nothing when they may.
+ *
+ * Two limits and the order matters: the pieces' own budget first, which holds
+ * whatever anyone has set, and then what is left of the conversation's limit.
+ */
+export const picksProblem = (
+  size: number,
+  rest: Asked['rest'],
+  limit: number | undefined
+): { readonly code: string; readonly message: string } | undefined => {
   if (size > PICKS_BUDGET) {
-    throw new OperationError(
-      'grounding_budget',
-      `The pieces chosen for this message come to ${size} characters, and at most ${PICKS_BUDGET} are sent. `
+    return {
+      code: 'grounding_budget',
+      message:
+        `The pieces chosen for this message come to ${size} characters, and at most ${PICKS_BUDGET} are sent. `
         + 'Unpin or detach something, or choose entries instead of whole sections.'
-    );
+    };
   }
+  const over = rest === undefined ? undefined : overLimit({ ...rest, picks: size }, limit);
+  return over === undefined ? undefined : { code: 'context_limit', message: over };
+};
+
+/**
+ * Renders what was asked for, and makes the entries that say so.
+ *
+ * Pins are first and then the attachments (`collect`). `auto` comes last and only
+ * adds what is left of the budget, and of the conversation's limit.
+ */
+export const assembleCv = async (asked: Asked, context: Context): Promise<Grounded> => {
+  const collected = collect(asked, context);
+  if (collected === undefined) return { text: '', entries: [], blocked: [], gone: [], suggested: [] };
+
+  const { scope, view, blocks, entries, blocked, gone, seen } = collected;
+  const limit = context.limits?.context();
+
+  const problem = picksProblem(collected.size, asked.rest, limit);
+  if (problem !== undefined) throw new OperationError(problem.code, problem.message);
+
+  // What `auto` may add up to: the pieces' own budget, less what a limit leaves
+  // out of it for the rest of the message.
+  const budget = asked.rest === undefined ? PICKS_BUDGET : roomForPicks(asked.rest, limit);
 
   const suggested: string[] = [];
   let auto: Grounded['auto'];
@@ -355,8 +424,10 @@ export const assembleCv = async (asked: Asked, context: Context): Promise<Ground
 
         if (asked.auto === 'suggest') {
           suggested.push(at);
-        } else if (size + leaf.leaf.text.length + (blocks.length === 0 ? 0 : 2) <= PICKS_BUDGET) {
-          send(leaf.leaf, VIA.auto);
+        } else if (collected.size + leaf.leaf.text.length + (blocks.length === 0 ? 0 : 2) <= budget) {
+          collected.size += leaf.leaf.text.length + (blocks.length === 0 ? 0 : 2);
+          blocks.push(leaf.leaf.text);
+          entries.push(included(scope, collected.revision, leaf.leaf, VIA.auto));
         }
       }
     } catch (error) {
@@ -447,6 +518,41 @@ export const cvNeeds = (grounding: GroundingInput | undefined, context: RunConte
   }
 
   return needs;
+};
+
+/**
+ * What a message needs to be within its limits before a plan is made, which is
+ * before any model is asked.
+ *
+ * Measured with the same pass the assembly is made of (`collect`), so a message
+ * that passes here is not refused by the assembly for the size it was measured
+ * at. A message that sends no pieces and has no limit reads nothing at all.
+ *
+ * `rest` is the other material of the message, which the capability knows and
+ * this does not. The two codes are the ones a host words: `grounding_budget`
+ * when the pieces alone are too many, `context_limit` when the message as a whole
+ * is more than the conversation is limited to.
+ */
+export const sizeNeeds = (
+  grounding: GroundingInput | undefined,
+  rest: Asked['rest'],
+  context: RunContext
+): Need[] => {
+  const pins = context.pins?.pieces() ?? [];
+  const once = grounding?.once ?? [];
+  const picks = pins.length + once.length === 0 ? 0 : measurePicks({ pins, once }, context);
+
+  const problem = picksProblem(picks, rest, context.limits?.context());
+  return problem === undefined
+    ? []
+    : [
+        {
+          name: problem.code === 'grounding_budget' ? 'budget' : 'limit',
+          required: true,
+          code: problem.code,
+          unmet: problem.message
+        }
+      ];
 };
 
 /* ------------------------------------------------------------------- stale */
