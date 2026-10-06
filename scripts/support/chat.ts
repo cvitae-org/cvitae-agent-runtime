@@ -115,6 +115,11 @@ export type ChatOptions = {
   readonly answer?: (request: ToolLoopRequest) => string;
   /** Capabilities of a test's own, beside the real ones. */
   readonly probes?: CapabilityMap;
+  /**
+   * What a structured call (an extraction, a proposal) answers with, given what it
+   * was asked. By default the plan of an ask, which is the only one the others need.
+   */
+  readonly object?: (request: { readonly step?: string; readonly system?: string; readonly prompt?: string }) => unknown;
 };
 
 export type Chat = {
@@ -158,7 +163,8 @@ export const chat = (options: ChatOptions = {}): Chat => {
     ai: {
       generateObject: async (request) => {
         requests.push({ kind: 'plan', system: request.system ?? '', prompt: request.prompt ?? '', history: [], tools: [] });
-        return { object: { tools: ['search_profile', 'read_cv'] } as never, finishReason: 'stop', usage: {} };
+        const object = options.object?.(request) ?? { tools: ['search_profile', 'read_cv'] };
+        return { object: object as never, finishReason: 'stop', usage: {} };
       },
       generateText: async (request) => {
         requests.push({ kind: 'text', system: request.system ?? '', prompt: request.prompt ?? '', history: [], tools: [] });

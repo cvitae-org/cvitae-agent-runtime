@@ -141,6 +141,22 @@ export const createConversationStore = (
 
   const remove = db.prepare<[string]>('DELETE FROM conversations WHERE id = ?');
 
+  // What the runs of a conversation left behind goes with it: their rows, which
+  // carry the answers' results, and their records of what each was given. Only
+  // runs that have ended, since a run still going is writing to its row and is
+  // not a past answer, and not a run a proposal still points at, since the
+  // proposal outlives the chat that made it and is the person's to accept or
+  // discard. A record is not kept for such a run: it is a note about the chat.
+  const SETTLED = "('succeeded', 'failed', 'cancelled')";
+  const dropRecords = db.prepare<[string]>(
+    `DELETE FROM grounding_record
+      WHERE conversation_id = ? AND run_id IN (SELECT id FROM runs WHERE status IN ${SETTLED})`
+  );
+  const dropRuns = db.prepare<[string]>(
+    `DELETE FROM runs
+      WHERE conversation_id = ? AND status IN ${SETTLED} AND id NOT IN (SELECT id FROM cv_proposals)`
+  );
+
   // `max(summarised_through, ?)` in the statement rather than a read followed by
   // a compare, so the marker cannot go backwards even between two writers — and
   // so the guarantee lives in the one place that does the writing.
@@ -200,14 +216,16 @@ export const createConversationStore = (
         if (snapshot && (!run || run.offer_snapshot_id !== snapshot.id)) {
           throw new CvContextError('context_conflict', 'Run does not belong to this snapshot.');
         }
-        if (run) {
-          if (run.conversation_id !== null && run.conversation_id !== conversationId) {
-            throw new CvContextError('context_conflict', 'Run belongs to another conversation.');
-          }
-          const conversation = byId.get(conversationId) as ConversationRow | undefined;
-          if (!run.offer_snapshot_id && (run.context_id !== null || conversation?.subject_kind === 'profile')) {
-            requireConversationContext(db, conversationId, run.context_id ?? 'cv');
-          }
+        // A run that is not kept cannot be pointed at: its chat was deleted and took it
+        // along, and it is no more to be attached to another chat than it was to be
+        // while its own was there.
+        if (!run) throw new CvContextError('context_conflict', 'Run is not kept: it went with a conversation that was deleted.');
+        if (run.conversation_id !== null && run.conversation_id !== conversationId) {
+          throw new CvContextError('context_conflict', 'Run belongs to another conversation.');
+        }
+        const conversation = byId.get(conversationId) as ConversationRow | undefined;
+        if (!run.offer_snapshot_id && (run.context_id !== null || conversation?.subject_kind === 'profile')) {
+          requireConversationContext(db, conversationId, run.context_id ?? 'cv');
         }
       }
       const at = now();
@@ -279,7 +297,11 @@ export const createConversationStore = (
 
     delete: (id) => {
       if ((byId.get(id) as ConversationRow | undefined)?.subject_kind === 'discovery') throw new CvContextError('context_conflict', 'Delete the saved search to delete its conversation.');
-      return remove.run(id).changes > 0;
+      return db.transaction((): boolean => {
+        dropRecords.run(id);
+        dropRuns.run(id);
+        return remove.run(id).changes > 0;
+      })();
     }
   };
 };

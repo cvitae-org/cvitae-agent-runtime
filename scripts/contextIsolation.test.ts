@@ -66,7 +66,7 @@ test('context mismatch is refused before creating a run and cannot be appended t
     const sameContext = h.conversations.create({ kind: 'profile', id: pl.id });
     assert.throws(() => h.conversations.append(sameContext.id, { role: 'assistant', text: 'wrong chat', runId: 'good' }), { code: 'context_conflict' });
     h.conversations.delete(chat.id);
-    assert.equal(h.runs.get('good')?.conversationId, chat.id, 'deleted conversations retain historical ownership');
+    assert.equal(h.runs.get('good'), undefined, 'a deleted conversation takes its settled runs with it');
     assert.throws(() => h.conversations.append(sameContext.id, { role: 'assistant', text: 'reattached', runId: 'good' }), { code: 'context_conflict' });
     assert.equal(h.conversations.read(other.id)?.messages.length, 0);
     assert.throws(() => h.begin({ capability: 'probe', input: {} }), { code: 'invalid_input' });

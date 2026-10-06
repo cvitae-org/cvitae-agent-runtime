@@ -76,6 +76,8 @@ export type Preview = {
     readonly blocked: readonly string[];
     readonly gone: readonly string[];
     readonly suggested: readonly string[];
+    /** The pieces sent in a shorter form, when any were. */
+    readonly compacted?: readonly string[];
     readonly auto?: 'failed';
   };
 };
@@ -225,6 +227,9 @@ export const previewRun = async (deps: RuntimeDeps, request: PreviewRequest): Pr
             blocked: grounded.flatMap((each) => each.blocked),
             gone: grounded.flatMap((each) => each.gone),
             suggested: grounded.flatMap((each) => each.suggested),
+            ...(grounded.some((each) => (each.compacted?.length ?? 0) > 0)
+              ? { compacted: grounded.flatMap((each) => each.compacted ?? []) }
+              : {}),
             ...(grounded.some((each) => each.auto === 'failed') ? { auto: 'failed' as const } : {})
           }
         })

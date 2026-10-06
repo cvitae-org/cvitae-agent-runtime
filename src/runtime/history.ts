@@ -79,7 +79,7 @@ export type HistorySupplier = {
 };
 
 /** One answer, with the question it answered when it directly follows one. */
-type Answer = {
+export type Answer = {
   readonly key: string;
   readonly runId: string | undefined;
   readonly seq: number;
@@ -87,7 +87,7 @@ type Answer = {
   readonly assistant: Message;
 };
 
-const answersOf = (messages: readonly Message[]): Answer[] =>
+export const answersOf = (messages: readonly Message[]): Answer[] =>
   messages.flatMap((message, at) => {
     if (message.role !== 'assistant') return [];
     const before = messages[at - 1];
@@ -110,7 +110,55 @@ const answersOf = (messages: readonly Message[]): Answer[] =>
 
 const unknown: Source = { known: false };
 
-const settled = (text: string): boolean => text.trim() !== '';
+export const settled = (text: string): boolean => text.trim() !== '';
+
+/** What a conversation has, as `ConversationStore.read` gives it. */
+type Found = NonNullable<ReturnType<ConversationStore['read']>>;
+
+/**
+ * Which answers of a conversation the walls withhold, by the taint rule: the
+ * answers, each as it is keyed, and a test for one by its key. Built from the
+ * conversation's records as they are now, so it answers for the exclusions as they
+ * are now. Both what a run is given of the conversation and what a fold may
+ * carry into a summary ask it, so that the two cannot disagree about it.
+ */
+export const traceAnswers = (
+  deps: HistoryDeps,
+  conversationId: string,
+  found: Found
+): { readonly answers: readonly Answer[]; readonly withheld: (key: string) => boolean } => {
+  const answers = answersOf(found.messages);
+  const walls = deps.walls(conversationId);
+
+  const byRun = new Map(deps.records.byConversation(conversationId).map((each) => [each.record.runId, each]));
+  const source = (key: string): Source => {
+    if (!key.startsWith(RUN_KEY)) return unknown;
+    const each = byRun.get(key.slice(RUN_KEY.length));
+    if (each === undefined || each.record.state !== 'closed') return unknown;
+    if (each.capability === undefined || deps.capabilities[each.capability]?.recorded !== true) return unknown;
+    return { known: true, entries: each.record.entries };
+  };
+
+  /** The answers an entry of a record carried into the run it belongs to. */
+  const carried = (entry: RecordEntry): string[] => {
+    const ref = parseRef(entry.ref);
+    if (ref.well !== CONVERSATION_WELL || ref.scope !== conversationId) return [];
+    const [section, item] = ref.path;
+
+    if (section === 'history' && item !== undefined) return [item];
+    if (section === 'summary') {
+      // Made from every message up to the version it names. One that names no
+      // version is taken to be made from them all: not knowing is not a reason
+      // to hand it over.
+      const named = /^\d+$/.test(entry.version ?? '');
+      const through = Number(entry.version);
+      return answers.filter((each) => !named || each.seq <= through).map((each) => each.key);
+    }
+    return [];
+  };
+
+  return { answers, withheld: createTaint({ walls, source, carried }) };
+};
 
 export const createHistory = (deps: HistoryDeps): HistorySupplier => ({
   supply: ({ capability, conversationId, runId, input }) => {
@@ -124,38 +172,8 @@ export const createHistory = (deps: HistoryDeps): HistorySupplier => ({
     const found = deps.conversations.read(conversationId);
     if (found === undefined) return undefined;
 
-    const answers = answersOf(found.messages);
+    const { answers, withheld } = traceAnswers(deps, conversationId, found);
     const folded = found.conversation.summarisedThrough;
-    const walls = deps.walls(conversationId);
-
-    const byRun = new Map(deps.records.byConversation(conversationId).map((each) => [each.record.runId, each]));
-    const source = (key: string): Source => {
-      if (!key.startsWith(RUN_KEY)) return unknown;
-      const each = byRun.get(key.slice(RUN_KEY.length));
-      if (each === undefined || each.record.state !== 'closed') return unknown;
-      if (each.capability === undefined || deps.capabilities[each.capability]?.recorded !== true) return unknown;
-      return { known: true, entries: each.record.entries };
-    };
-
-    /** The answers an entry of a record carried into the run it belongs to. */
-    const carried = (entry: RecordEntry): string[] => {
-      const ref = parseRef(entry.ref);
-      if (ref.well !== CONVERSATION_WELL || ref.scope !== conversationId) return [];
-      const [section, item] = ref.path;
-
-      if (section === 'history' && item !== undefined) return [item];
-      if (section === 'summary') {
-        // Made from every message up to the version it names. One that names no
-        // version is taken to be made from them all: not knowing is not a reason
-        // to hand it over.
-        const named = /^\d+$/.test(entry.version ?? '');
-        const through = Number(entry.version);
-        return answers.filter((each) => !named || each.seq <= through).map((each) => each.key);
-      }
-      return [];
-    };
-
-    const withheld = createTaint({ walls, source, carried });
 
     const note = found.conversation.summary ?? '';
     const noteShown = settled(note) && !answers.some((each) => each.seq <= folded && withheld(each.key));

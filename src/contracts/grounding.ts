@@ -209,6 +209,12 @@ export type Grounded = {
   readonly gone: readonly string[];
   /** Refs the runtime would add, when `auto` is `suggest`. Never in `text`. */
   readonly suggested: readonly string[];
+  /**
+   * Refs that are in `text` in a shorter form, because the pieces did not fit and
+   * the message asked for them to be shortened. Each has an entry whose `shown` is
+   * the digest of the shorter form. Absent when nothing was shortened.
+   */
+  readonly compacted?: readonly string[];
   /** `failed` when `auto` was asked for and the search it needs did not answer. */
   readonly auto?: 'failed';
 };

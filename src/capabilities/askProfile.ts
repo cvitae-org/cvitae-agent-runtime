@@ -230,7 +230,10 @@ export const askProfile: Capability<AskProfileInput> = {
   ],
 
   /** The parts of the message, as `needs` holds it to its limit. */
-  measure: (input, context) => ({ ...restOf(input, context), picks: picksSize(input.grounding, context) }),
+  measure: (input, context) => {
+    const rest = restOf(input, context);
+    return { ...rest, picks: picksSize(input.grounding, rest, context) };
+  },
 
   plan: async (input, context: RunContext): Promise<Plan> => {
     const picks = picksOf(input, context);
@@ -277,7 +280,9 @@ export const askProfile: Capability<AskProfileInput> = {
                       once: input.grounding?.once ?? [],
                       auto: input.grounding?.auto ?? 'off',
                       question: goalOf(input),
-                      rest: restOf(input, context)
+                      rest: restOf(input, context),
+                      ...(input.grounding?.overflow === undefined ? {} : { overflow: input.grounding.overflow }),
+                      ...(input.grounding?.full === undefined ? {} : { full: input.grounding.full })
                     },
                     cite
                   )
@@ -386,6 +391,10 @@ export const askProfile: Capability<AskProfileInput> = {
               blocked: made.flatMap((each) => each.blocked),
               gone: made.flatMap((each) => each.gone),
               suggested: made.flatMap((each) => each.suggested),
+              // Said only when a piece was sent in a shorter form.
+              ...(made.some((each) => (each.compacted?.length ?? 0) > 0)
+                ? { compacted: made.flatMap((each) => each.compacted ?? []) }
+                : {}),
               ...(made[0]?.auto === undefined ? {} : { auto: made[0].auto })
             }
           }),

@@ -40,11 +40,13 @@ import type {
   TransformStep
 } from '../../contracts/index.js';
 import { PICKS_BUDGET } from '../../context/ground.js';
-import type { Auto, GroundingInput } from '../../context/ground.js';
+import type { Auto, GroundingInput, Overflow } from '../../context/ground.js';
 import { overLimit, roomForPicks } from '../../context/limits.js';
 import type { Material } from '../../context/limits.js';
-import { digest, isWalled, parseRef, refKey } from '../../grounding/index.js';
+import { contains, digest, isWalled, parseRef, refKey } from '../../grounding/index.js';
+import { renderCompact } from './compact.js';
 import { CV_ID } from './document.js';
+import { render } from './render.js';
 import { viewOf } from './walls.js';
 import type { CvView } from './walls.js';
 import { CV_WELL, LIST_SECTIONS, OVERVIEW, OVERVIEW_ITEMS, cvKeys, cvRef, placer } from './well.js';
@@ -63,89 +65,6 @@ export const VIA = {
   offer: 'ground:offer'
 } as const;
 export type Via = (typeof VIA)[keyof typeof VIA];
-
-/* ---------------------------------------------------------------- rendering */
-
-const lines = (...parts: (string | false | undefined)[]): string =>
-  parts.filter((part): part is string => typeof part === 'string' && part.trim() !== '').join('\n');
-
-/**
- * When something started and ended, as the document says it. `null` is ongoing,
- * and an empty end is one nobody wrote down, such as a certificate that does not
- * expire, which is the start alone and not a question mark.
- */
-const span = (started: string, finished: string | null | undefined): string => {
-  if (finished === null) return `${started === '' ? '?' : started} - present`;
-  if (finished === undefined || finished === '') return started;
-  return `${started === '' ? '?' : started} - ${finished}`;
-};
-
-type Row = Record<string, unknown>;
-
-const text = (value: unknown): string => (typeof value === 'string' ? value : '');
-const list = (value: unknown): string[] =>
-  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item !== '') : [];
-
-/**
- * One leaf as the model reads it: a heading, then what the piece says.
- *
- * Empty when the piece says nothing, so a CV with no role description has no
- * block for it and the record has no entry. Plain lines and no markup, as the
- * rest of what a prompt carries is (`context/render.ts`), and in English whatever
- * language the CV is in: the heading is the runtime's, the body is the person's.
- */
-const render = (section: string, item: unknown): string => {
-  const row = (typeof item === 'object' && item !== null ? item : {}) as Row;
-
-  switch (section) {
-    case OVERVIEW + '/personal': {
-      const links = Object.entries((row.links ?? {}) as Record<string, string>).map(([name, url]) => `${name}: ${url}`);
-      const body = lines(text(row.name), text(row.email), text(row.phone), text(row.location), ...links);
-      return body === '' ? '' : `Personal details:\n${body}`;
-    }
-    case OVERVIEW + '/role_description': {
-      const body = typeof item === 'string' ? item.trim() : '';
-      return body === '' ? '' : `Role description:\n${body}`;
-    }
-    case OVERVIEW + '/skills': {
-      const groups = (Array.isArray(row.groups) ? row.groups : []) as { label?: string; items?: string[] }[];
-      const body = lines(
-        text(row.role) !== '' && `Role: ${text(row.role)}`,
-        ...groups.map((group) => `${text(group.label) || 'Skills'}: ${list(group.items).join(', ')}`)
-      );
-      return body === '' ? '' : `Skills:\n${body}`;
-    }
-    case 'experience': {
-      const body = lines(
-        span(text(row.started), row.finished as string | null | undefined),
-        ...list(row.highlights).map((highlight) => `- ${highlight}`),
-        list(row.skills).length > 0 && `Skills: ${list(row.skills).join(', ')}`
-      );
-      const head = [text(row.title), text(row.company)].filter((part) => part !== '').join(' at ');
-      return `Experience, ${head || 'entry'}:\n${body}`.trimEnd();
-    }
-    case 'education': {
-      const body = lines(
-        span(text(row.started), row.finished as string | null | undefined),
-        text(row.thesis) !== '' && `Thesis: ${text(row.thesis)}`,
-        text(row.mark) !== '' && `Mark: ${text(row.mark)}`
-      );
-      const head = [text(row.degree), text(row.university)].filter((part) => part !== '').join(', ');
-      return `Education, ${head || 'entry'}:\n${body}`.trimEnd();
-    }
-    case 'certificates': {
-      const body = lines(
-        text(row.issuer) !== '' && `Issued by ${text(row.issuer)}`,
-        span(text(row.started), row.finished as string | null | undefined)
-      );
-      return `Certificate, ${text(row.name) || 'entry'}:\n${body}`.trimEnd();
-    }
-    case 'languages':
-      return `Language, ${text(row.name) || 'entry'}${text(row.level) === '' ? '' : `: ${text(row.level)}`}`;
-    default:
-      return '';
-  }
-};
 
 /* ------------------------------------------------------------------- leaves */
 
@@ -191,6 +110,21 @@ const leafAt = (view: CvView, section: string, key: string): Found => {
   return { leaf: { section, key, original, text: render(section, view.shown[section][at]) } };
 };
 
+/**
+ * The shorter form of a leaf the model may be shown (`compact.ts`), or nothing
+ * when it has none shorter than the whole. Made from the same view the leaf was
+ * read from, so what an exclusion took out of the whole is not in it either.
+ */
+const shorter = (view: CvView, leaf: Leaf): string | undefined => {
+  if (leaf.section === OVERVIEW) {
+    return renderCompact(`${OVERVIEW}/${leaf.key}`, view.shown[leaf.key as (typeof OVERVIEW_ITEMS)[number]]);
+  }
+  if (!isListSection(leaf.section)) return undefined;
+
+  const at = view.keys[leaf.section].indexOf(leaf.key);
+  return at < 0 ? undefined : renderCompact(leaf.section, view.shown[leaf.section][at]);
+};
+
 /** Every leaf a ref names, by key and in document order, whether or not it may be shown. */
 const leavesOf = (view: CvView, ref: PieceRef): { section: string; key: string }[] => {
   const [section, key] = ref.path;
@@ -225,11 +159,16 @@ export const allLeaves = (view: CvView): Leaf[] => {
   return found;
 };
 
-/** The entry that says a leaf's block was sent. */
-export const included = (scope: string, revision: number, leaf: Leaf, via: Via): RecordEntry => ({
+/**
+ * The entry that says a leaf's block was sent. Its digest is of the original,
+ * whichever form was sent; `form` is the text of a shorter one, and the entry
+ * then says what the model was given as `shown`, as a clipped read does.
+ */
+export const included = (scope: string, revision: number, leaf: Leaf, via: Via, form?: string): RecordEntry => ({
   ref: leafRef(scope, leaf.section, leaf.key),
   version: String(revision),
   digest: digest(leaf.original),
+  ...(form === undefined ? {} : { shown: digest(form) }),
   status: 'included',
   origin: 'server',
   via
@@ -256,6 +195,13 @@ export type Asked = {
   readonly pins: readonly PieceRef[];
   /** Pieces this message attaches, canonical refs. */
   readonly once: readonly string[];
+  /**
+   * What to do when the pieces do not fit: `refuse` is what a message has always
+   * done, and `compact` sends some of them in their shorter form first.
+   */
+  readonly overflow?: Overflow;
+  /** Pieces that are not to be shortened, canonical refs: a section is every piece in it. */
+  readonly full?: readonly string[];
   readonly auto: Auto;
   /** What a search for pieces the runtime would add is made from. */
   readonly question: string;
@@ -288,6 +234,8 @@ type Collected = {
   readonly blocked: string[];
   readonly gone: string[];
   readonly seen: Set<string>;
+  /** The pieces that went down to their shorter form, in the order they were shortened. */
+  readonly compacted: string[];
   /** Characters the blocks come to as sent, separators counted. */
   size: number;
 };
@@ -301,7 +249,10 @@ type Collected = {
  * measured is the text that would be sent and not a second reckoning of it.
  * `undefined` is a message that asks for nothing of a conversation with no CV.
  */
-const collect = (asked: Pick<Asked, 'pins' | 'once'>, context: Context): Collected | undefined => {
+const collect = (
+  asked: Pick<Asked, 'pins' | 'once' | 'overflow' | 'full' | 'rest'>,
+  context: Context
+): Collected | undefined => {
   const scope = context.contextId;
   if (scope === undefined) {
     if (asked.pins.length === 0 && asked.once.length === 0) return undefined;
@@ -322,13 +273,18 @@ const collect = (asked: Pick<Asked, 'pins' | 'once'>, context: Context): Collect
     blocked: [],
     gone: [],
     seen: new Set<string>(),
+    compacted: [],
     size: 0
   };
   const { blocks, entries, blocked, gone, seen } = collected;
 
+  /** Where each leaf that was sent sits in `blocks` and in `entries`, which also has the held back. */
+  const placed: { readonly leaf: Leaf; readonly via: Via; readonly block: number; readonly entry: number }[] = [];
+
   const send = (leaf: Leaf, via: Via): void => {
     // The separator is counted, so the text is never longer than its budget says.
     collected.size += leaf.text.length + (blocks.length === 0 ? 0 : 2);
+    placed.push({ leaf, via, block: blocks.length, entry: entries.length });
     blocks.push(leaf.text);
     entries.push(included(scope, revision, leaf, via));
   };
@@ -376,12 +332,51 @@ const collect = (asked: Pick<Asked, 'pins' | 'once'>, context: Context): Collect
     }
   }
 
+  // Only when asked, and only for as long as the pieces do not fit. The test is
+  // the one that refuses them (`picksProblem`), so a message that is shortened
+  // until it passes is not refused afterwards for the size it was shortened to.
+  if (asked.overflow === 'compact' && view !== undefined) {
+    const limit = context.limits?.context();
+    const kept = (asked.full ?? []).map((each) => parseRef(each));
+
+    const shortenable = placed.flatMap((each) => {
+      const piece: PieceRef = { well: CV_WELL, scope, path: [each.leaf.section, each.leaf.key] };
+      const form = kept.some((keep) => contains(keep, piece)) ? undefined : shorter(view, each.leaf);
+      return form === undefined ? [] : [{ ...each, form, saved: each.leaf.text.length - form.length }];
+    });
+
+    // The one that saves most first, so as few pieces as possible are shortened;
+    // the first of two that save the same, so the order does not depend on the sort.
+    shortenable.sort((a, b) => b.saved - a.saved || a.block - b.block);
+
+    for (const each of shortenable) {
+      if (picksProblem(collected.size, asked.rest, limit) === undefined) break;
+
+      blocks[each.block] = each.form;
+      entries[each.entry] = included(scope, revision, each.leaf, each.via, each.form);
+      collected.size -= each.saved;
+      collected.compacted.push(leafRef(scope, each.leaf.section, each.leaf.key));
+    }
+  }
+
   return collected;
 };
 
+/** What a message says of shortening, added to what it asks for. Nothing when it says nothing. */
+const shorteningOf = (
+  grounding: GroundingInput | undefined,
+  asked: Pick<Asked, 'pins' | 'once' | 'rest'>
+): Pick<Asked, 'pins' | 'once' | 'rest' | 'overflow' | 'full'> => ({
+  ...asked,
+  ...(grounding?.overflow === undefined ? {} : { overflow: grounding.overflow }),
+  ...(grounding?.full === undefined ? {} : { full: grounding.full })
+});
+
 /** What the pieces a message names come to, in characters, as they would be sent. */
-export const measurePicks = (asked: Pick<Asked, 'pins' | 'once'>, context: Context): number =>
-  collect(asked, context)?.size ?? 0;
+export const measurePicks = (
+  asked: Pick<Asked, 'pins' | 'once' | 'overflow' | 'full' | 'rest'>,
+  context: Context
+): number => collect(asked, context)?.size ?? 0;
 
 /**
  * Why pieces that come to `size` may not be sent, or nothing when they may.
@@ -392,18 +387,23 @@ export const measurePicks = (asked: Pick<Asked, 'pins' | 'once'>, context: Conte
 export const picksProblem = (
   size: number,
   rest: Asked['rest'],
-  limit: number | undefined
+  limit: number | undefined,
+  shortened = 0
 ): { readonly code: string; readonly message: string } | undefined => {
+  // Said when the pieces were asked to be shortened and some were: what is left
+  // is what shortening could not do, and the person should not be sent to try it.
+  const tried = shortened === 0 ? '' : ` Shortening ${shortened} of them was not enough.`;
+
   if (size > PICKS_BUDGET) {
     return {
       code: 'grounding_budget',
       message:
-        `The pieces chosen for this message come to ${size} characters, and at most ${PICKS_BUDGET} are sent. `
+        `The pieces chosen for this message come to ${size} characters, and at most ${PICKS_BUDGET} are sent.${tried} `
         + 'Unpin or detach something, or choose entries instead of whole sections.'
     };
   }
   const over = rest === undefined ? undefined : overLimit({ ...rest, picks: size }, limit);
-  return over === undefined ? undefined : { code: 'context_limit', message: over };
+  return over === undefined ? undefined : { code: 'context_limit', message: `${over}${tried}` };
 };
 
 /**
@@ -419,7 +419,7 @@ export const assembleCv = async (asked: Asked, context: Context): Promise<Ground
   const { scope, view, blocks, entries, blocked, gone, seen } = collected;
   const limit = context.limits?.context();
 
-  const problem = picksProblem(collected.size, asked.rest, limit);
+  const problem = picksProblem(collected.size, asked.rest, limit, collected.compacted.length);
   if (problem !== undefined) throw new OperationError(problem.code, problem.message);
 
   // What `auto` may add up to: the pieces' own budget, less what a limit leaves
@@ -472,6 +472,9 @@ export const assembleCv = async (asked: Asked, context: Context): Promise<Ground
     blocked,
     gone,
     suggested,
+    // Said only when something was, so the result of a message that is not
+    // shortened is the one it always was.
+    ...(collected.compacted.length === 0 ? {} : { compacted: collected.compacted }),
     ...(auto === undefined ? {} : { auto })
   };
 };
@@ -551,10 +554,10 @@ export const cvNeeds = (grounding: GroundingInput | undefined, context: RunConte
  * What the pieces a message sends come to, in characters: the pins and what the
  * message attaches. Nothing is read for a message that sends none.
  */
-export const picksSize = (grounding: GroundingInput | undefined, context: RunContext): number => {
+export const picksSize = (grounding: GroundingInput | undefined, rest: Asked['rest'], context: RunContext): number => {
   const pins = context.pins?.pieces() ?? [];
   const once = grounding?.once ?? [];
-  return pins.length + once.length === 0 ? 0 : measurePicks({ pins, once }, context);
+  return pins.length + once.length === 0 ? 0 : measurePicks(shorteningOf(grounding, { pins, once, rest }), context);
 };
 
 /**
@@ -575,9 +578,11 @@ export const sizeNeeds = (
   rest: Asked['rest'],
   context: RunContext
 ): Need[] => {
-  const picks = picksSize(grounding, context);
+  const pins = context.pins?.pieces() ?? [];
+  const once = grounding?.once ?? [];
+  const collected = pins.length + once.length === 0 ? undefined : collect(shorteningOf(grounding, { pins, once, rest }), context);
 
-  const problem = picksProblem(picks, rest, context.limits?.context());
+  const problem = picksProblem(collected?.size ?? 0, rest, context.limits?.context(), collected?.compacted.length);
   return problem === undefined
     ? []
     : [

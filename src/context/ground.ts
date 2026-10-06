@@ -23,6 +23,14 @@
  *          absent.
  *   cite   numbers the blocks the model is given, tells it to cite them, and reads
  *          the answer for the numbers it cited.
+ *   overflow  what to do when the pieces do not fit. `refuse`, which is what a
+ *          message does unless it says otherwise, fails the message and says by
+ *          how much. `compact` sends some of the pieces in a shorter form first,
+ *          as many as it takes and the largest saving first, and refuses only
+ *          what that cannot make fit (`capabilities/cv/compact.ts`).
+ *   full   pieces `compact` is not to shorten, a section being every piece in it.
+ *          What a person says when a piece that was shortened should have been
+ *          sent whole; the others are shortened instead, or the message is refused.
  *
  * The limits are the same kind of number the history's are (`conversation.ts`): a
  * ceiling in characters, declared by the one contributor it bounds, and refused
@@ -85,9 +93,13 @@ export type Reach = (typeof REACHES)[number];
 export const AUTOS = ['off', 'suggest', 'on'] as const;
 export type Auto = (typeof AUTOS)[number];
 
-const onceSchema = z
+/** What a message that does not fit is to do. */
+export const OVERFLOWS = ['refuse', 'compact'] as const;
+export type Overflow = (typeof OVERFLOWS)[number];
+
+const refsSchema = (limit: number, message: string) => z
   .array(z.string().min(1).max(1_024))
-  .max(MAX_ONCE, `At most ${MAX_ONCE} pieces may be attached to one message.`)
+  .max(limit, message)
   .refine((refs) => refs.every((ref) => isRef(ref)), 'Each piece is named by its address, such as cv:<id>/experience/<key>.')
   // A piece is named and not a version of it, as in a selection: the text sent is
   // the piece as the document holds it now, and an address that said otherwise
@@ -98,8 +110,13 @@ const onceSchema = z
   )
   // Held in canonical form and once each, so the input a run is stored with is
   // the same whichever way the host spelled the address or however often it did.
-  .transform((refs) => [...new Set(refs.map((ref) => refKey(parseRef(ref))))])
-  .default([]);
+  .transform((refs) => [...new Set(refs.map((ref) => refKey(parseRef(ref))))]);
+
+const onceSchema = refsSchema(MAX_ONCE, `At most ${MAX_ONCE} pieces may be attached to one message.`).default([]);
+
+// A piece that was sent whole is one the person named, so it is held to what an
+// attachment is: the same count, the same spelling.
+const fullSchema = refsSchema(MAX_ONCE, `At most ${MAX_ONCE} pieces may be sent whole.`);
 
 const offerIdsSchema = z
   .array(z.string().min(1).max(200))
@@ -116,11 +133,13 @@ export const groundingSchema = z
     once: onceSchema,
     reach: z.enum(REACHES).default('free'),
     auto: z.enum(AUTOS).default('off'),
-    // None of the three has a default, so a message that does not use them is
+    // None of these has a default, so a message that does not use them is
     // stored and planned with the fields it always had.
     offerIds: offerIdsSchema.optional(),
     preferences: z.string().max(PREFERENCES_LIMIT, `Preferences come to at most ${PREFERENCES_LIMIT} characters.`).optional(),
-    cite: z.boolean().optional()
+    cite: z.boolean().optional(),
+    overflow: z.enum(OVERFLOWS).optional(),
+    full: fullSchema.optional()
   })
   .optional();
 

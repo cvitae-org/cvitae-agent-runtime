@@ -53,6 +53,12 @@ carries both in `profile.proposals.list`, and an accept writes those changes and
 nothing else. Without it, send `section` as before and work out the difference
 between the stored CV and a proposal yourself.
 
+The feature `grounding-compaction` says a long conversation can be carried on (see
+"Long conversations"): `input.grounding` takes `overflow` and `full`, the result of
+`ask_profile` and `run.preview` may carry `compacted`, `conversations.compactPlan`
+exists, and deleting a conversation also deletes the runs it made. Without it, send
+neither field, refuse an over-long message as before, and fold nothing.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -620,6 +626,7 @@ entry.
 | Pins in one conversation | 20 | `selection_limit` |
 | Refs in `pin` or `unpin` of one update | 50 each | `invalid_input` |
 | Attachments to one message | 12 | `invalid_input` |
+| Pieces named in `full` of one message | 12 | `invalid_input` |
 | Characters of pieces in one message | 12,000 | `grounding_budget` |
 | Offers named in one message | 100 | `invalid_input` |
 | Offers compared in one message | 25 | the rest are cut and said, as `offers.left.cut` |
@@ -713,7 +720,9 @@ the offers (see "Comparing saved offers with the CV"). If it comes to more than 
 limit the message is **refused before any model call** as `context_limit`, and
 the message says how much each part came to. Nothing is cut to fit: half of a
 piece sent under the name of the whole is something the record could not say.
-There is also no step down to a smaller selection yet.
+A message that asks for it (`grounding.overflow: "compact"`, see "Long
+conversations") is first tried with some of its pieces in a shorter form that says
+what it leaves out.
 
 `auto: on` adds pieces only while the message stays within the limit.
 
@@ -1203,3 +1212,183 @@ cannot be accepted.
    `proposal_out_of_scope`: it is not a race.
 5. Disable the edit of a section that is excluded, with the reason, and send nothing.
    `target_excluded` is still the answer if it was excluded after.
+
+# Long conversations
+
+A conversation gets long in two ways: a message that carries more of the CV than
+fits, and turns that no longer fit the window. This is how a runtime that lists
+`grounding-compaction` in `protocol.get` carries both on, without sending the model
+something the person excluded and without hiding what was left out.
+
+## A message that does not fit: `overflow` and `full`
+
+`input.grounding` of `ask_profile` takes two more optional fields:
+
+```json
+{
+  "question": "What did I do at Acme?",
+  "grounding": {
+    "once": ["cv:9d5e0c1a-5b0e-4d56-9a3a-3f0f6f2f7c11/experience"],
+    "overflow": "compact",
+    "full": ["cv:9d5e0c1a-5b0e-4d56-9a3a-3f0f6f2f7c11/experience/acme~senior-engineer"]
+  }
+}
+```
+
+- `overflow`: `refuse` is what a message does unless it says otherwise, and it is
+  what every message did before: over the budget (`grounding_budget`) or over the
+  conversation's limit (`context_limit`) it is refused before any model call. With
+  `compact` the runtime first sends some of the pieces in a shorter form, and
+  refuses only what that cannot make fit. Default: `refuse`.
+- `full`: pieces `compact` is not to shorten, written like a pin, at most 12. A
+  section names every piece in it. It is what a person says after a piece was
+  shortened and should have been whole. The others are shortened instead, or the
+  message is refused. A piece that is not part of the message is ignored.
+- Keys it does not know are ignored, as before. `edit_cv` takes neither: an edit is
+  always made against the CV as it is stored, and what it is shown is the same
+  whatever a conversation's messages were sent as.
+
+### What is shortened, and in what order
+
+Only these pieces have a shorter form, and only when it is shorter than the whole:
+
+| Piece | What the shorter form keeps |
+| --- | --- |
+| an experience entry | its heading and dates, and its first two highlights |
+| an education entry | its heading, dates and mark |
+| the role description | its first sentences, up to 300 characters |
+| the skills | the role, and the first six of each group |
+
+Personal details, certificates and spoken languages are already as short as a piece
+gets. They are never shortened, and neither is a piece the CV holds less of than the
+limits above.
+
+- A piece that was shortened says so in its own text, as its last line: `(shortened:
+  2 more highlights and its 3 skills not shown)`. The model is never given part of a
+  piece as though it were all of it.
+- The pieces that save most go first, the earliest of them on a tie, and only as
+  many as it takes. A message that fits is sent whole, with `overflow` or without.
+- Pieces the runtime added by itself (`auto: on`) are not shortened: they are added
+  only while they fit.
+- A piece whose parts the conversation excludes is shortened from what the model
+  would be shown of it, so an excluded part is not in the shorter form either.
+- When shortening is not enough the message is refused with the same code as
+  without, and the message of it ends with "Shortening 2 of them was not enough."
+- The shorter form is a function of the piece and nothing else. It is worked out
+  when the message is sent and kept nowhere, so it cannot be out of date.
+
+### What a message gets back
+
+`grounding.compacted` lists, in the order they were shortened, the addresses of the
+pieces that were sent in a shorter form. It is absent when nothing was, so a
+message that was not shortened has the result it always had. Each of them is also
+in `included`. `run.preview` of mode `full` answers it the same way.
+
+```json
+"grounding": {
+  "included": ["cv:9d5e0c1a-.../experience/acme~senior-engineer"],
+  "compacted": ["cv:9d5e0c1a-.../experience/acme~senior-engineer"],
+  "blocked": [], "gone": [], "suggested": []
+}
+```
+
+Its record entry is an `included` entry of the original, as ever: `ref` and `digest`
+are the original's, and `shown` is the digest of the shorter form, so it reads as
+"partly shown". The original is not lost: **Reattach** is sending the next message
+with the same piece in `full`.
+
+- A change to a part the shorter form leaves out changes the entry's `digest`, and
+  so the `planDigest` of a preview, though not the text that is sent. An approval is
+  of the entry, and that is the point.
+- A run that waited for an approval is checked against the digest of the original,
+  as any piece is.
+- An answer made from a shortened piece that is excluded later is withheld from
+  what follows, as any answer made from it is.
+
+## Folding the turns that no longer fit: `conversations.compactPlan`
+
+A conversation carries its past as a note (`conversations.summarise`) written from
+the turns that fell out of the window. Which turns are for the host to choose, and
+a host does not know what the runtime does: that an answer was built from a piece
+since excluded, and that a note made from it carries it. `conversations.compactPlan`
+answers for the runtime. It reads and writes nothing and asks no model.
+
+Request `{ conversationId, keep? }`. `keep` is how many of the newest exchanges stay
+as they are, 0 to 10, default 2. A conversation that does not exist is `not_found`.
+
+```json
+{
+  "conversationId": "c1",
+  "summarisedThrough": 4,
+  "summary": "The person asked about Acme and ...",
+  "turns": [ { "seq": 5, "role": "user", "text": "What did I do at Acme?", "omitted": 0 } ],
+  "through": 6,
+  "more": false,
+  "kept": 2,
+  "withheld": []
+}
+```
+
+- `turns` are the turns to fold into the note, oldest first, as the model that
+  writes it will read them. A turn of more than 1,500 characters is cut at a word
+  and says so at its end (`[shortened: 312 more characters not shown]`), and
+  `omitted` is how many. The turns are as many whole exchanges as the note's model
+  reads: at most 40 turns and 9,000 characters. A turn is never clipped unseen at
+  the end of a transcript, and an exchange is never split.
+- `summary` is the note as it stands, to give the model that folds. It is empty when
+  there is none, and when it is withheld (below).
+- `through` is the `seq` to record the new note as made through, with
+  `conversations.summarise`: the last turn of `turns`. It never goes back.
+- `more` says more can be folded after these: the same again does the next.
+- `kept` is the number of the newest exchanges that stay. At most `keep`, and fewer
+  in a conversation that has fewer. An unanswered question stays too.
+- `reason` is present only when nothing is to be folded: `nothing` (there is
+  nothing older than what stays), `withheld` (the first thing to fold is an answer
+  the conversation's exclusions withhold) or `summary_withheld` (the note was made
+  from such an answer; writing a new one over it would lose what it holds for good).
+- `withheld` lists the `seq` of every answer that is to be folded and is withheld.
+  The fold stops before the first of them, so the model that writes the note is
+  never given what the model that answers is not.
+
+To fold, a host calls `conversations.compactPlan`, runs `summarize_conversation`
+with `{ summary, turns: [{ role, text }] }` from the plan, and records the result
+with `conversations.summarise` and the plan's `through`. The fold is one way: what
+was folded is a note and not the turns, and the turns are not given back. Turns a
+host folded itself, with its own `history`, are still `origin: client`.
+
+When a message is refused as `context_limit` for its history, fold and send again,
+before showing the person an error.
+
+## What goes when a conversation goes
+
+A selection, a conversation's pins and its limit live and die with it. So does
+what its runs made:
+
+- **The runs** the conversation made and **the record** of what each was given are
+  deleted with it, once they have ended. A run that is still going stays, and so
+  does a run that a CV proposal is still pointed at, which is the person's to
+  accept or discard. Neither is reachable from the conversation any more, and a
+  message that names a run that went (`conversations.append` with its `runId`) is
+  refused as `context_conflict`, as a run of another conversation always was.
+- Runs that no conversation owns (discovery, enrichment) are not touched, and runs
+  an older runtime left behind are not purged.
+- **A copy of a CV** (`profile.contexts.copy`) copies no selection, pin or limit: it
+  starts with every piece of it in.
+- **A cleared CV** (`profile.context.clearContent`) leaves the pins on it. Each now
+  reads `gone`, and a person can unpin them.
+- `conversations.delete` answers as before, `{ deleted }`.
+
+## Suggested UI
+
+1. Check `grounding-compaction` in `protocol.get`. Without it, show none of this.
+2. On `context_limit`, offer "Send shortened" before "Raise the limit", and send the
+   same message with `overflow: "compact"`.
+3. Mark each piece of `compacted` as "shortened" in the "based on" list and next to
+   the message, with a **Reattach** action: send the next message with the piece in
+   `full`. Entries with `shown` are already "partly shown".
+4. `/compact` in the composer: call `conversations.compactPlan`, show how many turns
+   will be folded and how many stay, run `summarize_conversation`, record the note.
+   Offer it again while `more`. With a `reason`, say so in plain words and fold
+   nothing; for `summary_withheld` or `withheld` say what the exclusions hold back and
+   offer to include the piece again.
+5. Do the same by itself over the limit, and say that it did.

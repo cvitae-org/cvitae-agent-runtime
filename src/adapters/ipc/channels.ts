@@ -439,6 +439,17 @@ export const payloads = {
     through: z.number().int().min(0)
   }),
 
+  /**
+   * Which turns of a conversation a `/compact` may fold into its summary, and how
+   * far the summary will then reach. Reads and writes nothing: the host runs
+   * `summarize_conversation` with the turns it is given, and records the result
+   * with `conversations.summarise` and the `through` it is given. `keep` is how
+   * many of the newest exchanges stay as they are; the default is the runtime's.
+   */
+  'conversations.compactPlan': z
+    .object({ conversationId, keep: z.number().int().min(0).max(10).optional() })
+    .strict(),
+
   'conversations.delete': z.object({ conversationId }),
 
   /**

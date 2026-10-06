@@ -125,6 +125,8 @@ import { beginRun, startRun, type RunHandle, type RuntimeDeps, type RunRequest }
 import { beginResume, resumeRun, type ResumeRequest } from './resume.js';
 import { recoverInterruptedRuns } from './recover.js';
 import { defaultWells } from './grounding.js';
+import { createCompaction } from './compaction.js';
+import type { Compaction } from './compaction.js';
 import { createHistory } from './history.js';
 import { createSelectionService } from './selection.js';
 import type { SelectionService } from './selection.js';
@@ -303,6 +305,11 @@ export type Harness = {
    * and one a conversation may have of its own, in characters.
    */
   readonly limits: LimitService;
+  /**
+   * What a `/compact` would fold, decided where the exclusions are known: the turns
+   * a host may give the model that writes the conversation's note, and no more.
+   */
+  readonly compaction: Compaction;
   readonly events: EventLog;
   readonly documents: DocumentStore;
   /** Checked context lifecycle; legacy work must settle before transition. */
@@ -734,6 +741,12 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     // that has no `append` for a caller that ignores the type.
     groundingRecords: { read: (runId) => groundingRecords.read(runId) },
     limits: createLimitService({ store: limitStore, conversations }),
+    compaction: createCompaction({
+      conversations,
+      records: groundingRecords,
+      walls: (conversationId) => selectionStore.walls(conversationId),
+      capabilities: options.capabilities ?? defaultCapabilities
+    }),
     selection: createSelectionService({
       store: selectionStore,
       conversations,
