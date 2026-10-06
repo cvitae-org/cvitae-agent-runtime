@@ -9,6 +9,7 @@
 export * from './book.js';
 export * from './canonical.js';
 export * from './digest.js';
+export * from './plan.js';
 export * from './ref.js';
 export * from './taint.js';
 export * from './walls.js';

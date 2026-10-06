@@ -118,6 +118,8 @@ import { OFFERS_WELL } from '../capabilities/offers/well.js';
 import { requireSameRun } from './run-identity.js';
 import { route, validateInput } from '../core/router.js';
 import { createCheckpointer } from '../runs/checkpoint.js';
+import { previewRun } from './preview.js';
+import type { Preview, PreviewRequest } from './preview.js';
 import { beginRun, startRun, type RunHandle, type RuntimeDeps, type RunRequest } from './run.js';
 import { beginResume, resumeRun, type ResumeRequest } from './resume.js';
 import { recoverInterruptedRuns } from './recover.js';
@@ -270,6 +272,11 @@ export type Harness = {
    * between — a CLI, a test.
    */
   begin(request: RunRequest): RunHandle;
+  /**
+   * What a message would be made of, said without making a run: nothing is
+   * written and no model is asked, in either mode (`runtime/preview.ts`).
+   */
+  preview(request: PreviewRequest): Promise<Preview>;
   findRun(request: RunRequest): RunRecord | undefined;
   beginResume(request: ResumeRequest): RunHandle;
   cancelSuspended(runId: string): boolean;
@@ -695,6 +702,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
       return record;
     },
     begin: (request) => beginRun(deps, request),
+    preview: (request) => previewRun(deps, request),
     cancelSuspended: db.transaction((runId: string) => {
       if (runs.get(runId)?.status !== 'suspended') return false;
       createCheckpointer(runs, runId, options.now ?? Date.now).cancelled();

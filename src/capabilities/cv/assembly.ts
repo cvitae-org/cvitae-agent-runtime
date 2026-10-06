@@ -521,6 +521,16 @@ export const cvNeeds = (grounding: GroundingInput | undefined, context: RunConte
 };
 
 /**
+ * What the pieces a message sends come to, in characters: the pins and what the
+ * message attaches. Nothing is read for a message that sends none.
+ */
+export const picksSize = (grounding: GroundingInput | undefined, context: RunContext): number => {
+  const pins = context.pins?.pieces() ?? [];
+  const once = grounding?.once ?? [];
+  return pins.length + once.length === 0 ? 0 : measurePicks({ pins, once }, context);
+};
+
+/**
  * What a message needs to be within its limits before a plan is made, which is
  * before any model is asked.
  *
@@ -538,9 +548,7 @@ export const sizeNeeds = (
   rest: Asked['rest'],
   context: RunContext
 ): Need[] => {
-  const pins = context.pins?.pieces() ?? [];
-  const once = grounding?.once ?? [];
-  const picks = pins.length + once.length === 0 ? 0 : measurePicks({ pins, once }, context);
+  const picks = picksSize(grounding, context);
 
   const problem = picksProblem(picks, rest, context.limits?.context());
   return problem === undefined

@@ -189,6 +189,8 @@ export const buildRunContext = (
     input: Readonly<Record<string, unknown>>;
     signal: AbortSignal;
     deadlineAt: number;
+    /** A context made for a preview, which calls no model (`preview.ts`). */
+    preview?: true;
   },
   /** What `fields.input` holds as the conversation, when the runtime put it there. */
   supplied?: SuppliedHistory

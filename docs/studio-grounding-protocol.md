@@ -33,6 +33,12 @@ and says what it did with it, and an entry in a record may have the status
 `blocked`. Without it, show no pin toggle and no attach chip, and send no
 `grounding` field.
 
+The feature `grounding-preview` says a message can be seen before it is sent and
+sent as it was seen (see "Seeing a message before it is sent"): `run.preview`
+exists, `run.context.start` and `run.offer.start` take `approved`, and
+`runs.grounding` also answers `planDigest`. Without it, show no preview and send
+no `approved` field.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -700,3 +706,116 @@ a conversation about a saved offer. The discovery chat is not limited by it yet.
    then something the person saw coming and not a refusal.
 4. On `context_limit`, show the message as it is and offer what changes it:
    unpin, detach, or raise the limit.
+
+# Seeing a message before it is sent
+
+A person who has pinned pieces, attached one and set a limit should be able to
+see what the next message is made of before it goes, and to send exactly that.
+A runtime that lists `grounding-preview` in `protocol.get` supports all of this.
+Nothing a preview does is written down: it makes no run, no step, no event and no
+record, and with nothing sent as `approved` a start is what it always was.
+
+## run.preview
+
+Request `{ mode, contextId, conversationId, capability, input, offerSnapshotId?,
+contextRevision?, contextGeneration? }`: the fields of `run.context.start` (or
+`run.offer.start`, with `offerSnapshotId`) without `runId`. A preview is of a
+message in a conversation, so `conversationId` is required. It is `invalid_input`
+for what a start refuses as `invalid_input`, `context_conflict` for a
+conversation that is not this context's, and `unknown_capability`, all as a start
+would be.
+
+`mode` is `fast` or `full`. Neither asks the model that answers, and neither asks
+it which tools to offer.
+
+```json
+{
+  "mode": "full",
+  "size": { "parts": { "history": 300, "summary": 50, "posting": 70, "picks": 83 }, "total": 503 },
+  "limit": 20000,
+  "degraded": [],
+  "planDigest": "0f3a9c2d4e7b1a65",
+  "entries": [ { "ref": "cv:ctx/experience/acme~senior-engineer", "status": "included", "...": "as in the record" } ],
+  "grounding": { "included": ["cv:ctx/experience/acme~senior-engineer"], "blocked": [], "gone": [], "suggested": [] }
+}
+```
+
+| | `fast` | `full` |
+| --- | --- | --- |
+| For | while the person types | when the person is about to send |
+| Reads | the conversation, the CV, the selection and the limit | the same, and runs every step a run runs before it asks a model |
+| `size`, `limit`, `degraded`, `refusal` | yes | yes |
+| `entries`, `planDigest`, `grounding` | no | yes, unless refused |
+| Searches for pieces (`auto`) | never | as a run does |
+
+- `size.parts` is what the message is made of, in characters, as it is held to the
+  limit (see "A limit on the whole message"): `history`, `summary`, `posting`
+  and `picks`. A capability that is not measured answers `{}` and `0`; only
+  `ask_profile` is. `limit` is the one that binds, or `null`.
+- `degraded` names what a run would go without, as a run's own `degraded` does:
+  a pin that a conversation excluded is `pins`.
+- **A message that would be refused is an answer, not a failure.** `refusal` is
+  `{ code, message }`, the code and the words a start would fail with (`context_limit`,
+  `grounding_budget`, `invalid_selection`, `needs_unmet`), and there is no
+  `planDigest` to approve. `size` is still said, so the person sees how far over
+  they are.
+- `entries` are the entries a run records before it asks a model: what the
+  message was given and what was held back. Not what the model reads once it is
+  running (`port:` and `tool:` entries): that cannot be known before.
+- A `full` preview of a message with `auto` on or `suggest` searches, as a run
+  does, and a search embeds the question. That is a call to the embedding model,
+  and the only one a preview makes. A search that does not answer is
+  `grounding.auto: "failed"`, as in a run, and the message goes without.
+- A preview does not say which tools a run would offer: choosing them is a call
+  to the model, and a preview makes none. It is not in the digest either.
+
+## planDigest
+
+`planDigest` is sixteen lowercase hex characters. It is of the entries that a run
+records before it asks a model, as `{ ref, digest, shown, status, origin }` each
+and in order of ref, so it is the same for the same plan whatever order it was
+made in. It moves with what the model is given: a pin or an attachment, an
+exclusion, a posting, a new turn in the conversation, an edit to a piece that is
+sent. It does not move for an edit to a piece that is not sent, for the CV's
+revision, or for how a piece came to be sent (pinned or attached).
+
+`runs.grounding` answers `planDigest` beside `record`, over the same entries, so
+what was previewed can be compared with what a run recorded: a preview and the
+run it was for have the same digest when the plan did not change in between.
+
+## approved
+
+`run.context.start` and `run.offer.start` take `approved: { planDigest }`, the
+digest a `full` preview of this same message answered. Without it a start is what
+it always was.
+
+1. A run that already exists for the request (the same `runId`, as for any start)
+   is answered first, `recovered: true`, and is not checked. A retry after a lost
+   answer must find its run, and not be told the plan moved because the run it
+   began has since changed what the record says.
+2. Otherwise the message is previewed in full, now.
+3. If it would be refused, the start fails with that refusal's own code and words
+   and not with a conflict: the person needs to know which of the two it was.
+4. If the plan is not the one approved, the start fails with **`plan_conflict`**
+   and `details: { planDigest }`, the digest of the plan as it stands. No run is
+   made. Preview again, show the person what changed, and send with the new
+   digest.
+5. Otherwise the run starts.
+
+`approved` is `invalid_input` unless it holds one digest of sixteen lowercase hex
+characters, and for a message with no conversation. `run.start` does not take it.
+
+This protects a person from what changed since they looked. It is two readings,
+the check and the start, and what changes in the instant between them is not
+caught. The run's own record says what it was given.
+
+## Suggested UI
+
+1. Check `grounding-preview` in `protocol.get`. Without it, send no `approved`.
+2. Ask `fast` as the person types, and after a pin, an attachment, an exclusion
+   or a change of limit. It is cheap and calls nothing. Show `size.total` against
+   `limit`, and `refusal` as the reason the send is not offered.
+3. Ask `full` when the person is about to send, and show `entries` (the same
+   rows as the "based on" list) and `grounding.suggested`.
+4. Send with `approved: { planDigest }`.
+5. On `plan_conflict`, do not send. Preview again and show what changed.

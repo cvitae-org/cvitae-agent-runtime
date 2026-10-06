@@ -36,7 +36,7 @@ import type { Material } from '../context/limits.js';
 import { selectTools } from '../context/tools.js';
 import { GROUNDED } from '../contracts/index.js';
 import type { Capability, Grounded, Plan, RunContext, StepContext } from '../contracts/index.js';
-import { GROUND_STEP, cvNeeds, groundStep, sizeNeeds } from './cv/assembly.js';
+import { GROUND_STEP, cvNeeds, groundStep, picksSize, sizeNeeds } from './cv/assembly.js';
 import { READ_CV_TOOL } from './cv/tools.js';
 
 export const inputSchema = z.object({
@@ -201,18 +201,24 @@ export const askProfile: Capability<AskProfileInput> = {
     ...sizeNeeds(input.grounding, restOf(input), context)
   ],
 
+  /** The parts of the message, as `needs` holds it to its limit. */
+  measure: (input, context) => ({ ...restOf(input), picks: picksSize(input.grounding, context) }),
+
   plan: async (input, context: RunContext): Promise<Plan> => {
     const picks = picksOf(input, context);
     const bare = input.grounding?.reach === 'selected';
 
     // A model with nothing to look with has no tools to choose among, and the
-    // choosing is a model call of its own.
+    // choosing is a model call of its own. A preview makes none, and the tools
+    // are not what it says: it gets the one every message has.
     const tools = bare
       ? []
-      : [
-          ...(await selectTools({ goal: goalOf(input), context })).filter((name) => name !== READ_CV_TOOL),
-          READ_CV_TOOL
-        ];
+      : context.preview === true
+        ? [READ_CV_TOOL]
+        : [
+            ...(await selectTools({ goal: goalOf(input), context })).filter((name) => name !== READ_CV_TOOL),
+            READ_CV_TOOL
+          ];
     // What the model is shown of each field, so that the record can say it too.
     const summary = excerpt(input.summary, SUMMARY_BUDGET).text;
     const posting = excerpt(input.offerText ?? '', POSTING_LIMIT).text;

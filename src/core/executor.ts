@@ -18,7 +18,7 @@
  */
 
 import { GROUNDED, RuntimeError } from '../contracts/index.js';
-import type { FinishReason, Grounded, SentField, Step, StepContext } from '../contracts/index.js';
+import type { FinishReason, Grounded, Step, StepContext, TransformStep } from '../contracts/index.js';
 import { renderPrompt } from '../context/build.js';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -43,6 +43,34 @@ const rejectTruncation = (step: Step, finishReason: FinishReason, limit: number)
       + 'The output is truncated and cannot be trusted; raise maxOutputTokens for this step.',
     'step_failed'
   );
+};
+
+/**
+ * Said right before a call goes out, so that what is recorded is what was sent:
+ * a step that answers without calling a model, or fails before it gets as far as
+ * one, has not sent anything.
+ *
+ * Two kinds of thing are sent. The fields of the run's input are named by the
+ * step, and what each addresses is the runtime's to say. The pieces an earlier
+ * step assembled come with their own entries, made by the function that made
+ * the text, and they are recorded as they are. A step that names an assembler
+ * that made nothing fails here and does not send: the text it would carry has
+ * no account of what is in it.
+ *
+ * Exported for a preview, which says what a step would send and does not send it.
+ */
+export const recordSends = (context: StepContext, step: Exclude<Step, TransformStep>): void => {
+  if (step.sends !== undefined) context.record?.sent(step.sends);
+  if (step.groundedFrom === undefined) return;
+
+  const made = context.completed[step.groundedFrom]?.[GROUNDED] as Grounded | undefined;
+  if (made === undefined || !Array.isArray(made.entries)) {
+    throw new RuntimeError(
+      `Step "${step.name}" sends what step "${step.groundedFrom}" assembled, and that step assembled nothing.`,
+      'step_failed'
+    );
+  }
+  if (made.entries.length > 0) context.record?.add(made.entries);
 };
 
 export const runStep = async (
@@ -70,41 +98,12 @@ export const runStep = async (
    */
   const onDelta = (text: string): void => context.deltas({ step: step.name, text });
 
-  /**
-   * Said right before the call goes out, so that what is recorded is what was
-   * sent: a step that answers without calling a model, or fails before it gets
-   * as far as one, has not sent anything.
-   *
-   * Two kinds of thing are sent. The fields of the run's input are named by the
-   * step, and what each addresses is the runtime's to say. The pieces an earlier
-   * step assembled come with their own entries, made by the function that made
-   * the text, and they are recorded as they are. A step that names an assembler
-   * that made nothing fails here and does not send: the text it would carry has
-   * no account of what is in it.
-   */
-  const sends = (
-    fields: readonly SentField[] | undefined,
-    groundedFrom: string | undefined
-  ): void => {
-    if (fields !== undefined) context.record?.sent(fields);
-    if (groundedFrom === undefined) return;
-
-    const made = context.completed[groundedFrom]?.[GROUNDED] as Grounded | undefined;
-    if (made === undefined || !Array.isArray(made.entries)) {
-      throw new RuntimeError(
-        `Step "${step.name}" sends what step "${groundedFrom}" assembled, and that step assembled nothing.`,
-        'step_failed'
-      );
-    }
-    if (made.entries.length > 0) context.record?.add(made.entries);
-  };
-
   switch (step.kind) {
     case 'transform':
       return step.run(context);
 
     case 'extract': {
-      sends(step.sends, step.groundedFrom);
+      recordSends(context, step);
       const { object, finishReason } = await context.effects.ai.generateObject({
         ...call,
         schema: step.schema,
@@ -135,7 +134,7 @@ export const runStep = async (
         if (!direct.trim()) throw new RuntimeError('The deterministic answer is empty.', 'step_failed');
         return { [step.key]: direct };
       }
-      sends(step.sends, step.groundedFrom);
+      recordSends(context, step);
       const { text, finishReason } = await context.effects.ai.generateText({
         ...call,
         system: step.system,
@@ -168,7 +167,7 @@ export const runStep = async (
         ...(context.record === undefined ? {} : { record: context.record })
       });
 
-      sends(step.sends, step.groundedFrom);
+      recordSends(context, step);
       const result = await context.effects.ai.runToolLoop({
         ...call,
         system: step.system,

@@ -58,6 +58,9 @@ const setting = z.string().max(200).nullish();
 
 const conversationId = z.string().min(1);
 
+/** The digest of a plan as a preview answers it: sixteen lowercase hex characters. */
+const approvedPlan = z.object({ planDigest: z.string().regex(/^[0-9a-f]{16}$/) }).strict();
+
 /**
  * What a conversation is about.
  *
@@ -103,7 +106,7 @@ export const payloads = {
   'profile.contexts.assignLanguage': z.object({ protocolVersion: z.literal(2), contextId: z.string().min(1), language: z.enum(['pl', 'en']), expectedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict(),
   'profile.contexts.copy': z.object({ protocolVersion: z.literal(2), id: z.string().uuid(), language: z.enum(['pl', 'en']), sourceContextId: z.string().min(1), expectedSourceRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict(),
   'profile.contexts.provenance': z.object({ contextId: z.string().min(1) }).strict(),
-  'run.offer.start': z.object({ protocolVersion: z.literal(2), offerSnapshotId: z.string().uuid(), contextId: z.string().min(1), conversationId: z.string().min(1), capability: z.string().min(1), input: z.unknown(), runId }).strict(),
+  'run.offer.start': z.object({ protocolVersion: z.literal(2), offerSnapshotId: z.string().uuid(), contextId: z.string().min(1), conversationId: z.string().min(1), capability: z.string().min(1), input: z.unknown(), runId, approved: approvedPlan.optional() }).strict(),
   'profile.contexts.list': z.object({}).strict(),
   'profile.context.reindex': z.object({ contextId: z.string().min(1).max(200) }).strict(),
   'profile.context.indexStatus': z.object({ contextId: z.string().min(1).max(200) }).strict(),
@@ -244,7 +247,30 @@ export const payloads = {
     capability: z.string().min(1),
     input: z.unknown(),
     /** Lets a caller name the run before it finishes, so it can follow it. */
-    runId: runId.optional()
+    runId: runId.optional(),
+    /**
+     * The plan the person approved, from a `full` preview of this same message. The
+     * message is sent only if it is still made of that, and otherwise answers
+     * `plan_conflict` with no run made.
+     */
+    approved: approvedPlan.optional()
+  }).strict(),
+
+  /**
+   * What a message would be made of, said without sending it. `fast` is advisory
+   * and cheap enough to ask while a person types; `full` is everything a run does
+   * before generation and answers with a `planDigest` to send back as `approved`.
+   * Neither asks a model to answer, and neither writes a run.
+   */
+  'run.preview': z.object({
+    mode: z.enum(['fast', 'full']),
+    contextId: z.string().min(1).max(200),
+    conversationId: z.string().min(1).max(200),
+    contextRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+    contextGeneration: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+    offerSnapshotId: z.string().uuid().optional(),
+    capability: z.string().min(1),
+    input: z.unknown()
   }).strict(),
 
   'run.start': z.object({ capability: z.string().min(1), input: z.unknown(), runId: runId.optional() }).strict(),

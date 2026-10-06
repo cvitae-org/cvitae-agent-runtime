@@ -321,6 +321,13 @@ export type RunContext = {
    * Present on every run that belongs to a conversation; absent on the others.
    */
   readonly limits?: Limits;
+
+  /**
+   * Present, and `true`, when the context is a preview's and not a run's: nothing
+   * made from it may call a model. A plan that would ask one, to choose its tools,
+   * does without.
+   */
+  readonly preview?: true;
   readonly approvals: ApprovalGate;
   readonly logger: AiLogger;
 

@@ -258,6 +258,14 @@ export interface Capability<TInput extends Record<string, unknown> = Record<stri
   needs?(input: TInput, context: RunContext): readonly Need[];
 
   /**
+   * What a message to this capability is made of, in characters by part, which a
+   * preview shows beside the limit (`runtime/preview.ts`). The same numbers
+   * `needs` holds the message to, so that what is shown is what a run would be
+   * refused for. Reads the context and nothing else.
+   */
+  measure?(input: TInput, context: RunContext): Readonly<Record<string, number>>;
+
+  /**
    * Whether the runs of this capability say, in their record, everything they
    * send to a model.
    *
