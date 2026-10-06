@@ -18,6 +18,8 @@ import { executePlan } from '../core/orchestrator.js';
 import { plan as makePlan } from '../core/planner.js';
 import { route, validateInput } from '../core/router.js';
 import { createCheckpointer } from '../runs/checkpoint.js';
+import { staleGrounding } from './stale.js';
+import { checkNeeds, withoutNeeds } from './needs.js';
 import { CvContextError, RuntimeError } from '../contracts/index.js';
 import type { RunResult } from '../contracts/index.js';
 import {
@@ -103,15 +105,25 @@ export const beginResume = (
           request.deadlineAt ?? now() + (deps.timeoutMs ?? 10 * 60 * 1000)
       }, given.supplied);
 
+      const went = checkNeeds(capability, given.input, context);
+
+      // What an earlier step assembled is read back as it was. A piece that has
+      // changed since, or has been left out, is not sent as it was.
+      const completed = recordedOutcomes(deps, record.id);
+      staleGrounding(context, completed);
+
       const plan = await makePlan(capability, given.input, context);
 
-      const result = await executePlan(plan, context, {
-        checkpoint,
-        aggregate: capability.aggregate?.bind(capability),
-        approvalsFor: (step) => deps.gate(record.id, step),
-        completedSteps: recordedOutcomes(deps, record.id),
-        now
-      });
+      const result = withoutNeeds(
+        await executePlan(plan, context, {
+          checkpoint,
+          aggregate: capability.aggregate?.bind(capability),
+          approvalsFor: (step) => deps.gate(record.id, step),
+          completedSteps: completed,
+          now
+        }),
+        went
+      );
 
       const commit = (value: RunResult) => checkpoint.succeeded(value.data, value.degraded, value.elapsedMs);
       if (deps.finish) return deps.finish(record.id, result, commit);

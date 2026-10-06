@@ -21,6 +21,7 @@ import { CvContextError, OperationError, RuntimeError, isRunSuspension } from '.
 import { createRecorder, recordingDocuments, recordingRetrieval } from './grounding.js';
 import type { Grounding } from './grounding.js';
 import type { HistorySupplier } from './history.js';
+import { checkNeeds, withoutNeeds } from './needs.js';
 import { wallPorts } from './walls.js';
 import type {
   AiLogger,
@@ -38,6 +39,7 @@ import type {
   StepOutcome,
   SuppliedHistory,
   ToolRegistry,
+  Pins,
   Walls
 } from '../contracts/index.js';
 
@@ -76,8 +78,10 @@ export type RuntimeDeps = {
    * What each conversation has excluded. A run that belongs to a conversation
    * reads the CV through ports with those pieces taken out, asked again at every
    * read. Absent means nothing is excluded from any run, as before selections.
+   * `pins` are what the same conversation keeps in every message; absent means
+   * nothing is pinned, as before assembly.
    */
-  readonly selection?: Pick<SelectionStore, 'walls'>;
+  readonly selection?: Pick<SelectionStore, 'walls'> & Partial<Pick<SelectionStore, 'pins'>>;
   /**
    * Keeps the conversation of a run whose host sent none. Absent means a run is
    * given the history and summary it was sent, and nothing else, as before.
@@ -206,6 +210,13 @@ export const buildRunContext = (
       ? undefined
       : { pieces: () => selection.walls(conversationId) };
 
+  // What the conversation keeps in every message, on the runs that have walls and
+  // no others: a pin is a piece of the CV a run is about.
+  const pins: Pins | undefined =
+    walls === undefined || selection?.pins === undefined
+      ? undefined
+      : { pieces: () => selection.pins!(conversationId!) };
+
   // Cut first and recorded after, so the record sees the stored document through
   // the cut one and can say what of it the model was shown.
   const ports =
@@ -225,6 +236,7 @@ export const buildRunContext = (
     index: ports.index,
     ...(record === undefined ? {} : { record }),
     ...(walls === undefined ? {} : { walls }),
+    ...(pins === undefined ? {} : { pins }),
     approvals: deps.gate(fields.runId, 'plan'),
     logger: deps.logger,
     // The run id is added here rather than passed by the step, because a step
@@ -340,14 +352,20 @@ export const beginRun = (deps: RuntimeDeps, request: RunRequest): RunHandle => {
         deadlineAt
       }, given.supplied);
 
+      // Before the plan, which may call a model: a run that cannot be answered
+      // has cost nothing yet.
+      const went = checkNeeds(capability, given.input, context);
       const plan = await makePlan(capability, given.input, context);
 
-      const result = await executePlan(plan, context, {
-        checkpoint,
-        aggregate: capability.aggregate?.bind(capability),
-        approvalsFor: (step) => deps.gate(runId, step),
-        now
-      });
+      const result = withoutNeeds(
+        await executePlan(plan, context, {
+          checkpoint,
+          aggregate: capability.aggregate?.bind(capability),
+          approvalsFor: (step) => deps.gate(runId, step),
+          now
+        }),
+        went
+      );
 
       const commit = (value: RunResult) => checkpoint.succeeded(value.data, value.degraded, value.elapsedMs);
       if (deps.finish) return deps.finish(runId, result, commit);

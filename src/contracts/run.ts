@@ -12,7 +12,7 @@ import type { AiLogger, EffectSet } from './effects.js';
 import type { ToolRegistry } from './tools.js';
 import type { DocumentStore } from './document-store.js';
 import type { ChunkIndex, Retriever } from './chunk-index.js';
-import type { RecordSink, Walls } from './grounding.js';
+import type { Pins, RecordSink, Walls } from './grounding.js';
 
 /* ------------------------------------------------------------------ states */
 
@@ -309,6 +309,12 @@ export type RunContext = {
    * reads through them never looks here. Absent for a run with no conversation.
    */
   readonly walls?: Walls;
+
+  /**
+   * What the person has pinned to this run's conversation, asked for when the
+   * message is prepared. Present on the same runs as `walls`.
+   */
+  readonly pins?: Pins;
   readonly approvals: ApprovalGate;
   readonly logger: AiLogger;
 

@@ -50,6 +50,13 @@ type Sends = {
    * that never left the process has not been sent.
    */
   readonly sends?: readonly SentField[];
+
+  /**
+   * The name of an earlier step that made part of this call's input and says what
+   * it is made of (`Grounded`). Its entries are recorded as the call goes out, for
+   * the same reason `sends` is: a call that never goes out has sent nothing.
+   */
+  readonly groundedFrom?: string;
 };
 
 /**
@@ -195,6 +202,23 @@ export type RunResult<T = Record<string, unknown>> = {
 };
 
 /**
+ * Something a capability needs of a run, said before any model is called.
+ *
+ * A capability that is asked to answer from pieces nobody selected has nothing to
+ * answer from, and finding that out after a model call has been paid for helps no
+ * one. A required need that cannot be met fails the run before it starts; an
+ * optional one is named under `degraded` once the run has finished, so the answer
+ * says what it was made without.
+ */
+export type Need = {
+  /** What is named under `degraded` when an optional need is not met. */
+  readonly name: string;
+  readonly required: boolean;
+  /** Why it cannot be met, in plain words. Absent when it can. */
+  readonly unmet?: string;
+};
+
+/**
  * A unit of work the runtime exposes.
  *
  * `plan` is where the two execution modes diverge: return a fixed list of stages
@@ -219,6 +243,13 @@ export interface Capability<TInput extends Record<string, unknown> = Record<stri
    * arrives here has already been proven to match `TInput`.
    */
   plan(input: TInput, context: RunContext): Plan | Promise<Plan>;
+
+  /**
+   * What this run needs, asked after the input is validated and before `plan`,
+   * which may itself call a model. A method for the reason `plan` is one. It reads
+   * the context but runs nothing: no model, no tool, no write.
+   */
+  needs?(input: TInput, context: RunContext): readonly Need[];
 
   /**
    * Whether the runs of this capability say, in their record, everything they
