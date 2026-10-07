@@ -15,66 +15,90 @@
  *                  in force on the next message and not the next launch
  *   seeds          what is kept is read from the stored CV even when a message
  *                  leaves its piece out; a CV that cannot be read, or has nothing
- *                  of the person's in it, masks nothing and fails nothing; a run
- *                  that may not read the CV (discovery) is not refused for that
+ *                  of the person's in it, has no seeds and fails nothing (what
+ *                  has the shape of an identifier is still kept, `detect.ts`); a
+ *                  run that may not read the CV (discovery) is not refused for that
  *   returned       what the model says is put right before it is a message, and
  *                  before it is an answer
  *
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
  * tests counted, and the mutation reverted. The number is how many tests failed.
  *
- * 43 were applied: 43 fail at least one test here, and 0 cannot be told from the original.
+ * 64 were applied: 64 fail at least one test here, and 0 cannot be told from the original.
+ *
+ * src/effects/detect.ts:
+ *   a British number has eleven digits after its code                             1
+ *   a number is cut one digit late                                                1
+ *   a NIP needs no label                                                          1
+ *   every address is a file                                                       1
+ *   a LinkedIn profile is not one                                                 1
+ *   a LinkedIn profile may not be called in                                       1
+ *   a handle needs no network before it                                           1
+ *   a detector is not run when its guard fails to find                            1
+ *   what a detector found is not passed on                                        1
+ *   a detector with no fit finds nothing                                          1
+ *   the kinds are not the detector's                                              1
+ *   the email detector finds nothing                                              1
+ *   the profile detector finds nothing                                            1
+ *   the phone with country code detector finds nothing                            1
+ *   the email detector names what it finds wrongly                                1
+ *   the profile detector names what it finds wrongly                              1
+ *   the phone with country code detector names what it finds wrongly              1
  *
  * src/effects/mask.ts:
+ *   a vault with no seeds is empty whether or not it detects                      1
+ *   a vault that does not detect is not empty when it has no seeds                1
+ *   a vault with no seeds returns the text before it detects                      1
+ *   a vault never detects                                                         1
+ *   a vault gives the later span when two begin together                          6
+ *   a vault takes a span that begins where another ends                           2
+ *   a text with a shape in it is returned as it was                               8
  *   the whole name is not taken as one                                            1
- *   a phone number has no separators                                              4
- *   a link needs its scheme                                                       1
- *   a link needs its www                                                          1
- *   a link seed keeps its scheme                                                  1
  *   the shorter value is tried first                                              1
- *   patterns are not sorted                                                       1
  *   the matcher is case sensitive in the original too                             6
- *   placeholders are numbered across kinds                                        1
- *   the number of a placeholder starts from zero                                  1
+ *   placeholders are numbered across kinds                                        2
+ *   the number of a placeholder starts from zero                                  2
  *   a placeholder is not put right                                                1
- *   a vault with seeds is reported empty                                          7
+ *   a vault with seeds is reported empty                                          8
  *   a match is replaced by the folded text                                        1
  *
  * src/effects/masking.ts:
- *   a call is never masked                                                        8
+ *   the gateway never detects                                                     1
+ *   a call is never masked                                                        9
  *   a call is always masked                                                       2
  *   hosted masks the local provider                                               3
- *   always masks only what hosted does                                            6
+ *   always masks only what hosted does                                            7
  *   the seeds are asked once, at the first call                                   1
- *   a structured call keeps its prompt                                            5
+ *   a structured call keeps its prompt                                            6
  *   a text call keeps its prompt                                                  2
- *   a loop keeps its prompt                                                       5
+ *   a loop keeps its prompt                                                       6
  *   a loop answer is not put right                                                1
+ *
+ * src/runtime/run.ts:
+ *   the run does not ask for detectors                                            1
+ *   a run is not masked                                                           11
+ *   a preview is masked                                                           1
+ *   a runtime with no mode is masked                                              2
+ *   the mode is not read from the settings                                        8
+ *   what is kept is read from what the message may see                            1
+ *   a run that may not read the CV is refused                                     1
+ *   a run that cannot read its CV is not masked                                   1
+ *   a run is masked of nothing when its CV is unreadable for a reason of its own  1
+ *   the rest of the effects are lost to the masked ones                           1
+ *   the context is handed the unmasked effects                                    10
  *
  * src/capabilities/cv/seeds.ts:
  *   the location is a seed                                                        2
- *   the email is not a seed                                                       2
- *   the phone is not a seed                                                       5
+ *   the email is not a seed                                                       1
+ *   the phone is not a seed                                                       1
  *   the name is not a seed                                                        8
- *   the links are not seeds                                                       2
+ *   the links are not seeds                                                       1
  *   only the first link is a seed                                                 1
  *   the keys of the links are the seeds                                           3
  *   a blank value is a seed                                                       1
  *   a CV that does not parse is refused                                           2
  *   a CV that does not parse is read as far as it can be                          1
  *   the seeds are read from another document                                      9
- *
- * src/runtime/run.ts:
- *   a run is not masked                                                           10
- *   a preview is masked                                                           1
- *   a runtime with no mode is masked                                              2
- *   the mode is not read from the settings                                        7
- *   what is kept is read from what the message may see                            1
- *   a run that may not read the CV is refused                                     1
- *   a run that cannot read its CV is not masked                                   1
- *   a run is masked of nothing when its CV is unreadable for a reason of its own  1
- *   the rest of the effects are lost to the masked ones                           1
- *   the context is handed the unmasked effects                                    9
  */
 
 import assert from 'node:assert/strict';
@@ -317,15 +341,18 @@ test('what is kept is what the CV says now, at each call and not when the run be
   }
 });
 
-test('a CV with nothing of the person in it masks nothing, and the very request goes through', async () => {
+test('a CV with nothing of the person in it keeps no name from the model, and still keeps what has the shape of an identifier', async () => {
   const c = rig({ body: { ...cv(), personal: { name: '', email: '', phone: '', location: 'Krakow', links: {} } } });
 
   try {
     const deps = masked(c, () => 'always', 'local');
     await ask(deps);
 
-    assert.ok(c.requests.some((request) => request.prompt.includes('Ada Example')), 'nothing is masked, so the question is as it was asked');
-    assert.equal(c.requests.some((request) => /\[[A-Z]+_\d\]/.test(request.prompt)), false);
+    assert.ok(c.requests.some((request) => request.prompt.includes('Ada Example')), 'there is no name to keep, and a name has no shape');
+    for (const shaped of ['ada@example.com', '+44 7700 900123', 'linkedin.com/in/ada-example']) {
+      assert.equal(c.requests.some((request) => request.prompt.includes(shaped)), false, `${shaped} is an identifier by its shape`);
+    }
+    assert.ok(c.requests.every((request) => /\[EMAIL_1\]/.test(request.prompt) && /\[PHONE_1\]/.test(request.prompt) && /\[LINK_1\]/.test(request.prompt)));
   } finally {
     c.dispose();
   }

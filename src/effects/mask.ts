@@ -34,21 +34,40 @@
  * offset in the other. Polish is typed without its diacritics as often as with
  * them, and a mask that a missing `ł` defeats is not much of a mask.
  *
+ * **Seeds and shapes.** What a person has said is kept wherever it turns up
+ * (`MaskSeed`). With `detect` on, what has a shape of its own is kept too
+ * (`detect.ts`: an email, a phone, a profile, a PESEL, a NIP, an IBAN, a labelled
+ * date of birth), whoever it belongs to. Both are found in the same pass over the
+ * same folded text and the earliest wins, the longest where two begin together,
+ * and a seed before a shape when they are the same length: a place in the text is
+ * one value's and never two.
+ *
  * What it does not do, said once here and in the plan: a form the seed does not
  * spell (a Polish case ending on a surname, a phone number with its country code
  * dropped when the seed has none, an address the CV never stated), a name that is
- * not the person's, and anything that is not text. Step 9 adds detectors for
- * identifiers by their shape; this one keeps what a person has already said.
+ * not the person's, and anything that is not text.
  */
 
 import type { MaskSeed, MaskSeedKind } from '../contracts/index.js';
+import { detect, type DetectedKind } from './detect.js';
 
-const LABEL: Readonly<Record<MaskSeedKind, string>> = {
+/**
+ * What a placeholder stands for: what a person said (`MaskSeedKind`) and what was
+ * found by its shape (`DetectedKind`), which share the labels of the first four
+ * and add `ID` (a PESEL, a NIP, an IBAN, an account number) and `DOB`.
+ */
+export type MaskKind = MaskSeedKind | DetectedKind;
+
+const LABEL: Readonly<Record<MaskKind, string>> = {
   name: 'NAME',
   email: 'EMAIL',
   phone: 'PHONE',
-  link: 'LINK'
+  link: 'LINK',
+  id: 'ID',
+  dob: 'DOB'
 };
+
+const KINDS = Object.keys(LABEL) as readonly MaskKind[];
 
 /**
  * The shortest value worth masking, in characters.
@@ -312,7 +331,35 @@ const walk = <T>(value: T, change: (text: string) => string): T => {
   return value;
 };
 
-export const createVault = (seeds: readonly MaskSeed[]): Vault => {
+/** What is turned into placeholders other than what a person has said. */
+export type VaultOptions = {
+  /** Also take what has the shape of an identifier (`detect.ts`). Off, only the seeds are. */
+  readonly detect?: boolean;
+};
+
+type Span = { readonly kind: MaskKind; readonly start: number; readonly end: number };
+
+/**
+ * The spans to replace out of every span found: the earliest, the longest where
+ * two begin together, and the one listed first when they are the same. The
+ * rest overlap one of those and are left to it.
+ */
+const chosen = (spans: readonly Span[]): readonly Span[] => {
+  const ordered = [...spans].sort((a, b) => a.start - b.start || b.end - a.end);
+  const kept: Span[] = [];
+  let until = 0;
+
+  for (const span of ordered) {
+    if (span.start < until) continue;
+    kept.push(span);
+    until = span.end;
+  }
+
+  return kept;
+};
+
+export const createVault = (seeds: readonly MaskSeed[], options: VaultOptions = {}): Vault => {
+  const detecting = options.detect === true;
   const patterns = patternsOf(seeds);
   const matcher =
     patterns.length === 0
@@ -322,7 +369,7 @@ export const createVault = (seeds: readonly MaskSeed[]): Vault => {
   const issued = new Map<string, string>();
   const surfaces = new Map<string, string>();
   const taken = new Set<string>();
-  const counts: Record<MaskSeedKind, number> = { name: 0, email: 0, phone: 0, link: 0 };
+  const counts = Object.fromEntries(KINDS.map((kind) => [kind, 0])) as Record<MaskKind, number>;
   let replaced = 0;
 
   const key = (label: string, number: number): string => `${label}_${number}`;
@@ -335,7 +382,7 @@ export const createVault = (seeds: readonly MaskSeed[]): Vault => {
     }
   };
 
-  const issue = (kind: MaskSeedKind, surface: string): string => {
+  const issue = (kind: MaskKind, surface: string): string => {
     const known = issued.get(`${kind}\u0000${surface}`);
     if (known !== undefined) return known;
 
@@ -352,20 +399,25 @@ export const createVault = (seeds: readonly MaskSeed[]): Vault => {
   };
 
   const mask = (text: string): string => {
-    if (matcher === undefined) return text;
+    if (matcher === undefined && !detecting) return text;
 
     reserve(text);
     const folded = fold(text);
-    matcher.lastIndex = 0;
+
+    const spans: Span[] = [];
+    if (matcher !== undefined) {
+      matcher.lastIndex = 0;
+      for (const found of folded.matchAll(matcher)) {
+        const which = found.findIndex((group, index) => index > 0 && group !== undefined) - 1;
+        spans.push({ kind: patterns[which]!.kind, start: found.index, end: found.index + found[0].length });
+      }
+    }
+    if (detecting) spans.push(...detect(folded));
 
     let out = '';
     let last = 0;
-    for (const found of folded.matchAll(matcher)) {
-      const which = found.findIndex((group, index) => index > 0 && group !== undefined) - 1;
-      const start = found.index;
-      const end = start + found[0].length;
-
-      out += text.slice(last, start) + issue(patterns[which]!.kind, text.slice(start, end));
+    for (const { kind, start, end } of chosen(spans)) {
+      out += text.slice(last, start) + issue(kind, text.slice(start, end));
       last = end;
       replaced += 1;
     }
@@ -383,7 +435,7 @@ export const createVault = (seeds: readonly MaskSeed[]): Vault => {
         );
 
   return {
-    empty: matcher === undefined,
+    empty: matcher === undefined && !detecting,
     reserve,
     mask,
     maskDeep: (value) => walk(value, mask),

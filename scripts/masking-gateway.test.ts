@@ -19,80 +19,90 @@
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
  * tests counted, and the mutation reverted. The number is how many tests failed.
  *
- * 69 were applied: 68 fail at least one test here, and 1 cannot be told from the original.
+ * 77 were applied: 76 fail at least one test here, and 1 cannot be told from the original.
+ *
+ * src/effects/detect.ts:
+ *   a NIP needs no label                                            1
+ *   a handle needs no network before it                             1
  *
  * src/effects/mask.ts:
- *   an ascii text is not put in lower case                   1
- *   each word of a name is not taken alone                   7
- *   the whole name is not taken as one                       14
- *   a phone number is not taken with its sign                6
- *   a phone number has no separators                         8
- *   the shorter value is tried first                         14
- *   patterns are not sorted                                  7
- *   the matcher is case sensitive in the original too        21
- *   the same text is given a new placeholder each time       4
- *   placeholders are numbered across kinds                   8
- *   the number of a placeholder starts from zero             18
- *   a placeholder that is taken is issued anyway             3
- *   reserve notes nothing                                    3
- *   a placeholder is not put right                           7
- *   an array is not walked                                   3
- *   an object is not walked                                  3
- *   a vault with seeds is reported empty                     21
- *   a vault with no seeds is reported not empty              1
- *   a match is replaced by the folded text                   7
- *   a fragment is not held back                              3
- *   everything after a bracket is held                       2
- *   what is held back is lost when the stream ends           2
- *   what is settled is not put right                         3
- *   what is held is held again after a flush                 4
+ *   a vault that does not detect is not empty when it has no seeds  1
+ *   a vault gives the later span when two begin together            11
+ *   a vault takes a span that begins where another ends             12
+ *   a text with a shape in it is returned as it was                 14
+ *   an ascii text is not put in lower case                          1
+ *   each word of a name is not taken alone                          7
+ *   the whole name is not taken as one                              14
+ *   a phone number is not taken with its sign                       6
+ *   a phone number has no separators                                8
+ *   the shorter value is tried first                                14
+ *   patterns are not sorted                                         7
+ *   the matcher is case sensitive in the original too               21
+ *   the same text is given a new placeholder each time              4
+ *   placeholders are numbered across kinds                          8
+ *   the number of a placeholder starts from zero                    18
+ *   a placeholder that is taken is issued anyway                    3
+ *   reserve notes nothing                                           3
+ *   a placeholder is not put right                                  7
+ *   an array is not walked                                          3
+ *   an object is not walked                                         3
+ *   a vault with seeds is reported empty                            21
+ *   a vault with no seeds is reported not empty                     1
+ *   a match is replaced by the folded text                          7
+ *   a fragment is not held back                                     3
+ *   everything after a bracket is held                              2
+ *   what is held back is lost when the stream ends                  2
+ *   what is settled is not put right                                3
+ *   what is held is held again after a flush                        4
  *
  * src/effects/masking.ts:
- *   a call is never masked                                   23
- *   a call is always masked                                  5
- *   hosted masks the local provider                          24
- *   always masks only what hosted does                       2
- *   the provider is read when the gateway is built           1
- *   a call with no seeds is still wrapped                    1
- *   the seeds are asked once, at the first call              1
- *   describe is not passed on                                1
- *   a structured call keeps its system text                  3
- *   a structured call keeps its prompt                       2
- *   a structured answer is not put right                     1
- *   a structured answer is put right at its top level only   1
- *   a structured call does not reserve what it holds         1
- *   a text call keeps its system text                        9
- *   a text call keeps its prompt                             8
- *   a text answer is not put right                           3
- *   a text call is not streamed through the restorer         2
- *   a text call streams what it was given, unrestored        2
- *   a text call does not flush what it held                  1
- *   a text call does not reserve what it holds               1
- *   a loop keeps its system text                             3
- *   a loop keeps its prompt                                  4
- *   a loop keeps its history                                 1
- *   a loop gives its history a key it did not have           1
- *   a loop loses the role of a turn                          1
- *   a loop does not reserve its history                      1
- *   a loop does not wrap its tools                           4
- *   a loop answer is not put right                           2
- *   a loop does not flush what it held                       1
- *   a loop is not streamed through the restorer              2
- *   a loop does not restore its stream, only holds it        2
- *   a sink that throws fails the call                        1
- *   what a tool is asked is not put right                    1
- *   what a tool is asked is put right at its top level only  1
- *   what a tool answers is not masked                        2
- *   what a tool answers is masked at its top level only      1
- *   what a tool fails with is not masked                     1
- *   what a tool fails with loses its code                    2
- *   what a plain error says is not masked                    1
- *   what a plain error is called is lost                     1
- *   a thing thrown that is not an error is not said          1
- *   a tool that fails is not failed                          2
- *   a tool loses what it is called                           0 (equivalent: a tool handle is a name, a description, a schema and a thunk, and naming them is spreading them)
- *   an image is masked as text                               1
- *   an embedding is asked for nothing                        1
+ *   the gateway always detects                                      2
+ *   the gateway detects when it is not asked either way             2
+ *   a call is never masked                                          23
+ *   a call is always masked                                         5
+ *   hosted masks the local provider                                 24
+ *   always masks only what hosted does                              2
+ *   the provider is read when the gateway is built                  1
+ *   a call with no seeds is still wrapped                           1
+ *   the seeds are asked once, at the first call                     1
+ *   describe is not passed on                                       1
+ *   a structured call keeps its system text                         3
+ *   a structured call keeps its prompt                              2
+ *   a structured answer is not put right                            1
+ *   a structured answer is put right at its top level only          1
+ *   a structured call does not reserve what it holds                1
+ *   a text call keeps its system text                               9
+ *   a text call keeps its prompt                                    8
+ *   a text answer is not put right                                  3
+ *   a text call is not streamed through the restorer                2
+ *   a text call streams what it was given, unrestored               2
+ *   a text call does not flush what it held                         1
+ *   a text call does not reserve what it holds                      1
+ *   a loop keeps its system text                                    3
+ *   a loop keeps its prompt                                         4
+ *   a loop keeps its history                                        1
+ *   a loop gives its history a key it did not have                  1
+ *   a loop loses the role of a turn                                 1
+ *   a loop does not reserve its history                             1
+ *   a loop does not wrap its tools                                  4
+ *   a loop answer is not put right                                  2
+ *   a loop does not flush what it held                              1
+ *   a loop is not streamed through the restorer                     2
+ *   a loop does not restore its stream, only holds it               2
+ *   a sink that throws fails the call                               1
+ *   what a tool is asked is not put right                           1
+ *   what a tool is asked is put right at its top level only         1
+ *   what a tool answers is not masked                               2
+ *   what a tool answers is masked at its top level only             1
+ *   what a tool fails with is not masked                            1
+ *   what a tool fails with loses its code                           2
+ *   what a plain error says is not masked                           1
+ *   what a plain error is called is lost                            1
+ *   a thing thrown that is not an error is not said                 1
+ *   a tool that fails is not failed                                 2
+ *   a tool loses what it is called                                  0 (equivalent: a tool handle is a name, a description, a schema and a thunk, and naming them is spreading them)
+ *   an image is masked as text                                      1
+ *   an embedding is asked for nothing                               1
  */
 
 import assert from 'node:assert/strict';

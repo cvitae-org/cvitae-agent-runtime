@@ -63,6 +63,12 @@ export type MaskingOptions = {
    * when the model is next asked about it.
    */
   readonly seeds: () => readonly MaskSeed[];
+  /**
+   * Also keep from the model what has the shape of an identifier, whoever's it is
+   * (`detect.ts`). Off, a call with no seeds goes as it is; on, no call is without
+   * a vault.
+   */
+  readonly detect?: boolean;
 };
 
 /** Whether a call to this gateway is to be masked, from what it resolves to now. */
@@ -119,7 +125,7 @@ export const maskedGateway = (inner: AiGateway, options: MaskingOptions): AiGate
   const begin = (): Vault | undefined => {
     if (!masks(options.mode, inner)) return undefined;
 
-    const vault = createVault(options.seeds());
+    const vault = createVault(options.seeds(), { detect: options.detect === true });
     return vault.empty ? undefined : vault;
   };
 

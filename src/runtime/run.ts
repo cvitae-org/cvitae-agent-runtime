@@ -287,7 +287,8 @@ export const buildRunContext = (
           ...deps.effects,
           ai: maskedGateway(deps.effects.ai, {
             mode: deps.masking.mode(),
-            seeds: () => seedsOf(deps.documents)
+            seeds: () => seedsOf(deps.documents),
+            detect: true
           })
         };
 

@@ -17,9 +17,19 @@
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
  * tests counted, and the mutation reverted. The number is how many tests failed.
  *
- * 93 were applied: 90 fail at least one test here, and 3 cannot be told from the original.
+ * 101 were applied: 98 fail at least one test here, and 3 cannot be told from the original.
+ *
+ * src/effects/detect.ts:
+ *   a NIP needs no label                                                      1
+ *   a handle needs no network before it                                       1
  *
  * src/effects/mask.ts:
+ *   a vault that does not detect is not empty when it has no seeds            6
+ *   a vault detects when it was not asked to                                  14
+ *   a vault gives the later span when two begin together                      10
+ *   a vault takes a span that begins where another ends                       34
+ *   a detected span is counted twice                                          2
+ *   a text with a shape in it is returned as it was                           42
  *   a seed of two characters is masked                                        3
  *   a seed of three characters is not masked                                  2
  *   a seed of 301 characters is masked                                        1

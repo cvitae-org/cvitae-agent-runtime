@@ -64,6 +64,11 @@ what it sends to a model (see "Keeping a person's details from a model"):
 `settings.get` and `settings.set` carry `maskMode`. Without it, show no masking
 setting, and do not tell a person their details are kept from a hosted model.
 
+The feature `masking-detectors` says the runtime also keeps from a model what has the
+shape of an identifier, whoever's it is (see "Identifiers found by their shape"). It
+adds no field and no setting. Without it, the runtime keeps only what the CV states, and
+a person who pastes a referee's email into a question sends it.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -1457,7 +1462,8 @@ up, in a question, in a pasted posting, in an earlier answer, in a tool's result
 - A piece that a conversation excludes is still a source of values. A name that is
   left out of a message is still a name.
 
-The model is given `[NAME_1]`, `[EMAIL_1]`, `[PHONE_1]`, `[LINK_1]`. The same text
+The model is given `[NAME_1]`, `[EMAIL_1]`, `[PHONE_1]`, `[LINK_1]`, and, for what is
+found by its shape, `[ID_1]` and `[DOB_1]` (next section). The same text
 is the same placeholder in a call and a different spelling is another one, so what
 a person wrote comes back as they wrote it. The numbers mean nothing outside the
 call that issued them.
@@ -1469,16 +1475,77 @@ did not issue is left as it is. Fragments are held back only while the end of on
 could still become a placeholder, so a streamed reply may stop for a moment at an
 opening bracket.
 
+## Identifiers found by their shape
+
+`masking-detectors` in `protocol.get` says that, as well as what the CV states, the
+runtime keeps from a model what has the shape of an identifier, **whoever's it is**:
+a referee's email in a pasted CV, a recruiter's phone number in a posting, a PESEL
+in the text of a scanned form. There is no setting for it and nothing to send. It
+applies to every call that is masked (`maskMode`), and a call is masked now even
+when the CV states nothing at all.
+
+| Placeholder | What is taken |
+| --- | --- |
+| `[EMAIL_n]` | an email address |
+| `[PHONE_n]` | a number written with a country code (`+48`, `0048`, `+44`, `+1`, any other with 8 to 15 digits); a Polish mobile or landline in the layouts it is written in; an American number with brackets, hyphens or dots; a British one |
+| `[LINK_n]` | a profile on LinkedIn, GitHub, GitLab, Bitbucket, X, Twitter, Instagram, Facebook, Behance, Dribbble, TikTok, Medium, Stack Overflow, Telegram, GoldenLine, Pracuj, Aplikuj or OLX; a handle written after the name of a network (`twitter: @anna`) |
+| `[ID_n]` | a PESEL, a NIP, an IBAN, a Polish account number |
+| `[DOB_n]` | a date written after a word that says it is of birth (`born`, `date of birth`, `data urodzenia`, `ur.`), in numbers or with the month in words, in Polish or English |
+
+Precision comes before recall, because a number taken for an identifier is a number the
+model can no longer read. So each is held to more than a run of digits:
+
+- A PESEL needs its control digit and a birth date that exists. A NIP needs its control
+  digit and either its label (`NIP`, `VAT ID`) or its hyphenated layout. An IBAN and a
+  Polish account number need their remainder.
+- A date is taken only after a word that says it is of birth, and only when it is a day
+  that was, in a year between 1900 and 2100. `3.11.1990` alone is not taken.
+- A number that has the shape of a phone number and is followed by a currency or a unit
+  (`123 456 789 PLN`, `600 700 800 kg`), that is the end of a longer number
+  (`1 600 700 800`), or that follows a currency sign is an amount and is left alone.
+- A number written with a country code is as long as its country says: `+48 600 700 800 12`
+  is taken as `+48 600 700 800`.
+- Versions (`3.11.2`), years, ranges of years or salaries, an order number of eleven
+  digits that is no PESEL, an annotation (`@Override`), a file name (`logo@2x.png`) and a link
+  to a page that is not on one of the profile hosts above (a job page, a company site) are
+  left alone. A link to one of those hosts is taken whatever its path, so
+  `github.com/features` is masked as if it were a person's.
+
+What it still takes by mistake: nine digits in threes that begin like a Polish mobile and
+are not an amount, and a number laid out like a Polish landline (`22 123 45 67`), a
+British or an American one that is something else. The model is then given `[PHONE_1]`
+for it; the answer is put right as always, so the person sees what they wrote, and only
+a question that asks the model to read the number is affected.
+
+What it does not do: a name, a street or a city; anything spelled out in words; a number
+split over a line break; an identifier from a country it does not know (a number with a
+country code is found, a national layout of another country is not).
+
+Everything else in this chapter applies unchanged. The same text is the same placeholder
+in a call, a different spelling is another one, what comes home is put right, a stream is
+held back only while a placeholder could still be forming, and a tool's result is masked
+on its way back to the model. A seed and a shape over the same text are one placeholder
+and the CV's own value says what it is; where a shape is longer than a seed inside it
+(`nowak@example.com` when the CV has the name Nowak) the shape is taken whole.
+
+A text with no identifier in it and no value of the CV is sent byte for byte as it was.
+A text with one is not, and this is the second change to what a hosted provider is
+sent without anything the person did: a call that had no CV values to keep is now
+masked as soon as its text holds an identifier.
+
 ## What a person's own machine keeps
 
 - The CV, the record of a message (`runs.grounding`), a preview (`run.preview`) and
   the trace of a tool hold the real values. Masking is about what leaves for a
   model, and what a person reads on their own machine is theirs.
 - A preview is not masked: it calls no model.
-- A run that may not read the CV (discovery) has no values to keep, and its calls
-  are sent as they were. It is not refused for that.
+- A run that may not read the CV (discovery) has no values of the person's to keep,
+  so a runtime without `masking-detectors` sends its calls as they were. With it,
+  such a run is still held to the shapes of identifiers (next section), because a
+  saved offer can hold someone's email or phone too. It is not refused for either.
 - A run whose CV cannot be read at all is refused; it is not sent as if it had no
-  values. A CV with no name, email, phone or link in it masks nothing.
+  values. A CV with no name, email, phone or link in it masks no name, and still
+  masks what has the shape of an identifier (next section).
 
 ## What is not covered
 
@@ -1486,8 +1553,9 @@ opening bracket.
   a vector is made of the text it stands for. The embedding provider is the local
   one unless a person chose otherwise; a person who did is sending their CV text to
   it unmasked.
-- A value that the CV does not state is not found by shape. Detectors for emails,
-  phone numbers, links and national numbers that appear in text are not part of this.
+- A name, a street, a city, an employer and a school have no shape, and are not found
+  unless the CV states them as a name. What is found by shape is in the next section,
+  and a runtime without `masking-detectors` finds nothing that way.
 - A model that rewrites a placeholder into something else (`[Name 1]` is read; a
   translation of it is not) is not put right.
 - A structured answer whose schema constrains a field to a format (an email) can be
@@ -1500,7 +1568,9 @@ opening bracket.
    choices, "When the model is not on this computer" (`hosted`) and "Always"
    (`always`). Say "mask", not "anonymise". Under it, in one sentence, say what is
    masked and that the CV, the record and the preview on the person's own machine
-   show the real values.
+   show the real values. With `masking-detectors`, add that an email, a phone
+   number, a profile link, an ID number or a date of birth written in a message is
+   masked whoever's it is.
 3. Do not offer a way to turn masking off. There is none.
 4. Send the setting with the others, and when the person has not touched it, send
    nothing, so as not to overwrite what another window saved.

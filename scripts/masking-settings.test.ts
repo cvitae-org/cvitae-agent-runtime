@@ -22,71 +22,81 @@
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
  * tests counted, and the mutation reverted. The number is how many tests failed.
  *
- * 40 were applied: 40 fail at least one test here, and 0 cannot be told from the original.
+ * 48 were applied: 48 fail at least one test here, and 0 cannot be told from the original.
+ *
+ * src/effects/detect.ts:
+ *   the year of a date with a month in words is the first number  1
+ *   a NIP needs no label                                          1
+ *   a handle needs no network before it                           1
  *
  * src/effects/mask.ts:
- *   the whole name is not taken as one                   1
- *   the shorter value is tried first                     1
- *   the matcher is case sensitive in the original too    4
- *   the number of a placeholder starts from zero         1
- *   a placeholder is not put right                       1
- *   a vault with seeds is reported empty                 4
- *   a match is replaced by the folded text               1
- *
- * src/effects/masking.ts:
- *   a call is never masked                               4
- *   a call is always masked                              3
- *   hosted masks the local provider                      5
- *   always masks only what hosted does                   2
- *   a text call keeps its prompt                         4
- *   a text answer is not put right                       1
- *
- * src/capabilities/cv/seeds.ts:
- *   the name is not a seed                               4
- *   the seeds are read from another document             4
- *
- * src/runtime/run.ts:
- *   a run is not masked                                  4
- *   the mode is not read from the settings               2
- *   the context is handed the unmasked effects           4
- *
- * src/runtime/create.ts:
- *   the setting is not read from the store               2
- *   the setting is read once, when the runtime is built  2
- *
- * src/contracts/mask.ts:
- *   an unknown stored mode is read as hosted             1
- *   an unknown stored mode is read as no masking         1
- *   nothing stored is always                             3
- *   there is a mode that masks nothing                   3
- *   any string is a mode                                 3
+ *   a vault gives the later span when two begin together          4
+ *   a text with a shape in it is returned as it was               3
+ *   the whole name is not taken as one                            1
+ *   the shorter value is tried first                              1
+ *   the matcher is case sensitive in the original too             4
+ *   the number of a placeholder starts from zero                  1
+ *   a placeholder is not put right                                1
+ *   a vault with seeds is reported empty                          4
+ *   a match is replaced by the folded text                        1
  *
  * src/adapters/ipc/dispatch.ts:
- *   a save that does not name the mode clears it         1
- *   a null mode keeps what was stored                    2
- *   the mode is not saved                                6
- *   the runtime does not say it masks                    1
+ *   the protocol does not say the runtime detects                 1
+ *   the protocol says it twice                                    1
+ *   the protocol names it as another                              1
+ *   a save that does not name the mode clears it                  1
+ *   a null mode keeps what was stored                             2
+ *   the mode is not saved                                         6
+ *   the runtime does not say it masks                             1
+ *
+ * src/effects/masking.ts:
+ *   a call is never masked                                        4
+ *   a call is always masked                                       3
+ *   hosted masks the local provider                               5
+ *   always masks only what hosted does                            2
+ *   a text call keeps its prompt                                  4
+ *   a text answer is not put right                                1
+ *
+ * src/capabilities/cv/seeds.ts:
+ *   the name is not a seed                                        4
+ *   the seeds are read from another document                      4
+ *
+ * src/runtime/run.ts:
+ *   a run is not masked                                           4
+ *   the mode is not read from the settings                        2
+ *   the context is handed the unmasked effects                    4
+ *
+ * src/runtime/create.ts:
+ *   the setting is not read from the store                        2
+ *   the setting is read once, when the runtime is built           2
+ *
+ * src/contracts/mask.ts:
+ *   an unknown stored mode is read as hosted                      1
+ *   an unknown stored mode is read as no masking                  1
+ *   nothing stored is always                                      3
+ *   there is a mode that masks nothing                            3
+ *   any string is a mode                                          3
  *
  * src/adapters/ipc/channels.ts:
- *   the channel takes any string for a mode              1
- *   the channel takes no mode                            7
- *   the channel does not take null for a mode            2
+ *   the channel takes any string for a mode                       1
+ *   the channel takes no mode                                     7
+ *   the channel does not take null for a mode                     2
  *
  * src/providers/environment.ts:
- *   the store does not check a mode                      2
- *   the store checks the mode case-insensitively         1
- *   the store forgets the mode it validated              8
+ *   the store does not check a mode                               2
+ *   the store checks the mode case-insensitively                  1
+ *   the store forgets the mode it validated                       8
  *
  * src/storage/sqlite/settings.ts:
- *   the store does not keep the mode                     9
- *   the store does not read the mode                     10
- *   the store keeps a blank mode                         1
+ *   the store does not keep the mode                              9
+ *   the store does not read the mode                              10
+ *   the store keeps a blank mode                                  1
  *
  * src/storage/sqlite/migrations/0046-mask-mode.ts:
- *   the column has a default                             9
+ *   the column has a default                                      9
  *
  * src/storage/sqlite/migrate.ts:
- *   the column has no migration                          20
+ *   the column has no migration                                   20
  */
 
 import assert from 'node:assert/strict';
@@ -321,12 +331,13 @@ test('providers.status accepts the field and says nothing of it', async () => {
   }
 });
 
-test('protocol.get says the runtime masks, once', async () => {
+test('protocol.get says the runtime masks, and finds identifiers by their shape, once each', async () => {
   const it = bench();
 
   try {
     const { features } = data<{ features: string[] }>(await it.dispatch('protocol.get', {}));
     assert.equal(features.filter((feature) => feature === 'masking').length, 1);
+    assert.equal(features.filter((feature) => feature === 'masking-detectors').length, 1);
     assert.equal(new Set(features).size, features.length, 'and every other once');
   } finally {
     it.dispose();

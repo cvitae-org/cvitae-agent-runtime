@@ -17,9 +17,16 @@
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
  * tests counted, and the mutation reverted. The number is how many tests failed.
  *
- * 45 were applied: 45 fail at least one test here, and 0 cannot be told from the original.
+ * 50 were applied: 50 fail at least one test here, and 0 cannot be told from the original.
+ *
+ * src/effects/detect.ts:
+ *   a NIP needs no label                                     1
+ *   a handle needs no network before it                      1
  *
  * src/effects/mask.ts:
+ *   a vault gives the later span when two begin together     7
+ *   a vault takes a span that begins where another ends      2
+ *   a text with a shape in it is returned as it was          7
  *   ł is not folded                                          1
  *   Ł is not folded                                          1
  *   accents are kept in the folded copy                      1
