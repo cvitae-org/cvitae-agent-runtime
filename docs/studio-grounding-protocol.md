@@ -69,6 +69,11 @@ shape of an identifier, whoever's it is (see "Identifiers found by their shape")
 adds no field and no setting. Without it, the runtime keeps only what the CV states, and
 a person who pastes a referee's email into a question sends it.
 
+The feature `masking-embedding` says the texts an embedding provider is given are kept
+the same way (see "What an embedding provider is sent"). It adds no field and no setting.
+Without it, a person who chose a hosted embedder is sending it the text of their CV, and
+every question they search with, as it is.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -1533,12 +1538,57 @@ A text with one is not, and this is the second change to what a hosted provider 
 sent without anything the person did: a call that had no CV values to keep is now
 masked as soon as its text holds an identifier.
 
+## What an embedding provider is sent
+
+The index of a person's CV is made of its text, and a search embeds the question that
+is asked of it. Each is a call to the embedding provider, and neither happens inside a
+message, so a runtime that masked only a message left them as they were. A person who
+chose a hosted embedder (`EMBEDDING_PROVIDER` `openai` or `huggingface`) was sending it
+their name, email and phone number in the chunks of the index, and again in every
+question. With `masking-embedding` the runtime holds those calls to the rule it holds a
+message to:
+
+- **Which provider decides.** The one the embedding resolves to, which is not always the
+  one that writes the answers: a person can chat with a hosted model and embed on their
+  own machine, or the other way round. Under `hosted` an embedder that is not local is
+  masked and a local one is sent what it always was. Under `always` both are masked.
+- **What is taken.** The same as in a message: what the CV states, and what has the shape
+  of an identifier. The chunks of one rebuild are one call, so a value is one placeholder in
+  all of them. A text that holds nothing to keep is sent as it was, and its vector is the
+  one it always was.
+- **Nothing comes back to put right.** What returns is numbers. What the index stores, and
+  what a search hit shows, is the person's own text: masking is about what leaves.
+- **Nothing is made again.** The fingerprint of an index (provider, model, dimension,
+  chunker version) does not change, so no one is made to embed their whole CV again by
+  this, and nothing marks an existing index stale.
+- **A run's own call is held to it too.** A CV that is read and indexed inside a run goes
+  through the run's gateway, which asks the same question of the same provider. A search
+  made for a message, or for a `full` preview, is masked with the person's CV values even
+  when the run itself may not read the CV (discovery): the runtime reads its own CV for
+  this, and it can only mask more.
+
+What it leaves, said plainly:
+
+- **A mixed index.** Vectors made before the runtime had this are of text as it was, and
+  vectors made after are of text with placeholders in it. A question that holds the
+  person's own name or email is now embedded as a placeholder and can match an older
+  vector a little less well, until the index is made again (`profile.context.reindex`).
+  Only a chunk or a question that holds a value of the person's is affected.
+- **A change of setting is not a re-index.** Turning `always` on for a local embedder
+  masks what is embedded from then on, and leaves the vectors that exist as they are.
+- A placeholder is a different string from the name it stands for, so a search that looks for
+  a person's name in the vectors finds it less well. The keyword half of a search reads the
+  stored text and is not affected.
+- `transcribeImage` is not masked (below).
+
 ## What a person's own machine keeps
 
 - The CV, the record of a message (`runs.grounding`), a preview (`run.preview`) and
   the trace of a tool hold the real values. Masking is about what leaves for a
   model, and what a person reads on their own machine is theirs.
-- A preview is not masked: it calls no model.
+- A preview is not masked: it calls no model. (Its search for pieces embeds the
+  question, which is a call to the embedding provider and is masked as any other, under
+  `masking-embedding`.)
 - A run that may not read the CV (discovery) has no values of the person's to keep,
   so a runtime without `masking-detectors` sends its calls as they were. With it,
   such a run is still held to the shapes of identifiers (next section), because a
@@ -1549,10 +1599,10 @@ masked as soon as its text holds an identifier.
 
 ## What is not covered
 
-- `embed` and `transcribeImage` are handed on as they are. An image is pixels and
-  a vector is made of the text it stands for. The embedding provider is the local
-  one unless a person chose otherwise; a person who did is sending their CV text to
-  it unmasked.
+- `transcribeImage` is handed on as it is. An image is pixels, and masking it would
+  change what it is for. `embed` is masked when the runtime says `masking-embedding`
+  (the section above); without it, the embedding provider is the local one unless a
+  person chose otherwise, and a person who did is sending it their CV text unmasked.
 - A name, a street, a city, an employer and a school have no shape, and are not found
   unless the CV states them as a name. What is found by shape is in the next section,
   and a runtime without `masking-detectors` finds nothing that way.
@@ -1570,7 +1620,8 @@ masked as soon as its text holds an identifier.
    masked and that the CV, the record and the preview on the person's own machine
    show the real values. With `masking-detectors`, add that an email, a phone
    number, a profile link, an ID number or a date of birth written in a message is
-   masked whoever's it is.
+   masked whoever's it is. With `masking-embedding`, add that the text a hosted embedding
+   provider is given is kept the same way.
 3. Do not offer a way to turn masking off. There is none.
 4. Send the setting with the others, and when the person has not touched it, send
    nothing, so as not to overwrite what another window saved.

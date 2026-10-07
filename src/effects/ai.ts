@@ -440,6 +440,8 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
   return {
     describe: () => resolver.describe(override),
 
+    describeEmbedding: () => resolver.describeEmbedding(override),
+
     async generateObject<T>(request: ObjectRequest<T>): Promise<ObjectResult<T>> {
       const choice = resolver.describe(override);
 

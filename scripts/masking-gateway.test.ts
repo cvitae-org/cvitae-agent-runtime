@@ -13,8 +13,8 @@
  *                 give it one, and the history and the tool results of a loop
  *   what returns  the answer, an object and a stream of it put right, and a
  *                 tool that is asked for what the model was given a name for
- *   what stays    the calls with nothing to mask, the image, the embedding, and
- *                 whatever else the request carried
+ *   what stays    the calls with nothing to mask, the image, and whatever else
+ *                 the request carried
  *
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
  * tests counted, and the mutation reverted. The number is how many tests failed.
@@ -102,7 +102,7 @@
  *   a tool that fails is not failed                                 2
  *   a tool loses what it is called                                  0 (equivalent: a tool handle is a name, a description, a schema and a thunk, and naming them is spreading them)
  *   an image is masked as text                                      1
- *   an embedding is asked for nothing                               1
+ *   a mode that is a word is called                                 33
  */
 
 import assert from 'node:assert/strict';
@@ -747,17 +747,14 @@ test('a tool on a call that is not masked is the tool it was', async () => {
 
 /* ------------------------------------------------------------------- stays */
 
-test('an image and an embedding are handed on as they came, and what comes back is not changed', async () => {
+test('an image is handed on as it came, and what comes back is not changed', async () => {
   const { wrapped, seen } = masking(hosted);
 
   const image = { ...call, bytes: new Uint8Array([1]), mediaType: 'image/png', instruction: 'Anna Kowalska', maxOutputTokens: 5 };
-  const embedding = { ...call, values: ['Anna Kowalska'] };
 
   const read = await wrapped.transcribeImage(image);
-  await wrapped.embed(embedding);
 
   assert.equal(seen[0]!.request, image);
-  assert.equal(seen[1]!.request, embedding);
   assert.equal(read.text, 'Anna Kowalska on a page');
 });
 

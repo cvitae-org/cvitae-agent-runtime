@@ -28,11 +28,18 @@
  * values: masking is about what leaves, and what a person reads on their own
  * machine is theirs.
  *
- * **What it leaves, said once.** `embed` and `transcribeImage` are handed on as
- * they are. An image is pixels, and a vector is made of the text it stands for:
- * masking either would change what they are for, and the embedding provider is
- * the local one unless a person chose otherwise (`resolve.ts`). Both are named in
- * the protocol doc, and the plan has a step for the second of them.
+ * **`embed` is masked like the rest, by its own provider.** The texts it is given
+ * go through the vault and the vectors that come back are numbers, so there is
+ * nothing to put right. Whether it is masked is decided by the provider the
+ * embedding resolves to and not by the one that writes the answers
+ * (`describeEmbedding`): a person can chat with a hosted model and embed on their
+ * own machine, and the other way round, and the second is the case that leaks if
+ * the two are taken for one. A text with nothing to keep in it is sent as it was,
+ * so the vector is the one it always was.
+ *
+ * **What it leaves, said once.** `transcribeImage` is handed on as it is: an image
+ * is pixels, and masking it would change what it is for. It is named in the
+ * protocol doc, and the plan has a step for it.
  */
 
 import { RuntimeError } from '../contracts/index.js';
@@ -54,7 +61,11 @@ import type {
 import { createVault, type Vault } from './mask.js';
 
 export type MaskingOptions = {
-  readonly mode: MaskMode;
+  /**
+   * A function is asked at each call, for a gateway that outlives a run: the
+   * setting can be changed while it is held.
+   */
+  readonly mode: MaskMode | (() => MaskMode);
   /**
    * What to keep from the model, asked at the start of each call that is masked.
    *
@@ -74,6 +85,15 @@ export type MaskingOptions = {
 /** Whether a call to this gateway is to be masked, from what it resolves to now. */
 export const masks = (mode: MaskMode, gateway: Pick<AiGateway, 'describe'>): boolean =>
   mode === 'always' || gateway.describe().providerId !== 'local';
+
+/**
+ * Whether an embedding is to be masked: asked of the provider that embeds, which
+ * is the one that generates only when the gateway does not say otherwise.
+ */
+export const masksEmbedding = (
+  mode: MaskMode,
+  gateway: Pick<AiGateway, 'describe' | 'describeEmbedding'>
+): boolean => mode === 'always' || (gateway.describeEmbedding?.() ?? gateway.describe()).providerId !== 'local';
 
 /**
  * A sink for restored fragments that cannot break the call, as the gateway's own.
@@ -122,8 +142,9 @@ const maskedTool = (handle: ToolHandle, vault: Vault): ToolHandle => ({
 
 export const maskedGateway = (inner: AiGateway, options: MaskingOptions): AiGateway => {
   /** A vault for this call, or none when the call is to go as it is. */
-  const begin = (): Vault | undefined => {
-    if (!masks(options.mode, inner)) return undefined;
+  const begin = (embedding = false): Vault | undefined => {
+    const mode = typeof options.mode === 'function' ? options.mode() : options.mode;
+    if (!(embedding ? masksEmbedding(mode, inner) : masks(mode, inner))) return undefined;
 
     const vault = createVault(options.seeds(), { detect: options.detect === true });
     return vault.empty ? undefined : vault;
@@ -131,6 +152,7 @@ export const maskedGateway = (inner: AiGateway, options: MaskingOptions): AiGate
 
   return {
     describe: () => inner.describe(),
+    describeEmbedding: () => inner.describeEmbedding?.() ?? inner.describe(),
 
     async generateObject<T>(request: ObjectRequest<T>): Promise<ObjectResult<T>> {
       const vault = begin();
@@ -188,8 +210,16 @@ export const maskedGateway = (inner: AiGateway, options: MaskingOptions): AiGate
       return { ...result, text: vault.restore(result.text) };
     },
 
-    // Neither is masked. See the note at the top.
-    transcribeImage: (request: ImageRequest): Promise<TextResult> => inner.transcribeImage(request),
-    embed: (request: EmbedRequest): Promise<EmbedResult> => inner.embed(request)
+    async embed(request: EmbedRequest): Promise<EmbedResult> {
+      const vault = begin(true);
+      if (vault === undefined) return inner.embed(request);
+
+      // One vault for the whole batch, so a value is the same placeholder in every
+      // text it is in, as the chunks of one document would be.
+      return inner.embed({ ...request, values: request.values.map((value) => vault.mask(value)) });
+    },
+
+    // Not masked. See the note at the top.
+    transcribeImage: (request: ImageRequest): Promise<TextResult> => inner.transcribeImage(request)
   };
 };

@@ -65,6 +65,8 @@ import { createApprovalGate, createApprovalStore } from '../storage/sqlite/appro
 import { createDocumentStore } from '../storage/sqlite/document-store.js';
 import { createIndexRecoveryStore } from '../storage/sqlite/index-recovery.js';
 import { createIndexRebuilder } from './index-recovery.js';
+import { maskedGateway } from '../effects/masking.js';
+import { cvSeeds } from '../capabilities/cv/seeds.js';
 import { createCvLifecycle } from '../storage/sqlite/cv-lifecycle.js';
 import { createOfferSnapshots } from '../storage/sqlite/offer-snapshots.js';
 import { createContextPhotos } from '../storage/sqlite/context-photos.js';
@@ -536,8 +538,20 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     ...(options.now ? { now: options.now } : {})
   });
 
+  // What the index is made from, and what it is searched with, is the person's CV
+  // and the person's words, and neither happens inside a run, so a run's own
+  // wrapper never sees them. This is the same rule for the one call a run does not
+  // make: an embedder that is not on this machine is sent placeholders, and the
+  // vectors that come back need nothing put right. The mode is asked at each call
+  // and the CV at each call, as a run asks them at each message.
+  const embedder = maskedGateway(ai, {
+    mode: () => maskModeOf(settings.read().maskMode),
+    seeds: () => cvSeeds(documents),
+    detect: true
+  });
+
   const indexJobs = createIndexRecoveryStore(db, chunks, options.now);
-  const indexRebuilder = createIndexRebuilder(indexJobs, ai);
+  const indexRebuilder = createIndexRebuilder(indexJobs, embedder);
   if (options.indexRecovery) indexRebuilder.start();
 
   // One reader, two names on it. The pairing `retrieval` and `index` make on
@@ -565,7 +579,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
 
   // The reader half only. `chunks` keeps the write half up here, where indexing
   // happens, and a step is handed something with no `replace` on it at all.
-  const retrieval = createRetriever({ reader: chunks, ai, traceId: 'retrieval' });
+  const retrieval = createRetriever({ reader: chunks, ai: embedder, traceId: 'retrieval' });
 
   const deps: RuntimeDeps = {
     scopeLegacy: assertLegacy,

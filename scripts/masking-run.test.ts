@@ -24,7 +24,7 @@
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
  * tests counted, and the mutation reverted. The number is how many tests failed.
  *
- * 64 were applied: 64 fail at least one test here, and 0 cannot be told from the original.
+ * 65 were applied: 65 fail at least one test here, and 0 cannot be told from the original.
  *
  * src/effects/detect.ts:
  *   a British number has eleven digits after its code                             1
@@ -73,6 +73,7 @@
  *   a text call keeps its prompt                                                  2
  *   a loop keeps its prompt                                                       6
  *   a loop answer is not put right                                                1
+ *   a mode that is a word is called                                               12
  *
  * src/runtime/run.ts:
  *   the run does not ask for detectors                                            1

@@ -24,7 +24,7 @@
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
  * tests counted, and the mutation reverted. The number is how many tests failed.
  *
- * 70 were applied: 70 fail at least one test here, and 0 cannot be told from the original.
+ * 73 were applied: 73 fail at least one test here, and 0 cannot be told from the original.
  *
  * src/effects/detect.ts:
  *   the weights of a PESEL are not the ones it has                    1
@@ -101,6 +101,9 @@
  *   the gateway never detects                                         6
  *   the gateway always detects                                        1
  *   the gateway detects when it is not asked either way               1
+ *   every call asks where it embeds                                   5
+ *   the two are swapped                                               5
+ *   a mode that is a word is called                                   9
  */
 
 import assert from 'node:assert/strict';
@@ -604,7 +607,7 @@ test('a person with seeds and the detectors on has both kept out, and gets both 
   });
 });
 
-test('embedding and reading an image are still handed on as they are', async () => {
+test('reading an image is still handed on as it is', async () => {
   const seen: unknown[] = [];
   const inner: AiGateway = {
     describe: () => ({ providerId: 'openrouter', modelId: 'm' }),
@@ -621,14 +624,12 @@ test('embedding and reading an image are still handed on as they are', async () 
       seen.push(request.instruction);
       return { text: referee.email, finishReason: 'stop', usage: { inputTokens: 0, outputTokens: 0 } };
     },
-    embed: async (request) => {
-      seen.push(...request.values);
-      return { vectors: [new Float32Array(1)], provider: 'p', model: 'm', dim: 1 };
+    embed: async () => {
+      throw new Error('unused');
     }
   };
 
   const gateway = maskedGateway(inner, { mode: 'hosted', seeds: () => [], detect: true });
-  await gateway.embed({ ...call, values: [referee.email] });
   const read = await gateway.transcribeImage({
     ...call,
     bytes: new Uint8Array(),
@@ -637,6 +638,6 @@ test('embedding and reading an image are still handed on as they are', async () 
     maxOutputTokens: 10
   });
 
-  assert.deepEqual(seen, [referee.email, referee.phone]);
+  assert.deepEqual(seen, [referee.phone]);
   assert.equal(read.text, referee.email);
 });

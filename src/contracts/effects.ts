@@ -245,6 +245,17 @@ export interface AiGateway {
   embed(request: EmbedRequest): Promise<EmbedResult>;
   /** Which provider and model this resolves to, for the run record. */
   describe(): { readonly providerId: string; readonly modelId: string };
+  /**
+   * Which provider and model `embed` resolves to, when that is not the one
+   * `describe` names.
+   *
+   * Embedding resolves on its own (`providers/resolve.ts`): a person can have a
+   * hosted chat model and an embedder on this machine, or the other way round, and
+   * whoever decides what to keep from a provider has to ask the one it is about to
+   * call. Optional, and a gateway that does not say is taken to embed where it
+   * generates.
+   */
+  describeEmbedding?(): { readonly providerId: string; readonly modelId: string };
 }
 
 /* ----------------------------------------------------------------- offers */

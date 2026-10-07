@@ -17,7 +17,7 @@
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
  * tests counted, and the mutation reverted. The number is how many tests failed.
  *
- * 50 were applied: 50 fail at least one test here, and 0 cannot be told from the original.
+ * 53 were applied: 53 fail at least one test here, and 0 cannot be told from the original.
  *
  * src/effects/detect.ts:
  *   a NIP needs no label                                     1
@@ -74,6 +74,9 @@
  *   what a tool is asked is put right at its top level only  1
  *   what a tool answers is not masked                        1
  *   what a tool answers is masked at its top level only      1
+ *   every call asks where it embeds                          6
+ *   the two are swapped                                      6
+ *   a mode that is a word is called                          9
  */
 
 import assert from 'node:assert/strict';
