@@ -18,6 +18,8 @@ import { route, validateInput } from '../core/router.js';
 import { createCheckpointer } from '../runs/checkpoint.js';
 import * as emit from '../events/emit.js';
 import { CvContextError, OperationError, RuntimeError, isRunSuspension } from '../contracts/index.js';
+import { maskedGateway } from '../effects/masking.js';
+import { cvSeeds } from '../capabilities/cv/seeds.js';
 import { createRecorder, recordingDocuments, recordingRetrieval } from './grounding.js';
 import type { Grounding } from './grounding.js';
 import type { HistorySupplier } from './history.js';
@@ -32,6 +34,8 @@ import type {
   EffectSet,
   LimitStore,
   Limits,
+  MaskMode,
+  MaskSeed,
   OfferShelf,
   Retriever,
   RunContext,
@@ -97,6 +101,11 @@ export type RuntimeDeps = {
    */
   readonly offerShelf?: OfferShelf;
   /**
+   * When a model call of a run is masked: what a person has set, asked at the
+   * start of every run. Absent means no call is masked, as before masking.
+   */
+  readonly masking?: { readonly mode: () => MaskMode };
+  /**
    * Keeps the conversation of a run whose host sent none. Absent means a run is
    * given the history and summary it was sent, and nothing else, as before.
    */
@@ -158,6 +167,25 @@ export const scopedDeps = (deps: RuntimeDeps, contextId?: string, conversationId
 };
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * What a run's model is not to be told, read from the CV the run is bound to.
+ *
+ * From the store the run was handed and not from the walled ports: a piece a
+ * person has left out of a message is a piece to keep from the model twice over,
+ * and a name that is excluded from the CV is still a name. A run that is not
+ * allowed to read the CV at all — discovery is not — has nothing of the person's
+ * to keep out of its calls, and says so by refusing the read; that refusal is
+ * the one thing not passed on.
+ */
+const seedsOf = (documents: DocumentStore): readonly MaskSeed[] => {
+  try {
+    return cvSeeds(documents);
+  } catch (error) {
+    if (error instanceof OperationError && error.code === 'search_scope') return [];
+    throw error;
+  }
+};
 
 /**
  * The input a run is planned and run from: the one it was validated to, with the
@@ -249,9 +277,23 @@ export const buildRunContext = (
       ? { documents: deps.documents, retrieval: deps.retrieval, index: deps.index }
       : wallPorts({ documents: deps.documents, retrieval: deps.retrieval, index: deps.index }, walls, contextId);
 
+  // The one place a model is reached from a run, so the one place it is masked:
+  // every capability, step and tool is handed this gateway. A preview calls no
+  // model and is left as it was.
+  const effects: EffectSet =
+    deps.masking === undefined || fields.preview === true
+      ? deps.effects
+      : {
+          ...deps.effects,
+          ai: maskedGateway(deps.effects.ai, {
+            mode: deps.masking.mode(),
+            seeds: () => seedsOf(deps.documents)
+          })
+        };
+
   return {
     ...fields,
-    effects: deps.effects,
+    effects,
     tools: deps.tools,
     // The ports say what they were asked for. Wrapped only when there is a
     // record to say it to, so every other run holds the ports it always did.

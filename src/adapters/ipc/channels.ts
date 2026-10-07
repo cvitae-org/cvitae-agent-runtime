@@ -44,7 +44,7 @@ import { z } from 'zod';
 import { discoveryFiltersSchema, discoveryBudgetSchema, discoveryBudgetDefaults, discoveryChatRequestSchema, discoveryImportSchema, discoverySearchBatchSchema, discoveryImportBatchSchema, discoveryImportIdentitySchema, discoverySearchPageSchema } from '../../contracts/discovery-search.js';
 import { cvDocumentSchema } from '../../capabilities/cv/document.js';
 import { cvPhotoSchema } from '../../capabilities/cv/photo.js';
-import { runStatuses } from '../../contracts/index.js';
+import { maskModes, runStatuses } from '../../contracts/index.js';
 
 /* ------------------------------------------------------------------ inputs */
 
@@ -85,7 +85,10 @@ const settings = z.object({
   modelId: setting,
   localBaseUrl: setting,
   embeddingProviderId: setting,
-  embeddingModelId: setting
+  embeddingModelId: setting,
+  // Absent on `settings.set` keeps what is stored and `null` returns it to the
+  // default, so a host that predates the field cannot undo it by saving.
+  maskMode: z.enum(maskModes).nullish()
 });
 
 export const payloads = {

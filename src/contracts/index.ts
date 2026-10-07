@@ -14,6 +14,7 @@ export * from './cv-context.js';
 export * from './cv-copy.js';
 export * from './cv-lifecycle.js';
 export * from './index-recovery.js';
+export * from './mask.js';
 export * from './operation-error.js';
 export * from './document-store.js';
 export * from './effects.js';

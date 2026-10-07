@@ -59,6 +59,11 @@ The feature `grounding-compaction` says a long conversation can be carried on (s
 exists, and deleting a conversation also deletes the runs it made. Without it, send
 neither field, refuse an over-long message as before, and fold nothing.
 
+The feature `masking` says the runtime keeps a person's own contact details out of
+what it sends to a model (see "Keeping a person's details from a model"):
+`settings.get` and `settings.set` carry `maskMode`. Without it, show no masking
+setting, and do not tell a person their details are kept from a hosted model.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -1392,3 +1397,110 @@ what its runs made:
    nothing; for `summary_withheld` or `withheld` say what the exclusions hold back and
    offer to include the piece again.
 5. Do the same by itself over the limit, and say that it did.
+
+# Keeping a person's details from a model
+
+A model on someone else's machine is sent the text of a question, of the CV pieces
+a message is made from, and of the conversation. This is how a runtime that lists
+`masking` in `protocol.get` keeps the person's own name, email, phone number and
+links out of that text, and puts them back into what comes home.
+
+Say "mask", never "anonymise". A city, an employer, a school and a run of dates
+still describe a person, and a provider that is sent masked text is still sent
+personal data. What this does is narrower and exact: the values the CV states in
+its personal details are not in the request.
+
+## The setting: `maskMode`
+
+`settings.get` returns `maskMode`, and `settings.set` takes it, next to the
+provider settings:
+
+```json
+{ "settings": { "providerId": "openai", "maskMode": "always" } }
+```
+
+- `hosted`: a call to a model that is not on this machine is masked, and a call to
+  a local one is sent as it always was. This is what a runtime does with nothing
+  stored, and `maskMode` is absent from `settings.get` then.
+- `always`: every call is masked, the local ones too. For a person who wants a
+  local model to be asked what a hosted one would be.
+- There is no value that turns it off, and none can be added without the runtime
+  itself saying so. A value the runtime does not know is refused with
+  `invalid_input`; one that is in the database anyway is read as `always`.
+- `settings.set` with `maskMode` left out **keeps what is stored**, and `null`
+  returns it to the default. The other fields still work the other way: one left
+  out is cleared. A build of Studio that does not know the field therefore cannot
+  switch masking off by saving a provider.
+- It is in force on the next message. It is not read at start-up and needs no restart.
+- `providers.status` and `providers.test` accept the field and ignore it.
+
+A runtime that keeps masking on by default changes what a hosted provider is
+sent, and says so here: this is the one setting of the grounding protocol whose
+default alters a payload that nothing the person did had altered before.
+
+## What is kept, and what is not
+
+The values come from the stored CV's `personal` section, read at every call: the
+name, the email, the phone number and each link. They are taken wherever they turn
+up, in a question, in a pasted posting, in an earlier answer, in a tool's result.
+
+- A name is taken whole, in the other order (`Kowalska Anna`), and each word of it
+  alone, and each half of a hyphenated one. A word is at least three letters.
+- Case and diacritics do not matter: `ŁUKASZ` and `lukasz` are the name `Łukasz`.
+- A phone number is taken however it is spaced, and without its country code when
+  the CV wrote it with one.
+- A link is taken with or without its scheme, `www.` and trailing slash.
+- What is not taken: the location (a city is shared by too many people); a
+  word that is a form of a name and not the name (a Polish case ending on a
+  surname); an email or a phone the CV does not state; and anything that is not text.
+  A name that is also a common word is taken as a name wherever it is written.
+- A piece that a conversation excludes is still a source of values. A name that is
+  left out of a message is still a name.
+
+The model is given `[NAME_1]`, `[EMAIL_1]`, `[PHONE_1]`, `[LINK_1]`. The same text
+is the same placeholder in a call and a different spelling is another one, so what
+a person wrote comes back as they wrote it. The numbers mean nothing outside the
+call that issued them.
+
+What comes back is put right before anything sees it: the answer, a structured
+result (an extraction, a proposal, a plan), each streamed fragment of a reply, and
+what a tool is asked for when the model names a placeholder. A placeholder the call
+did not issue is left as it is. Fragments are held back only while the end of one
+could still become a placeholder, so a streamed reply may stop for a moment at an
+opening bracket.
+
+## What a person's own machine keeps
+
+- The CV, the record of a message (`runs.grounding`), a preview (`run.preview`) and
+  the trace of a tool hold the real values. Masking is about what leaves for a
+  model, and what a person reads on their own machine is theirs.
+- A preview is not masked: it calls no model.
+- A run that may not read the CV (discovery) has no values to keep, and its calls
+  are sent as they were. It is not refused for that.
+- A run whose CV cannot be read at all is refused; it is not sent as if it had no
+  values. A CV with no name, email, phone or link in it masks nothing.
+
+## What is not covered
+
+- `embed` and `transcribeImage` are handed on as they are. An image is pixels and
+  a vector is made of the text it stands for. The embedding provider is the local
+  one unless a person chose otherwise; a person who did is sending their CV text to
+  it unmasked.
+- A value that the CV does not state is not found by shape. Detectors for emails,
+  phone numbers, links and national numbers that appear in text are not part of this.
+- A model that rewrites a placeholder into something else (`[Name 1]` is read; a
+  translation of it is not) is not put right.
+- A structured answer whose schema constrains a field to a format (an email) can be
+  refused for holding a placeholder.
+
+## Suggested UI
+
+1. Check `masking` in `protocol.get`. Without it, show nothing of this.
+2. A line in the provider settings: "Mask my name and contact details" with the two
+   choices, "When the model is not on this computer" (`hosted`) and "Always"
+   (`always`). Say "mask", not "anonymise". Under it, in one sentence, say what is
+   masked and that the CV, the record and the preview on the person's own machine
+   show the real values.
+3. Do not offer a way to turn masking off. There is none.
+4. Send the setting with the others, and when the person has not touched it, send
+   nothing, so as not to overwrite what another window saved.

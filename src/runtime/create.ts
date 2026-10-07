@@ -72,7 +72,7 @@ import { createCvContextStore } from '../storage/sqlite/cv-contexts.js';
 import { createCvCopies } from '../storage/sqlite/cv-copy.js';
 import { bindOfferScope, snapshotInput } from './offer-scope.js';
 import { bindCvScope } from './cv-scope.js';
-import { CvContextError, RuntimeError } from '../contracts/index.js';
+import { CvContextError, RuntimeError, maskModeOf } from '../contracts/index.js';
 import { createChunkIndex } from '../storage/sqlite/chunk-index.js';
 import { createOfferStore } from '../storage/sqlite/offers.js';
 import { createDiscoveryCatalogue } from '../storage/sqlite/discovery.js';
@@ -626,6 +626,9 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     retrieval,
     index: chunks,
     grounding: { records: groundingRecords, wells },
+    // Asked at the start of every run, so a change made in settings is in force
+    // for the next message and no run is half one thing and half the other.
+    masking: { mode: () => maskModeOf(settings.read().maskMode) },
     selection: selectionStore,
     limits: limitStore,
     offerShelf: {
