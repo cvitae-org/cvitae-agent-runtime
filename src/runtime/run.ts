@@ -38,7 +38,9 @@ import type {
   MaskMode,
   MaskScope,
   MaskSeed,
+  MaskTally,
   OfferShelf,
+  RecordSink,
   Retriever,
   RunContext,
   RunResult,
@@ -204,11 +206,14 @@ const seedsOf = (documents: DocumentStore, scope: MaskScope): readonly MaskSeed[
  * The terms are values and not a setting, and are asked at each call with the CV:
  * one added while a run waits is kept from its next call, and they are kept in a
  * run that may not read the CV, because they are not the CV's.
+ *
+ * A run with a record has each call counted in it, before the call goes.
  */
 const maskedEffects = (
   effects: EffectSet,
   masking: NonNullable<RuntimeDeps['masking']>,
-  documents: DocumentStore
+  documents: DocumentStore,
+  record: RecordSink | undefined
 ): EffectSet => {
   const scope = masking.scope?.() ?? defaultMaskScope;
 
@@ -217,7 +222,8 @@ const maskedEffects = (
     ai: maskedGateway(effects.ai, {
       mode: masking.mode(),
       seeds: () => [...seedsOf(documents, scope), ...termSeeds(masking.terms?.() ?? [])],
-      detect: true
+      detect: true,
+      ...(record === undefined ? {} : { tally: (count: MaskTally) => record.masking(count) })
     })
   };
 };
@@ -318,7 +324,7 @@ export const buildRunContext = (
   const effects: EffectSet =
     deps.masking === undefined || fields.preview === true
       ? deps.effects
-      : maskedEffects(deps.effects, deps.masking, deps.documents);
+      : maskedEffects(deps.effects, deps.masking, deps.documents, record);
 
   return {
     ...fields,

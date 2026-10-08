@@ -11,13 +11,14 @@
  * follows, so a run never reads "succeeded" next to a record that says "open".
  */
 
-import { PROCESS_INTERRUPTED, RECORD_VERSION } from '../../contracts/index.js';
+import { addMaskCounts, PROCESS_INTERRUPTED, RECORD_VERSION } from '../../contracts/index.js';
 import type {
   ConversationRecord,
   ConversationRecords,
   EntryOrigin,
   EntryStatus,
   GroundingRecord,
+  MaskTally,
   RecordEntry,
   RecordOutcome,
   RecordState,
@@ -108,6 +109,7 @@ type RecordRow = {
   outcome: string | null;
   opened_at: number;
   closed_at: number | null;
+  masking: string | null;
 };
 
 type EntryRow = {
@@ -141,8 +143,18 @@ const toRecord = (row: RecordRow, entries: RecordEntry[]): GroundingRecord => ({
   ...(row.outcome === null ? {} : { outcome: row.outcome as RecordOutcome }),
   openedAt: row.opened_at,
   ...(row.closed_at === null ? {} : { closedAt: row.closed_at }),
-  entries
+  entries,
+  ...(row.masking === null ? {} : { masking: JSON.parse(row.masking) as MaskTally })
 });
+
+/** Two counts of what masking did as one. */
+const addTallies = (a: MaskTally, b: MaskTally): MaskTally => ({
+  masked: a.masked + b.masked,
+  unmasked: a.unmasked + b.unmasked,
+  placeholders: addMaskCounts(a.placeholders, b.placeholders)
+});
+
+const NONE: MaskTally = { masked: 0, unmasked: 0, placeholders: {} };
 
 export const createRecordStore = (db: Db): RecordStore & ConversationRecords => {
   /**
@@ -161,6 +173,22 @@ export const createRecordStore = (db: Db): RecordStore & ConversationRecords => 
   );
 
   const selectRecord = db.prepare<[string]>('SELECT * FROM grounding_record WHERE run_id = ?');
+
+  // Read and written in one transaction, so two calls of one run counted at once
+  // add up, and only while the record is open, as an entry is: the read is what
+  // says it is open, and nothing can close it before the write.
+  const selectMasking = db.prepare<[string]>(
+    `SELECT masking FROM grounding_record WHERE run_id = ? AND state = 'open'`
+  );
+  const updateMasking = db.prepare<[string, string]>('UPDATE grounding_record SET masking = ? WHERE run_id = ?');
+
+  const addMasking = db.transaction((runId: string, add: MaskTally): number => {
+    const row = selectMasking.get(runId) as { masking: string | null } | undefined;
+    if (row === undefined) return 0;
+
+    const before = row.masking === null ? NONE : (JSON.parse(row.masking) as MaskTally);
+    return updateMasking.run(JSON.stringify(addTallies(before, add)), runId).changes;
+  }).immediate;
   const selectEntries = db.prepare<[string]>(
     `SELECT ref, version, digest, shown, status, origin, via
        FROM grounding_entry WHERE run_id = ? ORDER BY id`
@@ -222,6 +250,7 @@ export const createRecordStore = (db: Db): RecordStore & ConversationRecords => 
 
   return {
     append: (runId, entries) => (entries.length === 0 ? 0 : appendAll(runId, entries)),
+    addMasking: (runId, add) => addMasking(runId, add),
     read: (runId) => readAll(runId),
     byConversation: (conversationId) => readConversation(conversationId)
   };

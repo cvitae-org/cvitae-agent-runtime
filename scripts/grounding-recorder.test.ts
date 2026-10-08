@@ -107,6 +107,7 @@ import type {
   DocumentRecord,
   DocumentStore,
   GroundingRecord,
+  MaskTally,
   RecordEntry,
   RecordSink,
   RecordStore,
@@ -172,6 +173,7 @@ const piece = (key: string, over: Partial<RecordEntry> = {}): RecordEntry => ({
 const fakeStore = (held: RecordEntry[] = []) => {
   const seen = {
     appends: [] as { runId: string; entries: RecordEntry[] }[],
+    maskings: [] as { runId: string; add: MaskTally }[],
     reads: [] as string[],
     failNextAppend: false,
     failReads: false,
@@ -187,6 +189,10 @@ const fakeStore = (held: RecordEntry[] = []) => {
       }
       held.push(...entries);
       return entries.length;
+    },
+    addMasking: (runId, add) => {
+      seen.maskings.push({ runId, add });
+      return 1;
     },
     read: (runId) => {
       seen.reads.push(runId);

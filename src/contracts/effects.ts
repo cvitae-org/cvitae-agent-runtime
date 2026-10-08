@@ -19,6 +19,7 @@
 
 import type { z } from 'zod';
 import type { IntegrationExecution } from './integration.js';
+import type { MaskCounts } from './mask.js';
 import type { StatedFacts, StatedRoutes } from './offer.js';
 
 /* ------------------------------------------------------------------ shared */
@@ -57,7 +58,19 @@ export type TokenUsage = {
   readonly totalTokens?: number;
 };
 
-export type ObjectRequest<T> = EffectCall & {
+/**
+ * What a call that was masked has sent as placeholders so far.
+ *
+ * Set by the masking gateway on a call it masks (`effects/masking.ts`), cleared by
+ * it on one it does not, and read by the gateway below it when the call's line is
+ * logged (`AiLogEntry.masked`). Asked and not given, because a tool loop's tools
+ * add to it while the call runs.
+ */
+export type MaskedCall = {
+  readonly masked?: (() => MaskCounts) | undefined;
+};
+
+export type ObjectRequest<T> = EffectCall & MaskedCall & {
   readonly schema: z.ZodType<T>;
   readonly system: string;
   readonly prompt: string;
@@ -80,7 +93,7 @@ export type ObjectResult<T> = {
   readonly usage: TokenUsage;
 };
 
-export type TextRequest = EffectCall & {
+export type TextRequest = EffectCall & MaskedCall & {
   readonly system: string;
   readonly prompt: string;
   readonly maxOutputTokens: number;
@@ -136,7 +149,7 @@ export type ConversationTurn = {
   readonly text: string;
 };
 
-export type ToolLoopRequest = EffectCall & {
+export type ToolLoopRequest = EffectCall & MaskedCall & {
   readonly system: string;
   readonly prompt: string;
   /**
@@ -201,7 +214,7 @@ export type ImageRequest = EffectCall & {
   readonly maxOutputTokens: number;
 };
 
-export type EmbedRequest = EffectCall & {
+export type EmbedRequest = EffectCall & MaskedCall & {
   readonly values: readonly string[];
 };
 
@@ -564,6 +577,12 @@ export type AiLogEntry = {
   readonly outcome: 'ok' | 'failed';
   /** A code and a redacted message. Never the provider's raw error. */
   readonly errorCode?: string;
+  /**
+   * How many placeholders of each kind the call sent, when it was masked: `{}`
+   * for one that held nothing to keep. Absent when it was sent as it was.
+   * Counts, never what they stood for.
+   */
+  readonly masked?: MaskCounts;
 };
 
 export interface AiLogger {

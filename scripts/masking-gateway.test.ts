@@ -320,7 +320,10 @@ test('a structured call has nothing of the person in what it sends, and the rest
 
   const sentRequest = last() as ObjectRequest<{ who: string }>;
   assert.deepEqual(leaks(sentRequest), []);
-  assert.deepEqual({ ...sentRequest, system: '', prompt: '' }, { ...request, system: '', prompt: '' });
+  // And what it sent, for its log line to ask (`masking-counts.test.ts`).
+  const { masked, ...rest } = sentRequest;
+  assert.equal(typeof masked, 'function');
+  assert.deepEqual({ ...rest, system: '', prompt: '' }, { ...request, system: '', prompt: '' });
   assert.equal(sentRequest.schema, schema);
   assert.equal(sentRequest.system, 'Letter for [NAME_1]');
   assert.equal(sentRequest.prompt, '{"email":"[EMAIL_1]"}');

@@ -48,17 +48,17 @@
  * not the person's, and anything that is not text.
  */
 
-import type { MaskSeed, MaskSeedKind } from '../contracts/index.js';
-import { detect, type DetectedKind } from './detect.js';
+import type { MaskCounts, MaskKind, MaskSeed, MaskSeedKind } from '../contracts/index.js';
+import { detect } from './detect.js';
 
 /**
- * What a placeholder stands for: what a person said (`MaskSeedKind`) and what was
- * found by its shape (`DetectedKind`), which share the labels of the first four
- * and add `ID` (a PESEL, a NIP, an IBAN, an account number) and `DOB`; `ORG` is
- * an employer or a school that a person said, in the strict scope, and `TERM` a
- * word or a phrase they asked to have kept.
+ * What a placeholder stands for (`MaskKind`): what a person said and what was
+ * found by its shape (`detect.ts`), which share the labels of the first four and
+ * add `ID` (a PESEL, a NIP, an IBAN, an account number) and `DOB`; `ORG` is an
+ * employer or a school that a person said, in the strict scope, and `TERM` a word
+ * or a phrase they asked to have kept.
  */
-export type MaskKind = MaskSeedKind | DetectedKind;
+export type { MaskKind };
 
 const LABEL: Readonly<Record<MaskKind, string>> = {
   name: 'NAME',
@@ -366,6 +366,12 @@ export type Vault = {
   restorer(emit: (text: string) => void): Restorer;
   /** How many values have been replaced, for a test and for nothing else. */
   replaced(): number;
+  /**
+   * How many placeholders of each kind have been issued so far, which is what the
+   * model has been sent: one for each spelling of each value, however often it
+   * was replaced.
+   */
+  placeholders(): MaskCounts;
 };
 
 const isPlain = (value: unknown): value is Record<string, unknown> => {
@@ -424,6 +430,8 @@ export const createVault = (seeds: readonly MaskSeed[], options: VaultOptions = 
   const surfaces = new Map<string, string>();
   const taken = new Set<string>();
   const counts = Object.fromEntries(KINDS.map((kind) => [kind, 0])) as Record<MaskKind, number>;
+  // Not `counts`, which is the highest number issued and skips a number taken.
+  const placeholders: Partial<Record<MaskKind, number>> = {};
   let replaced = 0;
 
   const key = (label: string, number: number): string => `${label}_${number}`;
@@ -449,6 +457,7 @@ export const createVault = (seeds: readonly MaskSeed[], options: VaultOptions = 
     const placeholder = `[${key(label, number)}]`;
     issued.set(`${kind}\u0000${surface}`, placeholder);
     surfaces.set(key(label, number), surface);
+    placeholders[kind] = (placeholders[kind] ?? 0) + 1;
     return placeholder;
   };
 
@@ -520,6 +529,7 @@ export const createVault = (seeds: readonly MaskSeed[], options: VaultOptions = 
         }
       };
     },
-    replaced: () => replaced
+    replaced: () => replaced,
+    placeholders: () => ({ ...placeholders })
   };
 };

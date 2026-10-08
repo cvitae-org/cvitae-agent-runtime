@@ -120,7 +120,10 @@ test('the row cannot hold a prompt, a completion or an error message', () => {
       'id', 'at', 'trace_id', 'run_id', 'step', 'operation',
       'provider_id', 'model_id', 'prompt_chars', 'input_bytes',
       'completion_chars', 'input_tokens', 'output_tokens', 'total_tokens',
-      'latency_ms', 'finish_reason', 'outcome', 'error_code'
+      'latency_ms', 'finish_reason', 'outcome', 'error_code',
+      // How many placeholders of each kind a masked call sent: counts by kind,
+      // never what they stood for (migration 0048).
+      'masked'
     ]));
   } finally {
     s.dispose();

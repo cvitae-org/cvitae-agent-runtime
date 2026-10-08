@@ -62,6 +62,7 @@ import type {
   EmbedResult,
   FinishReason,
   ImageRequest,
+  MaskedCall,
   ObjectRequest,
   ObjectResult,
   TextRequest,
@@ -291,6 +292,14 @@ const usageOf = (usage: {
   ...(usage.totalTokens === undefined ? {} : { totalTokens: usage.totalTokens })
 });
 
+/**
+ * What a masked call sent, asked when its line is written and not when it began:
+ * a tool loop's tools add to it while the call runs. A call that failed still
+ * sent what it sent.
+ */
+const maskedOf = (request: MaskedCall): { readonly masked?: AiLogEntry['masked'] } =>
+  request.masked === undefined ? {} : { masked: request.masked() };
+
 /* ------------------------------------------------------------------ gateway */
 
 export type AiGatewayOptions = {
@@ -334,7 +343,7 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
    */
   const call = async <T>(
     operation: AiLogEntry['operation'],
-    request: { traceId: string; runId?: string; step?: string; signal: AbortSignal },
+    request: { traceId: string; runId?: string; step?: string; signal: AbortSignal } & MaskedCall,
     choice: { providerId: string; modelId: string },
     promptChars: number,
     work: () => Promise<{ value: T; completionChars: number; usage: TokenUsage; finishReason?: FinishReason }>,
@@ -382,7 +391,8 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
         usage: settled.usage,
         latencyMs: now() - startedAt,
         ...(settled.finishReason ? { finishReason: settled.finishReason } : {}),
-        outcome: 'ok'
+        outcome: 'ok',
+        ...maskedOf(request)
       });
 
       return settled.value;
@@ -397,7 +407,8 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
         usage: {},
         latencyMs: now() - startedAt,
         outcome: 'failed',
-        errorCode: code
+        errorCode: code,
+        ...maskedOf(request)
       });
 
       // An abort keeps its own code, so the orchestrator can tell a cancelled

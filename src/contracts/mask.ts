@@ -23,6 +23,49 @@
 export const maskSeedKinds = ['name', 'email', 'phone', 'link', 'org', 'term'] as const;
 export type MaskSeedKind = (typeof maskSeedKinds)[number];
 
+/**
+ * What a placeholder can stand for: what a person said (`MaskSeedKind`), and two
+ * kinds found only by their shape (`effects/detect.ts`), `id` (a PESEL, a NIP, an
+ * IBAN, an account number) and `dob` (a date of birth).
+ */
+export const maskKinds = [...maskSeedKinds, 'id', 'dob'] as const;
+export type MaskKind = (typeof maskKinds)[number];
+
+/**
+ * How many placeholders of each kind a model was sent: counts, and never what
+ * they stood for. A kind with none is left out, so `{}` is a call that was masked
+ * and held nothing to keep.
+ *
+ * A placeholder is one spelling of one value in one call (`effects/mask.ts`), so
+ * `Anna Kowalska` and `ANNA KOWALSKA` in one call are two, and a name sent in two
+ * calls is counted in each.
+ */
+export type MaskCounts = Readonly<Partial<Record<MaskKind, number>>>;
+
+/** The two counts as one, kind by kind. */
+export const addMaskCounts = (a: MaskCounts, b: MaskCounts): MaskCounts => {
+  const sum: Partial<Record<MaskKind, number>> = { ...a };
+  for (const kind of maskKinds) {
+    const more = b[kind];
+    if (more !== undefined) sum[kind] = (sum[kind] ?? 0) + more;
+  }
+  return sum;
+};
+
+/**
+ * What masking did in some model calls, as the record of a run keeps it.
+ *
+ * `masked` is how many calls went through masking, `unmasked` how many were sent
+ * as they were: a call to a model on this machine when only hosted calls are
+ * masked, a call with nothing at all to keep, and every image, which is never
+ * masked. `placeholders` is summed over the masked calls.
+ */
+export type MaskTally = {
+  readonly masked: number;
+  readonly unmasked: number;
+  readonly placeholders: MaskCounts;
+};
+
 /** One value to keep from a hosted model: as the person's CV states it. */
 export type MaskSeed = {
   readonly kind: MaskSeedKind;

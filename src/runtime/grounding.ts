@@ -201,7 +201,12 @@ export const createRecorder = (grounding: Grounding, facts: RecorderFacts): Reco
   return {
     scopes,
     add,
-    sent: (fields) => add(fields.flatMap((field) => sentEntries(facts, field)))
+    sent: (fields) => add(fields.flatMap((field) => sentEntries(facts, field))),
+    // Straight to the store: counts are added up there, and there is nothing to
+    // hold back here, since two calls that hold the same are two calls.
+    masking: (count) => {
+      grounding.records.addMasking(facts.runId, count);
+    }
   };
 };
 

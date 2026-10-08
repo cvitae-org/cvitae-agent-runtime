@@ -202,6 +202,11 @@ export const aiLine = (entry: AiLogEntry): string =>
     entry.usage.outputTokens === undefined ? undefined : `out=${entry.usage.outputTokens}t`,
     `${entry.latencyMs}ms`,
     entry.finishReason ? `finish=${entry.finishReason}` : undefined,
+    // How many placeholders a masked call sent, all kinds together: whoever wants
+    // them kind by kind reads the table.
+    entry.masked === undefined
+      ? undefined
+      : `masked=${Object.values(entry.masked).reduce((sum, count) => sum + count, 0)}`,
     entry.outcome === 'ok' ? 'ok' : `failed=${entry.errorCode ?? 'unknown'}`
   ].filter(Boolean).join(' ');
 

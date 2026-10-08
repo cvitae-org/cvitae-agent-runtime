@@ -14,6 +14,8 @@
  * source that has sections and items, a helpdesk as readily as anything else.
  */
 
+import type { MaskTally } from './mask.js';
+
 /**
  * The address of one piece of a well, optionally pinned to a version.
  *
@@ -106,6 +108,14 @@ export type GroundingRecord = {
   readonly closedAt?: number;
   /** In the order each was first recorded. */
   readonly entries: readonly RecordEntry[];
+  /**
+   * What masking did in the run's model calls: how many were masked, how many
+   * went as they were, and how many placeholders of each kind they were sent.
+   * Counts, never values. Absent when no call of the run was counted: it made
+   * none, or it began before calls were counted. Not a part of the record's
+   * version: a reader that does not know it loses nothing it relied on.
+   */
+  readonly masking?: MaskTally;
 };
 
 /**
@@ -128,6 +138,12 @@ export interface RecordStore {
    * them is a late write from a run that has already ended.
    */
   append(runId: string, entries: readonly RecordEntry[]): number;
+
+  /**
+   * Adds to what a run's record says masking did, and returns 1 when it did. As
+   * with `append`, only an `open` record takes it; anything else returns 0.
+   */
+  addMasking(runId: string, add: MaskTally): number;
 
   read(runId: string): GroundingRecord | undefined;
 }
@@ -236,6 +252,8 @@ export interface RecordSink {
   add(entries: readonly RecordEntry[]): void;
   /** Records what a step is about to send to a model call. */
   sent(fields: readonly SentField[]): void;
+  /** Adds to what masking did in the run's model calls (`effects/masking.ts`). */
+  masking(add: MaskTally): void;
 }
 
 /* ---------------------------------------------------------------- selections */

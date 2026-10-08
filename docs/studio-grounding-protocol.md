@@ -86,6 +86,10 @@ it **every time the runtime connects**, not only at launch, and whenever it chan
 an empty list included. Until it has been sent one, a background rebuild of the index
 with a hosted embedder waits. Without the feature, show no such list.
 
+The feature `masking-counts` says the record of a run says what masking did in it
+(see "What masking did, in numbers"): `masking` in the record, once a call of the run
+has been counted. Without it, a record never has the field, and show no counts.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -147,6 +151,10 @@ The example values are made up. The shape is the contract.
 - `openedAt` and `closedAt` are milliseconds since the epoch.
 - `entries` are in the order each was first recorded. An entry equal to one
   already there is not added again.
+- `masking`, with `masking-counts`, is what masking did in the run's model calls:
+  `{"masked": 2, "unmasked": 0, "placeholders": {"name": 2, "email": 1}}`. It is
+  absent until a call of the run is counted, so a run that made no call, and one
+  from before the feature, has none. See "What masking did, in numbers".
 
 ## Entries
 
@@ -1693,6 +1701,39 @@ What it leaves, said plainly:
   stored text and is not affected.
 - `transcribeImage` is not masked (below).
 
+## What masking did, in numbers
+
+With `masking-counts`, the record of a run (`runs.grounding`) has `masking` once a
+call of the run has been counted:
+
+```json
+{ "masked": 2, "unmasked": 1, "placeholders": { "name": 3, "email": 1, "id": 1 } }
+```
+
+- `masked` is how many of the run's model calls went through masking, and `unmasked`
+  how many were sent as they were: a call to a model on this computer under `hosted`,
+  and an image, which is never masked.
+- `placeholders` is how many placeholders of each kind those calls were sent, summed
+  over them. The kinds are `name`, `email`, `phone`, `link`, `org`, `term`, `id` and
+  `dob`, and a kind with none is left out, so `{}` is masked calls that held nothing
+  to keep. A placeholder is one spelling of one value in one call: `Anna Kowalska`
+  and `ANNA KOWALSKA` in one call are two, and a name sent in two calls counts in each.
+  It is a count of what was kept from a model, not of how often the person is named.
+- Counts only. What a placeholder stood for is never written down.
+- A call is counted before it goes, and what a tool hands the model is counted before
+  the model has it. A call that cannot be counted is not made: the step that asked for
+  it fails.
+- Only an `open` record takes a count, as with its entries. A record that ended keeps
+  what it had.
+- What is counted is the run's own calls: the answer, a plan, a tool loop and what
+  its tools return. Searching the index embeds the query outside the run (see "What an
+  embedding provider is sent"), and that call is counted on its own line in the
+  runtime's call log, not in the record. So is every call of a run with no
+  conversation, which has no record.
+- The runtime's call log (`ai_calls`, in its database, never sent to Studio) keeps the
+  same counts for each call, whatever made it, and its line on stderr says
+  `masked=<total>`.
+
 ## What a person's own machine keeps
 
 - The CV, the record of a message (`runs.grounding`), a preview (`run.preview`) and
@@ -1745,6 +1786,9 @@ What it leaves, said plainly:
    is found whole and as typed, and that a word of it alone is not. Keep the list in
    Studio, and send it on every connection to the runtime and on every change, `[]`
    when it is empty.
-5. Do not offer a way to turn masking off. There is none.
-6. Send the settings with the others, and when the person has not touched one, send
+5. With `masking-counts`, the record view of a message can say what was kept: "3
+   details masked in 2 calls", or "Sent as it was" when no call was masked. Use the
+   counts, never guess the values, and show nothing when the record has no `masking`.
+6. Do not offer a way to turn masking off. There is none.
+7. Send the settings with the others, and when the person has not touched one, send
    nothing, so as not to overwrite what another window saved.

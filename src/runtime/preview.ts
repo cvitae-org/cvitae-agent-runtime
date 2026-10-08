@@ -96,6 +96,8 @@ const inMemory = (runId: string, conversationId: string, openedAt: number): Reco
       kept.push(...entries);
       return entries.length;
     },
+    // A preview calls no model, so there is no call to count.
+    addMasking: () => 0,
     read: () => ({ v: RECORD_VERSION, runId, conversationId, state: 'open', openedAt, entries: [...kept] })
   };
 };

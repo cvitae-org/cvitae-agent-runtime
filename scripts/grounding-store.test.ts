@@ -614,6 +614,8 @@ test('the migration adds the tables and leaves a run from before it with no reco
       ['grounding_entry', 'grounding_record']
     );
     assert.equal((db.prepare('SELECT count(*) AS n FROM runs').get() as { n: number }).n, 1);
+    // The store is written for the file as it is now, so it is read at the latest version.
+    migrate(db);
     assert.equal(createRecordStore(db).read('old'), undefined);
   } finally {
     db.close();

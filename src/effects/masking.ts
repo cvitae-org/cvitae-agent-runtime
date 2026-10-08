@@ -40,6 +40,13 @@
  * **What it leaves, said once.** `transcribeImage` is handed on as it is: an image
  * is pixels, and masking it would change what it is for. It is named in the
  * protocol doc, and the plan has a step for it.
+ *
+ * **What it did, in numbers.** Each call is counted before it goes, as masked or
+ * as sent as it was, with the placeholders it holds (`tally`), and what a tool
+ * adds is counted before the model is handed it: a call that cannot be counted is
+ * not made. The call's own log line asks the same count when it is written
+ * (`MaskedCall`). Counts only: what a placeholder stood for is the vault's, and
+ * goes with it.
  */
 
 import { RuntimeError } from '../contracts/index.js';
@@ -48,8 +55,11 @@ import type {
   EmbedRequest,
   EmbedResult,
   ImageRequest,
+  MaskCounts,
+  MaskedCall,
   MaskMode,
   MaskSeed,
+  MaskTally,
   ObjectRequest,
   ObjectResult,
   TextRequest,
@@ -80,6 +90,12 @@ export type MaskingOptions = {
    * a vault.
    */
   readonly detect?: boolean;
+  /**
+   * Told of each call before it goes, and of what a tool adds to one before the
+   * model is handed it: counts to add to what was told before. A run gives its
+   * record (`RecordSink.masking`); absent, nothing is told.
+   */
+  readonly tally?: (add: MaskTally) => void;
 };
 
 /** Whether a call to this gateway is to be masked, from what it resolves to now. */
@@ -127,20 +143,37 @@ const maskedFailure = (vault: Vault, error: unknown): Error => {
   return failure;
 };
 
-const maskedTool = (handle: ToolHandle, vault: Vault): ToolHandle => ({
+/** What `now` has that `before` had not, kind by kind. */
+const added = (now: MaskCounts, before: MaskCounts): MaskCounts =>
+  Object.fromEntries(
+    Object.entries(now).flatMap(([kind, count]) => {
+      const more = count - (before[kind as keyof MaskCounts] ?? 0);
+      return more > 0 ? [[kind, more]] : [];
+    })
+  );
+
+/** What a tool hands the model is told of before it is handed: `more` is that. */
+const maskedTool = (handle: ToolHandle, vault: Vault, more: () => void): ToolHandle => ({
   ...handle,
   invoke: async (input) => {
     const restored = vault.restoreDeep(input);
 
+    let result: unknown;
     try {
-      return vault.maskDeep(await handle.invoke(restored));
+      result = vault.maskDeep(await handle.invoke(restored));
     } catch (error) {
-      throw maskedFailure(vault, error);
+      const failure = maskedFailure(vault, error);
+      more();
+      throw failure;
     }
+    more();
+    return result;
   }
 });
 
 export const maskedGateway = (inner: AiGateway, options: MaskingOptions): AiGateway => {
+  const tally = options.tally;
+
   /** A vault for this call, or none when the call is to go as it is. */
   const begin = (embedding = false): Vault | undefined => {
     const mode = typeof options.mode === 'function' ? options.mode() : options.mode;
@@ -150,35 +183,65 @@ export const maskedGateway = (inner: AiGateway, options: MaskingOptions): AiGate
     return vault.empty ? undefined : vault;
   };
 
+  /**
+   * A call that goes as it came, counted. Handed on as the very same request
+   * unless it says it was masked, which only this gateway may say.
+   */
+  const asIs = <R extends MaskedCall>(request: R): R => {
+    tally?.({ masked: 0, unmasked: 1, placeholders: {} });
+    return request.masked === undefined ? request : { ...request, masked: undefined };
+  };
+
+  /**
+   * A masked call, counted with what it holds once its texts are masked and before
+   * it goes, with a way for its log line to ask what it has sent by then. `more`
+   * counts what its tools have added since.
+   */
+  const going = (vault: Vault): { readonly masked: () => MaskCounts; readonly more: () => void } => {
+    let told = vault.placeholders();
+    tally?.({ masked: 1, unmasked: 0, placeholders: told });
+
+    return {
+      masked: () => vault.placeholders(),
+      more: () => {
+        const now = vault.placeholders();
+        const fresh = added(now, told);
+        told = now;
+        if (Object.keys(fresh).length > 0) tally?.({ masked: 0, unmasked: 0, placeholders: fresh });
+      }
+    };
+  };
+
   return {
     describe: () => inner.describe(),
     describeEmbedding: () => inner.describeEmbedding?.() ?? inner.describe(),
 
     async generateObject<T>(request: ObjectRequest<T>): Promise<ObjectResult<T>> {
       const vault = begin();
-      if (vault === undefined) return inner.generateObject(request);
+      if (vault === undefined) return inner.generateObject(asIs(request));
 
       vault.reserve(request.system, request.prompt);
-      const result = await inner.generateObject({
-        ...request,
-        system: vault.mask(request.system),
-        prompt: vault.mask(request.prompt)
-      });
+      const system = vault.mask(request.system);
+      const prompt = vault.mask(request.prompt);
+      const result = await inner.generateObject({ ...request, system, prompt, masked: going(vault).masked });
 
       return { ...result, object: vault.restoreDeep(result.object) };
     },
 
     async generateText(request: TextRequest): Promise<TextResult> {
       const vault = begin();
-      if (vault === undefined) return inner.generateText(request);
+      if (vault === undefined) return inner.generateText(asIs(request));
 
       vault.reserve(request.system, request.prompt);
       const sink = quietly(request.onDelta);
       const restorer = sink === undefined ? undefined : vault.restorer(sink);
+      const system = vault.mask(request.system);
+      const prompt = vault.mask(request.prompt);
       const result = await inner.generateText({
         ...request,
-        system: vault.mask(request.system),
-        prompt: vault.mask(request.prompt),
+        system,
+        prompt,
+        masked: going(vault).masked,
         ...(restorer === undefined ? {} : { onDelta: (text: string) => restorer.push(text) })
       });
 
@@ -188,21 +251,24 @@ export const maskedGateway = (inner: AiGateway, options: MaskingOptions): AiGate
 
     async runToolLoop(request: ToolLoopRequest): Promise<ToolLoopResult> {
       const vault = begin();
-      if (vault === undefined) return inner.runToolLoop(request);
+      if (vault === undefined) return inner.runToolLoop(asIs(request));
 
       const history = request.history ?? [];
       vault.reserve(request.system, request.prompt, ...history.map((turn) => turn.text));
 
       const sink = quietly(request.onDelta);
       const restorer = sink === undefined ? undefined : vault.restorer(sink);
+      const system = vault.mask(request.system);
+      const prompt = vault.mask(request.prompt);
+      const turns = history.map((turn) => ({ role: turn.role, text: vault.mask(turn.text) }));
+      const count = going(vault);
       const result = await inner.runToolLoop({
         ...request,
-        system: vault.mask(request.system),
-        prompt: vault.mask(request.prompt),
-        ...(request.history === undefined
-          ? {}
-          : { history: history.map((turn) => ({ role: turn.role, text: vault.mask(turn.text) })) }),
-        tools: request.tools.map((handle) => maskedTool(handle, vault)),
+        system,
+        prompt,
+        ...(request.history === undefined ? {} : { history: turns }),
+        tools: request.tools.map((handle) => maskedTool(handle, vault, count.more)),
+        masked: count.masked,
         ...(restorer === undefined ? {} : { onDelta: (text: string) => restorer.push(text) })
       });
 
@@ -212,14 +278,19 @@ export const maskedGateway = (inner: AiGateway, options: MaskingOptions): AiGate
 
     async embed(request: EmbedRequest): Promise<EmbedResult> {
       const vault = begin(true);
-      if (vault === undefined) return inner.embed(request);
+      if (vault === undefined) return inner.embed(asIs(request));
 
       // One vault for the whole batch, so a value is the same placeholder in every
       // text it is in, as the chunks of one document would be.
-      return inner.embed({ ...request, values: request.values.map((value) => vault.mask(value)) });
+      const values = request.values.map((value) => vault.mask(value));
+      return inner.embed({ ...request, values, masked: going(vault).masked });
     },
 
-    // Not masked. See the note at the top.
-    transcribeImage: (request: ImageRequest): Promise<TextResult> => inner.transcribeImage(request)
+    // Not masked. See the note at the top. Counted, as a call that went as it was.
+    // Async, so a count that fails is a call that fails, as for the others.
+    transcribeImage: async (request: ImageRequest): Promise<TextResult> => {
+      tally?.({ masked: 0, unmasked: 1, placeholders: {} });
+      return inner.transcribeImage(request);
+    }
   };
 };
