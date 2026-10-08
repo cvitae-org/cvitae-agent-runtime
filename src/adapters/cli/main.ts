@@ -24,7 +24,7 @@ import { readFile } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { all } from '../../events/tail.js';
-import { RuntimeError, isRunSuspension } from '../../contracts/index.js';
+import { OperationError, RuntimeError, isRunSuspension } from '../../contracts/index.js';
 import { createHarness, silentLogger, type Harness } from '../../runtime/create.js';
 import type { RunRecord, RunResult } from '../../contracts/index.js';
 
@@ -32,6 +32,7 @@ const USAGE = `cvitae-runtime
 
   run <capability> [--key value ...]   Run a capability and print its result.
       [--file path] [--text string]    Sources, repeatable. See below.
+      [--consent provider]             Lets an import send them to that hosted provider.
   runs list [--status s] [--limit n]   Recent runs, newest first.
   runs show <id> [--events]            One run, its steps, and optionally its events.
   approve <id> [--deny] [--note text]  Answer the question a suspended run is waiting on.
@@ -44,6 +45,11 @@ Options:
 --file and --text may each be given more than once. They become the run's
 "sources" list, in the order they appear. The file is read here; the harness
 never opens one.
+
+An import sends its sources, as they are, to the model that reads them. A model
+on this machine always may. A hosted one may only when it is named with
+--consent (its id, as in "openai"), and only for that run; anywhere else, the
+run is refused and nothing is sent.
 `;
 
 /* ----------------------------------------------------------------- parsing */
@@ -557,8 +563,12 @@ export const main = async (argv: readonly string[]): Promise<number> => {
   } catch (error) {
     // The message only. A stack tells a user nothing they can act on, and a
     // `RuntimeError` message is written to be read by one.
-    if (error instanceof RuntimeError) {
+    if (error instanceof RuntimeError || error instanceof OperationError) {
       console.error(`[${error.code}] ${error.message}`);
+      // The runtime says which provider; how to agree to it is this host's to say.
+      if (error.code === 'egress_consent_required') {
+        console.error('To agree to that provider for this import, run it again with --consent and its id.');
+      }
       return 1;
     }
 

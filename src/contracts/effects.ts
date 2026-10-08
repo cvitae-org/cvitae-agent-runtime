@@ -473,6 +473,13 @@ export type SourceText = {
 
 export interface SourceReader {
   read(input: SourceInput, call: EffectCall): Promise<SourceText>;
+  /**
+   * The same reader, reading an image through `ai`. A run hands it its own
+   * gateway (`runtime/run.ts`), so a screenshot read for a run is held to what
+   * every other model call of the run is held to: counted, and sent only where
+   * the person agreed it may go. A reader that calls no model answers itself.
+   */
+  through(ai: AiGateway): SourceReader;
 }
 
 /* ------------------------------------------------------------------- mail */

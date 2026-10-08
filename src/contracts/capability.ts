@@ -279,6 +279,20 @@ export interface Capability<TInput extends Record<string, unknown> = Record<stri
   readonly recorded?: boolean;
 
   /**
+   * Present on a capability whose runs send what a person handed in, as it is, to
+   * a model: the text of a document, a screenshot. Masking cannot help there,
+   * since reading those details is what the call is for, so the person is asked
+   * instead. Answers the one hosted provider the input says the person agreed
+   * may read it, or `undefined` when it names none.
+   *
+   * A run of such a capability goes to a provider on this machine or to that one.
+   * It is refused before its first call when it would go anywhere else, and so is
+   * each call that would (`effects/consent.ts`), with `egress_consent_required`.
+   * A method for the reason `plan` is one.
+   */
+  consented?(input: TInput): string | undefined;
+
+  /**
    * Folds step outputs into the capability's result shape. Defaults to a
    * shallow merge, which is what an extraction pipeline wants.
    *

@@ -300,7 +300,19 @@ export const inputSchema = z.object({
    * guards then behave the same whether the seven steps ran together or apart,
    * which is the property that makes splitting them safe.
    */
-  known_skills: z.array(z.string()).optional()
+  known_skills: z.array(z.string()).optional(),
+  /**
+   * The hosted provider the person agreed may read these sources as they are, by
+   * its id (`openai`). Every model call of the import goes to a provider on this
+   * machine or to this one, and the run is refused with `egress_consent_required`
+   * when it would go to any other (`Capability.consented`). Absent, only a
+   * provider on this machine reads them.
+   *
+   * In the input because it is said for this import and kept with it: the run's
+   * row says which provider the person agreed to, and a run resumed later is held
+   * to the same answer.
+   */
+  consent: z.string().min(1).optional()
 });
 
 export type ExtractCvInput = z.infer<typeof inputSchema>;
@@ -559,6 +571,10 @@ export const extractCv: Capability<ExtractCvInput> = {
     'Read a CV from pasted text, PDFs or screenshots and merge it into the stored CV document.',
   input: inputSchema,
 
+  // The sources are read and sent as they are, so the import goes only where the
+  // person agreed it may.
+  consented: (input) => input.consent,
+
   plan: (input): Plan => {
     const wanted = input.sections;
     const steps = wanted
@@ -636,6 +652,10 @@ export const extractCv: Capability<ExtractCvInput> = {
                     // of keeping provenance.
                     records.push({ kind: read.via, reference, imported_at: at });
                   } catch (error) {
+                    // A screenshot the person did not agree to send is not an
+                    // unreadable one, and the rest would be refused for the same
+                    // reason: it ends the import.
+                    if (error instanceof RuntimeError && error.code === 'egress_consent_required') throw error;
                     // One unreadable source among several is not a failed
                     // import. The step fails only when nothing at all could be
                     // read, which is checked once, below.

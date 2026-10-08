@@ -168,6 +168,8 @@ export const createSourceReader = (options: SourceReaderOptions): SourceReader =
           + 'PNG, JPEG, WebP, GIF, and plain text.',
         'unreadable_source'
       );
-    }
+    },
+
+    through: (ai: AiGateway): SourceReader => createSourceReader({ ...options, ai })
   };
 };

@@ -19,6 +19,7 @@ import { createCheckpointer } from '../runs/checkpoint.js';
 import * as emit from '../events/emit.js';
 import { CvContextError, OperationError, RuntimeError, defaultMaskScope, isRunSuspension } from '../contracts/index.js';
 import { maskedGateway } from '../effects/masking.js';
+import { consentedGateway } from '../effects/consent.js';
 import { termSeeds } from './mask-terms.js';
 import { cvSeeds } from '../capabilities/cv/seeds.js';
 import { createRecorder, recordingDocuments, recordingRetrieval } from './grounding.js';
@@ -229,6 +230,28 @@ const maskedEffects = (
 };
 
 /**
+ * The effects a run is handed: masked when the host masks, and held to the
+ * provider a person agreed to when the capability sends their sources as they
+ * are (`effects/consent.ts`). Held over the mask and not under it, so a call that
+ * is refused is never counted as made. The source reader reads an image through
+ * the same gateway. A run with neither is handed the effects as they are.
+ */
+const runEffects = (
+  deps: RuntimeDeps,
+  capability: string,
+  input: Readonly<Record<string, unknown>>,
+  record: RecordSink | undefined
+): EffectSet => {
+  const masked =
+    deps.masking === undefined ? deps.effects : maskedEffects(deps.effects, deps.masking, deps.documents, record);
+  const declared = deps.capabilities[capability];
+  const ai =
+    declared?.consented === undefined ? masked.ai : consentedGateway(masked.ai, declared.consented(input));
+
+  return ai === deps.effects.ai ? deps.effects : { ...masked, ai, sources: deps.effects.sources.through(ai) };
+};
+
+/**
  * The input a run is planned and run from: the one it was validated to, with the
  * conversation put in when the runtime keeps it (`history.ts`).
  *
@@ -318,13 +341,12 @@ export const buildRunContext = (
       ? { documents: deps.documents, retrieval: deps.retrieval, index: deps.index }
       : wallPorts({ documents: deps.documents, retrieval: deps.retrieval, index: deps.index }, walls, contextId);
 
-  // The one place a model is reached from a run, so the one place it is masked:
-  // every capability, step and tool is handed this gateway. A preview calls no
-  // model and is left as it was.
+  // The one place a model is reached from a run, so the one place it is masked and
+  // held to where a person agreed their sources may go: every capability, step,
+  // tool and source read is handed this gateway. A preview calls no model and is
+  // left as it was.
   const effects: EffectSet =
-    deps.masking === undefined || fields.preview === true
-      ? deps.effects
-      : maskedEffects(deps.effects, deps.masking, deps.documents, record);
+    fields.preview === true ? deps.effects : runEffects(deps, fields.capability, fields.input, record);
 
   return {
     ...fields,

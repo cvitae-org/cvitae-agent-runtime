@@ -97,6 +97,12 @@ may name the piece, and a conversation may exclude, pin and attach it. Without t
 feature, name no such piece: it is `invalid_selection`, and the personal details are
 the name and the contact details as one piece.
 
+The feature `egress-consent` says an import (`extract_cv`) sends its sources to a
+hosted provider only when the person agreed to that provider (see "Importing a CV:
+where its sources may go"): its input takes `consent`, and a run that would go
+anywhere else fails with `egress_consent_required`. Without it, the runtime takes no
+`consent`, and an import goes to whichever provider is set.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -1801,7 +1807,8 @@ overview, masked or not.
 ## What is not covered
 
 - `transcribeImage` is handed on as it is. An image is pixels, and masking it would
-  change what it is for. `embed` is masked when the runtime says `masking-embedding`
+  change what it is for. With `egress-consent`, a screenshot of an import goes only
+  where the person agreed (the next part). `embed` is masked when the runtime says `masking-embedding`
   (the section above); without it, the embedding provider is the local one unless a
   person chose otherwise, and a person who did is sending it their CV text unmasked.
 - A name, a street, a city, an employer and a school have no shape, and are not found
@@ -1841,3 +1848,70 @@ overview, masked or not.
 7. Do not offer a way to turn masking off. There is none.
 8. Send the settings with the others, and when the person has not touched one, send
    nothing, so as not to overwrite what another window saved.
+
+# Importing a CV: where its sources may go
+
+An import sends what a person handed in, as it is, to the model that reads it: the
+text of a document, a screenshot. Masking cannot help there, because reading the
+person's details is what the call is for. So with `egress-consent` the person is
+asked instead, and the runtime holds the import to their answer.
+
+A model on this machine (`local`) may always read them. A hosted provider may only
+when it is the one the person agreed to.
+
+## input.consent
+
+`extract_cv` takes `consent`: the id of the one hosted provider the person agreed may
+read these sources (`openai`, `openrouter`, `huggingface`). It is matched exactly.
+Send `consent` in the input of each run of the import, each section's included. Leave
+it out when the person agreed to none, or when the provider is `local`.
+
+Ask `providers.status` which provider an import would go to: its `providerId` is the
+one the next run uses, whether the settings, the runtime's environment or the default
+chose it. `settings.get` says only what the settings chose, and may be empty.
+
+A person agrees to a provider, and not to a model: changing the model of the same
+provider needs no new answer. The runtime keeps no answer between runs; Studio
+remembers it, and sends it with each import.
+
+The input is stored with the run, so the run's row says what was agreed.
+
+## The refusal
+
+A run that would send the sources anywhere else fails with `egress_consent_required`,
+on `run.await` and in the run's row, and its message names the provider. Nothing was
+sent and nothing was saved. It is asked:
+
+- **Before the run reads anything.** The provider set when the run begins is not the
+  one agreed to. No source is read, and no section is asked for.
+- **At each call.** The provider is changed in the settings while the import runs,
+  and the next call would go to it. The import ends there, whatever section it was,
+  and saves nothing, a section already answered included. A call already waiting for
+  its turn when the setting changed goes where it was checked to go.
+
+A screenshot is read by the same calls, so it is held to the same: one that would go
+where the person did not agree ends the import. It is not skipped as unreadable.
+
+The whole import is held, whichever sections it asks for, those that call no model
+included.
+
+## What is not held
+
+- Embedding. A CV's index is embedded after every save, an import's included, and
+  its text is masked for a hosted embedder (`masking-embedding`).
+- Every other run. A question, an edit, a letter: those send pieces of the CV, which
+  masking keeps the person's details out of.
+
+## Suggested UI
+
+1. Check `egress-consent` in `protocol.get`. Without it, show nothing of this, and send
+   no `consent`.
+2. Before an import, ask `providers.status`. When its `providerId` is not `local` and
+   the person has not agreed to it, ask in a dialog: "Send your CV to <provider
+   label>?", saying that what they chose to import is sent as it is to be read, and
+   that a model on this computer needs no answer. Two choices: "Send it" and
+   "Cancel". Remember a yes for that provider, and ask again for another.
+3. Send `consent` with each section's run of the import.
+4. On `egress_consent_required`, say that the import was stopped because the provider
+   changed or was not agreed to, and offer the dialog again. Do not retry on its own.
+5. Let the person take an answer back in the provider settings.

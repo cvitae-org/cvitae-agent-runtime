@@ -180,6 +180,9 @@ const reader = (options: { unreadable?: readonly string[] } = {}): Reader => {
   return {
     seen,
     sources: {
+      through() {
+        return this;
+      },
       read: async (input): Promise<SourceText> => {
         seen.push(input);
 
@@ -670,7 +673,7 @@ test('a scoped import refuses to restore content edited after the run began', as
       ...s.deps,
       scopeCv: () => ({ documents: s.deps.documents, retrieval: s.deps.retrieval,
         index: s.deps.index, contextGeneration: 0, contextRevision: original.revision }),
-      effects: { ...s.deps.effects, sources: { read: async () => {
+      effects: { ...s.deps.effects, sources: { through() { return this; }, read: async () => {
         entered(); await gate;
         return { text: CV_TEXT, via: 'plain' as const };
       } } }

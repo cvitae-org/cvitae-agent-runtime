@@ -72,7 +72,7 @@ import type {
   ToolLoopRequest,
   ToolLoopResult
 } from '../contracts/index.js';
-import type { ModelOverride, ModelResolver } from '../providers/resolve.js';
+import type { ModelChoice, ModelOverride, ModelResolver } from '../providers/resolve.js';
 
 /**
  * How many calls may be in flight against one provider.
@@ -434,7 +434,23 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
     }
   };
 
-  const language = async (): Promise<LanguageModel> => resolver.language(override);
+  /**
+   * The model a call was described with when it began.
+   *
+   * A call can wait its turn for a slot, and the provider can be changed in the
+   * settings while it waits. What it was held to when it began (whether it is
+   * masked, whether it may carry what a person handed in) and what its line and
+   * its vectors say it used were all read then, so that is where it goes, and not
+   * wherever the settings point once it has a slot.
+   */
+  const pinned = (choice: ModelChoice): ModelOverride => ({
+    ...override,
+    providerId: choice.providerId,
+    modelId: choice.modelId,
+    ...(choice.baseURL === undefined ? {} : { baseURL: choice.baseURL })
+  });
+
+  const language = async (choice: ModelChoice): Promise<LanguageModel> => resolver.language(pinned(choice));
 
   const handlesToTools = (handles: readonly ToolHandle[]): ToolSet =>
     Object.fromEntries(
@@ -463,7 +479,7 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
         request.system.length + request.prompt.length,
         async () => {
           const result = await generateObject({
-            model: await language(),
+            model: await language(choice),
             schema: request.schema,
             ...(request.strictSchema && choice.providerId === 'openai' ? { providerOptions: { openai: { strictJsonSchema: true } } } : {}),
             system: request.system,
@@ -502,7 +518,7 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
         request.system.length + request.prompt.length,
         async () => {
           const settings = {
-            model: await language(),
+            model: await language(choice),
             system: request.system,
             prompt: request.prompt,
             maxOutputTokens: request.maxOutputTokens,
@@ -556,7 +572,7 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
         request.instruction.length,
         async () => {
           const result = await generateText({
-            model: await language(),
+            model: await language(choice),
             maxOutputTokens: request.maxOutputTokens,
             abortSignal: request.signal,
             messages: [
@@ -600,7 +616,7 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
           + history.reduce((total, turn) => total + turn.text.length, 0),
         async () => {
           const settings = {
-            model: await language(),
+            model: await language(choice),
             system: request.system,
             // `prompt` and `messages` are alternatives, not a pair — the SDK
             // refuses both — so the question is the last message once there is
@@ -656,7 +672,7 @@ export const createAiGateway = (options: AiGatewayOptions): AiGateway => {
         request.values.reduce((total, value) => total + value.length, 0),
         async () => {
           const result = await embedMany({
-            model: await resolver.embedding(override),
+            model: await resolver.embedding(pinned(choice)),
             values: [...request.values],
             abortSignal: request.signal
           });

@@ -206,6 +206,9 @@ const CV_TEXT = [
  */
 const sourceReader = (): Pick<EffectSet, 'sources'> => ({
   sources: {
+    through() {
+      return this;
+    },
     read: async (input): Promise<SourceText> => {
       if (input.kind !== 'text') {
         throw new Error(`the smoke reader has no answer for ${input.mime}`);

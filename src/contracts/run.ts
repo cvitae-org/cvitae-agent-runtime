@@ -407,6 +407,15 @@ export type RuntimeErrorCode =
    */
   | 'credential_rejected'
   /**
+   * A run would send what a person handed in, as it is, to a hosted provider
+   * they have not agreed may read it (`effects/consent.ts`).
+   *
+   * Separate from `misconfigured` because nothing is set up wrongly: the person
+   * has to say yes to that provider, or choose a model on this machine, and only
+   * they can. Nothing was sent.
+   */
+  | 'egress_consent_required'
+  /**
    * The model server refused, timed out, or answered with something unusable.
    *
    * The message on these is always constructed here, never copied from the

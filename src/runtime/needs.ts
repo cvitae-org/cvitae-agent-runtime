@@ -13,7 +13,24 @@
  */
 
 import { OperationError } from '../contracts/index.js';
-import type { Capability, RunContext, RunResult } from '../contracts/index.js';
+import type { Capability, Need, RunContext, RunResult } from '../contracts/index.js';
+import { consentRefusal } from '../effects/consent.js';
+
+/**
+ * That a run which sends what a person handed in goes only where they agreed it
+ * may, asked here as well as at each call (`effects/consent.ts`): a run that would
+ * be refused is refused before it reads a source, with its own code, and not as
+ * an import that found nothing.
+ */
+const consentNeeds = <TInput extends Record<string, unknown>>(
+  capability: Capability<TInput>,
+  input: TInput,
+  context: RunContext
+): Need[] => {
+  if (capability.consented === undefined) return [];
+  const refusal = consentRefusal(context.effects.ai.describe().providerId, capability.consented(input));
+  return refusal === undefined ? [] : [{ name: 'consent', required: true, unmet: refusal.message, code: refusal.code }];
+};
 
 /** The optional needs that are not met, by name. Throws on a required one. */
 export const checkNeeds = <TInput extends Record<string, unknown>>(
@@ -21,7 +38,8 @@ export const checkNeeds = <TInput extends Record<string, unknown>>(
   input: TInput,
   context: RunContext
 ): string[] => {
-  const unmet = (capability.needs?.(input, context) ?? []).filter((need) => need.unmet !== undefined);
+  const unmet = [...consentNeeds(capability, input, context), ...(capability.needs?.(input, context) ?? [])]
+    .filter((need) => need.unmet !== undefined);
 
   const required = unmet.find((need) => need.required);
   if (required !== undefined) {
