@@ -54,7 +54,8 @@ import { detect, type DetectedKind } from './detect.js';
 /**
  * What a placeholder stands for: what a person said (`MaskSeedKind`) and what was
  * found by its shape (`DetectedKind`), which share the labels of the first four
- * and add `ID` (a PESEL, a NIP, an IBAN, an account number) and `DOB`.
+ * and add `ID` (a PESEL, a NIP, an IBAN, an account number) and `DOB`; `ORG` is
+ * an employer or a school that a person said, in the strict scope.
  */
 export type MaskKind = MaskSeedKind | DetectedKind;
 
@@ -63,6 +64,7 @@ const LABEL: Readonly<Record<MaskKind, string>> = {
   email: 'EMAIL',
   phone: 'PHONE',
   link: 'LINK',
+  org: 'ORG',
   id: 'ID',
   dob: 'DOB'
 };
@@ -235,11 +237,41 @@ const linkPatterns = (value: string): Pattern[] => {
   ];
 };
 
+/**
+ * What a company's name may end with and still be the company: left off, it gives
+ * the shorter way the name is said ("Acme" for "Acme Sp. z o.o."). Matched on the
+ * folded name, after the punctuation at its end is taken off.
+ */
+const LEGAL_FORM = /[\s,]+(?:sp\.?\s*z\s*o\.?\s*o|s\.?\s*a|sp\.?\s*[kj]|inc|ltd|llc|gmbh|plc|corp|limited|ag|b\.?\s*v)$/;
+
+/**
+ * An employer or a school: the name as the CV states it, whole, and the same name
+ * without its legal form (a name that has none gives the same pattern twice and
+ * `patternsOf` keeps one), each only if it is long enough to be a name and not a
+ * letter or two. Never a word of it by itself, which is what makes it different
+ * from a person's name: "Jagielloński" is not a school and "Politechnika" is not
+ * one either.
+ */
+const orgPatterns = (value: string): Pattern[] => {
+  const core = fold(value).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+
+  const whole = (text: string): Pattern => ({
+    kind: 'org',
+    source: `${BEFORE}${text.split(/\s+/).map(escape).join('\\s+')}${AFTER}`,
+    weight: text.length
+  });
+
+  const short = core.replace(LEGAL_FORM, '');
+
+  return [core, short].filter((text) => text.length >= MIN_SEED_LENGTH).map(whole);
+};
+
 const PATTERNS: Readonly<Record<MaskSeedKind, (value: string) => Pattern[]>> = {
   name: namePatterns,
   email: emailPatterns,
   phone: phonePatterns,
-  link: linkPatterns
+  link: linkPatterns,
+  org: orgPatterns
 };
 
 const patternsOf = (seeds: readonly MaskSeed[]): Pattern[] => {

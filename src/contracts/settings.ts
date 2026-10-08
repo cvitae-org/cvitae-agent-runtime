@@ -34,6 +34,12 @@ export type Settings = {
    * `always`: the error that costs nothing is masking more than was asked.
    */
   readonly maskMode?: string | undefined;
+  /**
+   * Which of a person's own values are masked: `personal` (what an unset field
+   * means) or `strict`, which adds employers and schools. Kept as text for the
+   * same reason as `maskMode`, and read as `strict` when it is not known.
+   */
+  readonly maskScope?: string | undefined;
 };
 
 export interface SettingsStore {

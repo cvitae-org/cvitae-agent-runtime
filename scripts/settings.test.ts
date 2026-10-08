@@ -329,7 +329,8 @@ test('an unusable provider is refused before it can break the next launch', asyn
         localBaseUrl: undefined,
         embeddingProviderId: undefined,
         embeddingModelId: undefined,
-        maskMode: undefined
+        maskMode: undefined,
+        maskScope: undefined
       }
     );
   } finally {

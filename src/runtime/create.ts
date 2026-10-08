@@ -74,7 +74,7 @@ import { createCvContextStore } from '../storage/sqlite/cv-contexts.js';
 import { createCvCopies } from '../storage/sqlite/cv-copy.js';
 import { bindOfferScope, snapshotInput } from './offer-scope.js';
 import { bindCvScope } from './cv-scope.js';
-import { CvContextError, RuntimeError, maskModeOf } from '../contracts/index.js';
+import { CvContextError, RuntimeError, maskModeOf, maskScopeOf } from '../contracts/index.js';
 import { createChunkIndex } from '../storage/sqlite/chunk-index.js';
 import { createOfferStore } from '../storage/sqlite/offers.js';
 import { createDiscoveryCatalogue } from '../storage/sqlite/discovery.js';
@@ -542,11 +542,11 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   // and the person's words, and neither happens inside a run, so a run's own
   // wrapper never sees them. This is the same rule for the one call a run does not
   // make: an embedder that is not on this machine is sent placeholders, and the
-  // vectors that come back need nothing put right. The mode is asked at each call
-  // and the CV at each call, as a run asks them at each message.
+  // vectors that come back need nothing put right. The mode, the scope
+  // and the CV are asked at each call, as a run asks them at each message.
   const embedder = maskedGateway(ai, {
     mode: () => maskModeOf(settings.read().maskMode),
-    seeds: () => cvSeeds(documents),
+    seeds: () => cvSeeds(documents, maskScopeOf(settings.read().maskScope)),
     detect: true
   });
 
@@ -642,7 +642,10 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     grounding: { records: groundingRecords, wells },
     // Asked at the start of every run, so a change made in settings is in force
     // for the next message and no run is half one thing and half the other.
-    masking: { mode: () => maskModeOf(settings.read().maskMode) },
+    masking: {
+      mode: () => maskModeOf(settings.read().maskMode),
+      scope: () => maskScopeOf(settings.read().maskScope)
+    },
     selection: selectionStore,
     limits: limitStore,
     offerShelf: {

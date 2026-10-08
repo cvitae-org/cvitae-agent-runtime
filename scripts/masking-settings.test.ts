@@ -22,12 +22,11 @@
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
  * tests counted, and the mutation reverted. The number is how many tests failed.
  *
- * 52 were applied: 52 fail at least one test here, and 0 cannot be told from the original.
+ * 51 were applied: 51 fail at least one test here, and 0 cannot be told from the original.
  *
  * src/effects/detect.ts:
  *   a NIP needs no label                                  1
  *   a handle needs no network before it                   1
- *   the email detector finds nothing                      1
  *
  * src/effects/mask.ts:
  *   a vault gives the later span when two begin together  4

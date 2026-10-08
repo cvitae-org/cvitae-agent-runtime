@@ -17,7 +17,7 @@ import { plan as makePlan } from '../core/planner.js';
 import { route, validateInput } from '../core/router.js';
 import { createCheckpointer } from '../runs/checkpoint.js';
 import * as emit from '../events/emit.js';
-import { CvContextError, OperationError, RuntimeError, isRunSuspension } from '../contracts/index.js';
+import { CvContextError, OperationError, RuntimeError, defaultMaskScope, isRunSuspension } from '../contracts/index.js';
 import { maskedGateway } from '../effects/masking.js';
 import { cvSeeds } from '../capabilities/cv/seeds.js';
 import { createRecorder, recordingDocuments, recordingRetrieval } from './grounding.js';
@@ -35,6 +35,7 @@ import type {
   LimitStore,
   Limits,
   MaskMode,
+  MaskScope,
   MaskSeed,
   OfferShelf,
   Retriever,
@@ -101,10 +102,11 @@ export type RuntimeDeps = {
    */
   readonly offerShelf?: OfferShelf;
   /**
-   * When a model call of a run is masked: what a person has set, asked at the
-   * start of every run. Absent means no call is masked, as before masking.
+   * When a model call of a run is masked and which of a person's values are:
+   * what a person has set, asked at the start of every run. Absent means no call
+   * is masked, as before masking.
    */
-  readonly masking?: { readonly mode: () => MaskMode };
+  readonly masking?: { readonly mode: () => MaskMode; readonly scope?: () => MaskScope };
   /**
    * Keeps the conversation of a run whose host sent none. Absent means a run is
    * given the history and summary it was sent, and nothing else, as before.
@@ -178,13 +180,36 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
  * to keep out of its calls, and says so by refusing the read; that refusal is
  * the one thing not passed on.
  */
-const seedsOf = (documents: DocumentStore): readonly MaskSeed[] => {
+const seedsOf = (documents: DocumentStore, scope: MaskScope): readonly MaskSeed[] => {
   try {
-    return cvSeeds(documents);
+    return cvSeeds(documents, scope);
   } catch (error) {
     if (error instanceof OperationError && error.code === 'search_scope') return [];
     throw error;
   }
+};
+
+/**
+ * The effects a run is handed: the same, with the gateway that masks. The mode and
+ * the scope are asked once, here, so a run is held to what a person had set when
+ * it began and not to whatever they have set since. A host that gives no scope
+ * is held to the default.
+ */
+const maskedEffects = (
+  effects: EffectSet,
+  masking: NonNullable<RuntimeDeps['masking']>,
+  documents: DocumentStore
+): EffectSet => {
+  const scope = masking.scope?.() ?? defaultMaskScope;
+
+  return {
+    ...effects,
+    ai: maskedGateway(effects.ai, {
+      mode: masking.mode(),
+      seeds: () => seedsOf(documents, scope),
+      detect: true
+    })
+  };
 };
 
 /**
@@ -283,14 +308,7 @@ export const buildRunContext = (
   const effects: EffectSet =
     deps.masking === undefined || fields.preview === true
       ? deps.effects
-      : {
-          ...deps.effects,
-          ai: maskedGateway(deps.effects.ai, {
-            mode: deps.masking.mode(),
-            seeds: () => seedsOf(deps.documents),
-            detect: true
-          })
-        };
+      : maskedEffects(deps.effects, deps.masking, deps.documents);
 
   return {
     ...fields,

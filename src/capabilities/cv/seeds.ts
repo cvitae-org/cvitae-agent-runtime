@@ -15,23 +15,55 @@
  * What is not a seed: the location. A city is shared by too many people to be
  * an identifier, and masking it would hide from a model what a posting's location
  * is compared with.
+ *
+ * In the strict scope the employers and the schools the CV names are seeds too
+ * (`MaskScope`): the company of each experience entry and the university of each
+ * education entry. Each entry is read on its own, so one that is malformed costs
+ * only itself. The issuer of a certificate is not one.
  */
 
-import type { DocumentStore, MaskSeed } from '../../contracts/index.js';
+import { z } from 'zod';
+
+import type { DocumentStore, MaskScope, MaskSeed } from '../../contracts/index.js';
 import { CV_ID, personalSchema } from './document.js';
 
-export const cvSeeds = (documents: Pick<DocumentStore, 'read'>): readonly MaskSeed[] => {
-  const body = documents.read(CV_ID)?.body;
-  const parsed = personalSchema.safeParse(body?.personal);
+const personalSeeds = (personal: unknown): readonly MaskSeed[] => {
+  const parsed = personalSchema.safeParse(personal);
   if (!parsed.success) return [];
 
   const { name, email, phone, links } = parsed.data;
 
-  const seeds: readonly MaskSeed[] = [
+  return [
     { kind: 'name', value: name },
     { kind: 'email', value: email },
     { kind: 'phone', value: phone },
     ...Object.values(links).map((value): MaskSeed => ({ kind: 'link', value }))
+  ];
+};
+
+/** The value of one field of each entry of a section, for the entries that have one. */
+const fieldOf = (section: unknown, field: string): readonly string[] => {
+  const entry = z.object({ [field]: z.string() });
+
+  return (Array.isArray(section) ? (section as readonly unknown[]) : []).flatMap((item) => {
+    const parsed = entry.safeParse(item);
+    return parsed.success ? [parsed.data[field]!] : [];
+  });
+};
+
+export const cvSeeds = (
+  documents: Pick<DocumentStore, 'read'>,
+  scope: MaskScope = 'personal'
+): readonly MaskSeed[] => {
+  const body = documents.read(CV_ID)?.body;
+
+  const seeds: readonly MaskSeed[] = [
+    ...personalSeeds(body?.personal),
+    ...(scope === 'strict'
+      ? [...fieldOf(body?.experience, 'company'), ...fieldOf(body?.education, 'university')].map(
+          (value): MaskSeed => ({ kind: 'org', value })
+        )
+      : [])
   ];
 
   return seeds.filter((seed) => seed.value.trim() !== '');

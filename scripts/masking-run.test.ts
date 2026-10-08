@@ -24,7 +24,7 @@
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
  * tests counted, and the mutation reverted. The number is how many tests failed.
  *
- * 65 were applied: 65 fail at least one test here, and 0 cannot be told from the original.
+ * 67 were applied: 67 fail at least one test here, and 0 cannot be told from the original.
  *
  * src/effects/detect.ts:
  *   a British number has eleven digits after its code                             1
@@ -87,6 +87,8 @@
  *   a run is masked of nothing when its CV is unreadable for a reason of its own  1
  *   the rest of the effects are lost to the masked ones                           1
  *   the context is handed the unmasked effects                                    10
+ *   the mode is read at each call, not once                                       1
+ *   a run is not given detectors                                                  1
  *
  * src/capabilities/cv/seeds.ts:
  *   the location is a seed                                                        2

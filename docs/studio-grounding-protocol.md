@@ -74,6 +74,11 @@ the same way (see "What an embedding provider is sent"). It adds no field and no
 Without it, a person who chose a hosted embedder is sending it the text of their CV, and
 every question they search with, as it is.
 
+The feature `masking-strict` says a person can also have the employers and the schools
+their CV names kept from a model (see "The setting: `maskScope`"): `settings.get` and
+`settings.set` carry `maskScope`. Without it, show no such choice, and do not tell a
+person their employers are kept from a model.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -1415,10 +1420,11 @@ a message is made from, and of the conversation. This is how a runtime that list
 `masking` in `protocol.get` keeps the person's own name, email, phone number and
 links out of that text, and puts them back into what comes home.
 
-Say "mask", never "anonymise". A city, an employer, a school and a run of dates
-still describe a person, and a provider that is sent masked text is still sent
-personal data. What this does is narrower and exact: the values the CV states in
-its personal details are not in the request.
+Say "mask", never "anonymise". A city and a run of dates still describe a person, an
+employer and a school do unless the person chose `strict` (below), and a provider that
+is sent masked text is still sent personal data. What this does is narrower and exact:
+the values the CV states in its personal details are not in the request, and with
+`strict` neither are the companies and universities it names.
 
 ## The setting: `maskMode`
 
@@ -1448,11 +1454,58 @@ A runtime that keeps masking on by default changes what a hosted provider is
 sent, and says so here: this is the one setting of the grounding protocol whose
 default alters a payload that nothing the person did had altered before.
 
+## The setting: `maskScope`
+
+With `masking-strict`, `settings.get` returns `maskScope` too, and `settings.set` takes
+it. The mode says which calls are masked; the scope says which of the person's own
+values are:
+
+```json
+{ "settings": { "providerId": "openai", "maskMode": "hosted", "maskScope": "strict" } }
+```
+
+- `personal`: the name, the email, the phone number and the links of the CV's `personal`
+  section. This is what a runtime does with nothing stored, and `maskScope` is absent
+  from `settings.get` then.
+- `strict`: those, and the `company` of every experience entry and the `university` of
+  every education entry. Each is one value, called `[ORG_1]`, `[ORG_2]` and so on.
+- The rules are those of `maskMode`. A scope the runtime does not know is refused with
+  `invalid_input`; one that is in the database anyway is read as `strict`. `settings.set`
+  with `maskScope` left out **keeps what is stored**, and `null` returns it to the
+  default, so a build of Studio that does not know the field cannot switch it off by
+  saving a provider. It is in force on the next message and needs no restart.
+  `providers.status` and `providers.test` accept the field and ignore it.
+- A run is held to the scope the person had set when it began, as to the mode: a change
+  made while a run waits is in force from the next message.
+- Changing the scope is not a re-index. Chunks embedded before keep their vectors (see
+  "What an embedding provider is sent").
+
+What `strict` takes, and what it leaves, said plainly:
+
+- **A name is one value, whole.** Not a word of it by itself: "Politechnika" is not a
+  school, and the first word of an employer is not the employer. A name is taken in any
+  case and with or without its diacritics, with any run of white space between its words,
+  and only as a whole word: `Acmeville` is not `Acme`.
+- **A company is also taken without its legal form**, because that is how it is said:
+  `Acme Sp. z o.o.` is also `Acme`. The forms are `sp. z o.o.`, `s.a.`, `sp. k.`,
+  `sp. j.`, `inc`, `ltd`, `llc`, `gmbh`, `plc`, `corp`, `limited`, `ag` and `b.v.`, at the
+  end of the name, once, and a name left with fewer than three characters is not taken
+  without it. The full stop that ends the form is left outside the placeholder:
+  `Acme Sp. z o.o.` is sent as `[ORG_1].`.
+- **Not taken:** an employer written shorter or otherwise than the CV writes it (the CV
+  says `Acme Software Sp. z o.o.` and a message says `Acme`), a form of the name that a
+  Polish case ending changes, the issuer of a certificate, the thesis, the degree, the
+  title and the place.
+- **Common words.** An employer called `Apple` or `Orange` is taken as an employer
+  wherever the word stands alone, and a message about the fruit is masked too.
+- **No CV, no employers.** A run that may not read the CV (discovery) has none to keep.
+
 ## What is kept, and what is not
 
 The values come from the stored CV's `personal` section, read at every call: the
 name, the email, the phone number and each link. They are taken wherever they turn
 up, in a question, in a pasted posting, in an earlier answer, in a tool's result.
+With `strict` they come from the experience and education sections too.
 
 - A name is taken whole, in the other order (`Kowalska Anna`), and each word of it
   alone, and each half of a hyphenated one. A word is at least three letters.
@@ -1467,8 +1520,8 @@ up, in a question, in a pasted posting, in an earlier answer, in a tool's result
 - A piece that a conversation excludes is still a source of values. A name that is
   left out of a message is still a name.
 
-The model is given `[NAME_1]`, `[EMAIL_1]`, `[PHONE_1]`, `[LINK_1]`, and, for what is
-found by its shape, `[ID_1]` and `[DOB_1]` (next section). The same text
+The model is given `[NAME_1]`, `[EMAIL_1]`, `[PHONE_1]`, `[LINK_1]`, with `strict`
+`[ORG_1]`, and, for what is found by its shape, `[ID_1]` and `[DOB_1]` (next section). The same text
 is the same placeholder in a call and a different spelling is another one, so what
 a person wrote comes back as they wrote it. The numbers mean nothing outside the
 call that issued them.
@@ -1552,7 +1605,8 @@ message to:
   one that writes the answers: a person can chat with a hosted model and embed on their
   own machine, or the other way round. Under `hosted` an embedder that is not local is
   masked and a local one is sent what it always was. Under `always` both are masked.
-- **What is taken.** The same as in a message: what the CV states, and what has the shape
+- **What is taken.** The same as in a message: what the CV states (with `strict`, the
+  employers and schools too, as the scope is set at that call), and what has the shape
   of an identifier. The chunks of one rebuild are one call, so a value is one placeholder in
   all of them. A text that holds nothing to keep is sent as it was, and its vector is the
   one it always was.
@@ -1574,8 +1628,10 @@ What it leaves, said plainly:
   person's own name or email is now embedded as a placeholder and can match an older
   vector a little less well, until the index is made again (`profile.context.reindex`).
   Only a chunk or a question that holds a value of the person's is affected.
-- **A change of setting is not a re-index.** Turning `always` on for a local embedder
-  masks what is embedded from then on, and leaves the vectors that exist as they are.
+- **A change of setting is not a re-index.** Turning `always` on for a local embedder, or
+  `strict` on for any, masks what is embedded from then on and leaves the vectors that
+  exist as they are. Chunks of experience and education are the ones a person who turns
+  `strict` on will have in both kinds until the index is made again.
 - A placeholder is a different string from the name it stands for, so a search that looks for
   a person's name in the vectors finds it less well. The keyword half of a search reads the
   stored text and is not affected.
@@ -1604,8 +1660,9 @@ What it leaves, said plainly:
   (the section above); without it, the embedding provider is the local one unless a
   person chose otherwise, and a person who did is sending it their CV text unmasked.
 - A name, a street, a city, an employer and a school have no shape, and are not found
-  unless the CV states them as a name. What is found by shape is in the next section,
-  and a runtime without `masking-detectors` finds nothing that way.
+  unless the CV states them: a name in `personal`, an employer or a school only with
+  `strict`, and then only as the CV writes it. What is found by shape is in the next
+  section, and a runtime without `masking-detectors` finds nothing that way.
 - A model that rewrites a placeholder into something else (`[Name 1]` is read; a
   translation of it is not) is not put right.
 - A structured answer whose schema constrains a field to a format (an email) can be
@@ -1622,6 +1679,9 @@ What it leaves, said plainly:
    number, a profile link, an ID number or a date of birth written in a message is
    masked whoever's it is. With `masking-embedding`, add that the text a hosted embedding
    provider is given is kept the same way.
-3. Do not offer a way to turn masking off. There is none.
-4. Send the setting with the others, and when the person has not touched it, send
+3. With `masking-strict`, one more choice under it: "Also mask employers and schools"
+   (`maskScope` `strict`, off is `personal`). Say that a company is found as the CV
+   writes it and without its legal form, and that a shortened name is not.
+4. Do not offer a way to turn masking off. There is none.
+5. Send the settings with the others, and when the person has not touched one, send
    nothing, so as not to overwrite what another window saved.

@@ -25,7 +25,7 @@
  * step receives a gateway.
  */
 
-import { isMaskMode, maskModes, RuntimeError, type Settings } from '../contracts/index.js';
+import { isMaskMode, isMaskScope, maskModes, maskScopes, RuntimeError, type Settings } from '../contracts/index.js';
 import { hasCredential, type Env } from '../secrets/env.js';
 import {
   assertLoopbackUrl,
@@ -43,8 +43,9 @@ import type { ProviderId } from './resolve.js';
  * Stated once, here, because the alternative is five `if` branches that each
  * have to remember both halves of a pair. The resolver reads these names and
  * nothing else, so a setting not in this table is a setting with no effect on
- * which model is reached. `maskMode` is the one such setting: it says what is
- * sent to the model, not which, and is read from the store by the runtime.
+ * which model is reached. `maskMode` and `maskScope` are the two such settings:
+ * they say what is sent to the model, not which, and are read from the store by
+ * the runtime.
  */
 const VARIABLES = {
   providerId: 'AI_PROVIDER',
@@ -52,7 +53,7 @@ const VARIABLES = {
   localBaseUrl: 'LOCAL_BASE_URL',
   embeddingProviderId: 'EMBEDDING_PROVIDER',
   embeddingModelId: 'EMBEDDING_MODEL'
-} as const satisfies Record<Exclude<keyof Settings, 'maskMode'>, string>;
+} as const satisfies Record<Exclude<keyof Settings, 'maskMode' | 'maskScope'>, string>;
 
 /**
  * Each model setting, the provider setting it belongs to, and that provider's
@@ -102,6 +103,7 @@ export const validateSettings = (settings: Settings): Settings => {
   const embeddingProviderId = blank(settings.embeddingProviderId);
   const localBaseUrl = blank(settings.localBaseUrl);
   const maskMode = blank(settings.maskMode);
+  const maskScope = blank(settings.maskScope);
 
   if (providerId) knownProvider(providerId, 'provider');
 
@@ -111,6 +113,14 @@ export const validateSettings = (settings: Settings): Settings => {
   if (maskMode !== undefined && !isMaskMode(maskMode)) {
     throw new RuntimeError(
       `Unknown mask mode "${maskMode}". Supported: ${maskModes.join(', ')}.`,
+      'misconfigured'
+    );
+  }
+
+  // As for the mode: a scope this release does not know is read as `strict`.
+  if (maskScope !== undefined && !isMaskScope(maskScope)) {
+    throw new RuntimeError(
+      `Unknown mask scope "${maskScope}". Supported: ${maskScopes.join(', ')}.`,
       'misconfigured'
     );
   }
@@ -137,7 +147,8 @@ export const validateSettings = (settings: Settings): Settings => {
     localBaseUrl: localBaseUrl ? assertLoopbackUrl(localBaseUrl) : undefined,
     embeddingProviderId,
     embeddingModelId: blank(settings.embeddingModelId),
-    maskMode
+    maskMode,
+    maskScope
   };
 };
 
