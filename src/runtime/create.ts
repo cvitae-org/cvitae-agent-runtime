@@ -14,7 +14,7 @@ import { createBoardStore } from '../storage/sqlite/board.js';
 import { createApplicationAgent } from './application-agent.js';
 import { createBoardService } from './board.js';
 import type { BoardRunInput } from '../contracts/board.js';
-import type { OfferReader } from '../contracts/index.js';
+import type { MaskTerms, OfferReader } from '../contracts/index.js';
 import { createOfferFactStore } from '../storage/sqlite/offer-facts.js';
 import { createFactPort } from './offer-facts.js';
 import { createOpportunityStore } from '../storage/sqlite/opportunities.js';
@@ -65,7 +65,8 @@ import { createApprovalGate, createApprovalStore } from '../storage/sqlite/appro
 import { createDocumentStore } from '../storage/sqlite/document-store.js';
 import { createIndexRecoveryStore } from '../storage/sqlite/index-recovery.js';
 import { createIndexRebuilder } from './index-recovery.js';
-import { maskedGateway } from '../effects/masking.js';
+import { createMaskTerms, termSeeds } from './mask-terms.js';
+import { maskedGateway, masksEmbedding } from '../effects/masking.js';
 import { cvSeeds } from '../capabilities/cv/seeds.js';
 import { createCvLifecycle } from '../storage/sqlite/cv-lifecycle.js';
 import { createOfferSnapshots } from '../storage/sqlite/offer-snapshots.js';
@@ -308,6 +309,12 @@ export type Harness = {
    */
   readonly limits: LimitService;
   /**
+   * The terms a person asked to have kept from a model besides what the CV states,
+   * in memory only. A background rebuild that would be masked waits until they are
+   * set, an empty list included.
+   */
+  readonly maskTerms: MaskTerms;
+  /**
    * What a `/compact` would fold, decided where the exclusions are known: the turns
    * a host may give the model that writes the conversation's note, and no more.
    */
@@ -538,20 +545,29 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     ...(options.now ? { now: options.now } : {})
   });
 
+  // In memory and nowhere else: Studio sends them when it connects.
+  const maskTerms = createMaskTerms();
+
   // What the index is made from, and what it is searched with, is the person's CV
   // and the person's words, and neither happens inside a run, so a run's own
   // wrapper never sees them. This is the same rule for the one call a run does not
   // make: an embedder that is not on this machine is sent placeholders, and the
-  // vectors that come back need nothing put right. The mode, the scope
-  // and the CV are asked at each call, as a run asks them at each message.
+  // vectors that come back need nothing put right. The mode, the scope, the CV
+  // and the terms are asked at each call, as a run asks them at each message.
   const embedder = maskedGateway(ai, {
     mode: () => maskModeOf(settings.read().maskMode),
-    seeds: () => cvSeeds(documents, maskScopeOf(settings.read().maskScope)),
+    seeds: () => [...cvSeeds(documents, maskScopeOf(settings.read().maskScope)), ...termSeeds(maskTerms.read())],
     detect: true
   });
 
   const indexJobs = createIndexRecoveryStore(db, chunks, options.now);
-  const indexRebuilder = createIndexRebuilder(indexJobs, embedder);
+  // A rebuild starts by itself, before any host has said a word, so it is the one
+  // call that could be made before the runtime is told the terms. One that would
+  // be masked waits for them, an empty list included; one that would not is sent
+  // as it always was.
+  const indexRebuilder = createIndexRebuilder(indexJobs, embedder, {
+    ready: () => maskTerms.declared() || !masksEmbedding(maskModeOf(settings.read().maskMode), ai)
+  });
   if (options.indexRecovery) indexRebuilder.start();
 
   // One reader, two names on it. The pairing `retrieval` and `index` make on
@@ -644,7 +660,8 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     // for the next message and no run is half one thing and half the other.
     masking: {
       mode: () => maskModeOf(settings.read().maskMode),
-      scope: () => maskScopeOf(settings.read().maskScope)
+      scope: () => maskScopeOf(settings.read().maskScope),
+      terms: maskTerms.read
     },
     selection: selectionStore,
     limits: limitStore,
@@ -761,6 +778,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     // that has no `append` for a caller that ignores the type.
     groundingRecords: { read: (runId) => groundingRecords.read(runId) },
     limits: createLimitService({ store: limitStore, conversations }),
+    maskTerms,
     compaction: createCompaction({
       conversations,
       records: groundingRecords,

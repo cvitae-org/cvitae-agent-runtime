@@ -79,6 +79,13 @@ their CV names kept from a model (see "The setting: `maskScope`"): `settings.get
 `settings.set` carry `maskScope`. Without it, show no such choice, and do not tell a
 person their employers are kept from a model.
 
+The feature `masking-terms` says a person can name words and phrases of their own to
+keep from a model (see "The person's own terms: `masking.terms`"): the runtime takes
+`masking.terms.get` and `masking.terms.set`. It holds the list in memory only, so send
+it **every time the runtime connects**, not only at launch, and whenever it changes,
+an empty list included. Until it has been sent one, a background rebuild of the index
+with a hosted embedder waits. Without the feature, show no such list.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -1500,6 +1507,54 @@ What `strict` takes, and what it leaves, said plainly:
   wherever the word stands alone, and a message about the fruit is masked too.
 - **No CV, no employers.** A run that may not read the CV (discovery) has none to keep.
 
+## The person's own terms: `masking.terms`
+
+With `masking-terms` a person can add what their CV does not say and they want kept
+from a model all the same: a client, a project, a nickname, the town they live in. Each
+is called `[TERM_1]`, `[TERM_2]` and so on, in every scope and under the same mode.
+
+```json
+{ "channel": "masking.terms.set", "payload": { "terms": ["Initrode", "Project Falcon"] } }
+```
+
+The answer, and the answer of `masking.terms.get` (payload `{}`), is the list in force
+and whether one has been sent since the runtime started:
+
+```json
+{ "terms": ["Initrode", "Project Falcon"], "declared": true }
+```
+
+- **Studio keeps the list; the runtime does not.** The runtime holds it in memory and
+  writes it nowhere: not in the database, not in the index, not in a log. A runtime
+  that restarts has none and says `declared: false` until it is sent the list again.
+  So send it on every connection, not once per launch, and again on every change.
+- **The whole list each time.** `masking.terms.set` replaces what was there. `[]` says
+  there are none, and that is a list sent: it is what a person who never added a term
+  sends.
+- **Fail closed.** Until a list has been sent, a background rebuild of the index whose
+  embedder is masked (a hosted one, or any under `always`) is not started: the runtime
+  cannot know what it would have to keep. The job waits as pending, is never tried and
+  never fails, and the new revision of the CV cannot be searched until it is built. It
+  starts within a second of the list. A rebuild with an embedder that is not masked does
+  not wait. A message is not held back: it is sent by Studio, which sends the list first.
+- **What is taken.** Each term as it was typed, whole, as a word of its own: in any case,
+  with or without its diacritics, and with any run of white space between its words.
+  Its punctuation is part of it, so `C++` is `C++` and not `C`, and `Acme Inc.` is not
+  `Acme Inc`. A word of a term by itself is not the term: `Project Falcon` does not take
+  `Falcon` alone, and a person who wants that adds `Falcon`. A term that is a common word
+  is taken wherever it stands alone.
+- **Limits.** At most 100 terms, each 3 to 300 characters once the white space around it
+  is taken off, which is the white space the runtime takes off. Anything else refuses
+  the whole list with `invalid_input` and leaves the one in force as it was. A term
+  that is the same as one before it in another case, with other diacritics or other
+  spacing is kept once, as first written.
+- **In force at once.** A run asks for the list at each model call, as it reads the CV,
+  so a term added while a run waits is kept from its next call. The index embedder asks
+  at each call too. Changing the list is not a re-index (see "What an embedding provider
+  is sent").
+- **In every run.** A run that may not read the CV (discovery) still keeps the terms:
+  they are not the CV's.
+
 ## What is kept, and what is not
 
 The values come from the stored CV's `personal` section, read at every call: the
@@ -1521,7 +1576,8 @@ With `strict` they come from the experience and education sections too.
   left out of a message is still a name.
 
 The model is given `[NAME_1]`, `[EMAIL_1]`, `[PHONE_1]`, `[LINK_1]`, with `strict`
-`[ORG_1]`, and, for what is found by its shape, `[ID_1]` and `[DOB_1]` (next section). The same text
+`[ORG_1]`, for a person's own terms `[TERM_1]`, and, for what is found by its shape,
+`[ID_1]` and `[DOB_1]` (next section). The same text
 is the same placeholder in a call and a different spelling is another one, so what
 a person wrote comes back as they wrote it. The numbers mean nothing outside the
 call that issued them.
@@ -1606,8 +1662,8 @@ message to:
   own machine, or the other way round. Under `hosted` an embedder that is not local is
   masked and a local one is sent what it always was. Under `always` both are masked.
 - **What is taken.** The same as in a message: what the CV states (with `strict`, the
-  employers and schools too, as the scope is set at that call), and what has the shape
-  of an identifier. The chunks of one rebuild are one call, so a value is one placeholder in
+  employers and schools too, as the scope is set at that call), the person's own terms
+  as the list is at that call, and what has the shape of an identifier. The chunks of one rebuild are one call, so a value is one placeholder in
   all of them. A text that holds nothing to keep is sent as it was, and its vector is the
   one it always was.
 - **Nothing comes back to put right.** What returns is numbers. What the index stores, and
@@ -1628,9 +1684,9 @@ What it leaves, said plainly:
   person's own name or email is now embedded as a placeholder and can match an older
   vector a little less well, until the index is made again (`profile.context.reindex`).
   Only a chunk or a question that holds a value of the person's is affected.
-- **A change of setting is not a re-index.** Turning `always` on for a local embedder, or
-  `strict` on for any, masks what is embedded from then on and leaves the vectors that
-  exist as they are. Chunks of experience and education are the ones a person who turns
+- **A change of setting is not a re-index.** Turning `always` on for a local embedder,
+  `strict` on for any, or adding a term, masks what is embedded from then on and leaves
+  the vectors that exist as they are. Chunks of experience and education are the ones a person who turns
   `strict` on will have in both kinds until the index is made again.
 - A placeholder is a different string from the name it stands for, so a search that looks for
   a person's name in the vectors finds it less well. The keyword half of a search reads the
@@ -1642,6 +1698,8 @@ What it leaves, said plainly:
 - The CV, the record of a message (`runs.grounding`), a preview (`run.preview`) and
   the trace of a tool hold the real values. Masking is about what leaves for a
   model, and what a person reads on their own machine is theirs.
+- The list of a person's own terms is not kept at all (`masking.terms`): Studio keeps
+  it, and the runtime holds it only while it runs.
 - A preview is not masked: it calls no model. (Its search for pieces embeds the
   question, which is a call to the embedding provider and is masked as any other, under
   `masking-embedding`.)
@@ -1682,6 +1740,11 @@ What it leaves, said plainly:
 3. With `masking-strict`, one more choice under it: "Also mask employers and schools"
    (`maskScope` `strict`, off is `personal`). Say that a company is found as the CV
    writes it and without its legal form, and that a shortened name is not.
-4. Do not offer a way to turn masking off. There is none.
-5. Send the settings with the others, and when the person has not touched one, send
+4. With `masking-terms`, a list under it: "Also mask these words", where a person adds
+   and removes terms. Check each is 3 to 300 characters before sending, say that a term
+   is found whole and as typed, and that a word of it alone is not. Keep the list in
+   Studio, and send it on every connection to the runtime and on every change, `[]`
+   when it is empty.
+5. Do not offer a way to turn masking off. There is none.
+6. Send the settings with the others, and when the person has not touched one, send
    nothing, so as not to overwrite what another window saved.

@@ -44,7 +44,7 @@ import { z } from 'zod';
 import { discoveryFiltersSchema, discoveryBudgetSchema, discoveryBudgetDefaults, discoveryChatRequestSchema, discoveryImportSchema, discoverySearchBatchSchema, discoveryImportBatchSchema, discoveryImportIdentitySchema, discoverySearchPageSchema } from '../../contracts/discovery-search.js';
 import { cvDocumentSchema } from '../../capabilities/cv/document.js';
 import { cvPhotoSchema } from '../../capabilities/cv/photo.js';
-import { maskModes, maskScopes, runStatuses } from '../../contracts/index.js';
+import { maskModes, maskScopes, maskTermLimits, runStatuses } from '../../contracts/index.js';
 
 /* ------------------------------------------------------------------ inputs */
 
@@ -500,6 +500,23 @@ export const payloads = {
   'limits.set': z.object({
     conversationId: conversationId.optional(),
     context: z.number().nullable()
+  }).strict(),
+
+  /**
+   * The terms a person asked to have kept from a model, and whether any list has
+   * been sent since the runtime started.
+   */
+  'masking.terms.get': z.object({}).strict(),
+
+  /**
+   * Replaces the terms, an empty list included, which is how a host says there are
+   * none. Held in memory only, so a host sends them again whenever it connects.
+   * A term is measured without the white space around it.
+   */
+  'masking.terms.set': z.object({
+    terms: z
+      .array(z.string().trim().min(maskTermLimits.shortest).max(maskTermLimits.longest))
+      .max(maskTermLimits.count)
   }).strict()
 } as const;
 

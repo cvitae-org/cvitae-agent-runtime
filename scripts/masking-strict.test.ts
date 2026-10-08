@@ -444,7 +444,7 @@ test('text that already spells a placeholder is not mistaken for one issued', ()
 
 test('an employer is a kind of value a CV can give', () => {
   assert.ok((maskSeedKinds as readonly string[]).includes('org'));
-  assert.equal(maskSeedKinds.length, 5);
+  assert.equal(maskSeedKinds.length, 6);
 });
 
 /* -------------------------------------------------------------------- the scope */
@@ -914,6 +914,9 @@ const bench = (options: { env?: Readonly<Record<string, string>>; on?: string; i
     ...(options.indexRecovery ? { indexRecovery: true } : {}),
     probe: () => Promise.reject(new Error('connection refused'))
   });
+  // What Studio says when it connects. Until it is said, a rebuild that would be
+  // masked waits (`masking-terms.test.ts`).
+  harness.maskTerms.set([]);
 
   return {
     harness,

@@ -55,7 +55,8 @@ import { detect, type DetectedKind } from './detect.js';
  * What a placeholder stands for: what a person said (`MaskSeedKind`) and what was
  * found by its shape (`DetectedKind`), which share the labels of the first four
  * and add `ID` (a PESEL, a NIP, an IBAN, an account number) and `DOB`; `ORG` is
- * an employer or a school that a person said, in the strict scope.
+ * an employer or a school that a person said, in the strict scope, and `TERM` a
+ * word or a phrase they asked to have kept.
  */
 export type MaskKind = MaskSeedKind | DetectedKind;
 
@@ -65,6 +66,7 @@ const LABEL: Readonly<Record<MaskKind, string>> = {
   phone: 'PHONE',
   link: 'LINK',
   org: 'ORG',
+  term: 'TERM',
   id: 'ID',
   dob: 'DOB'
 };
@@ -266,12 +268,32 @@ const orgPatterns = (value: string): Pattern[] => {
   return [core, short].filter((text) => text.length >= MIN_SEED_LENGTH).map(whole);
 };
 
+/**
+ * A term a person asked to have kept: what they typed, whole, as a word of its own,
+ * in any case, with or without its diacritics and with any run of white space
+ * between its words. Nothing is taken off it, its punctuation included, because a
+ * person who typed `C++` or `Acme Inc.` meant that; and never a word of it by
+ * itself, as for an employer.
+ */
+const termPatterns = (value: string): Pattern[] => {
+  const core = fold(value);
+
+  return [
+    {
+      kind: 'term',
+      source: `${BEFORE}${core.split(/\s+/).map(escape).join('\\s+')}${AFTER}`,
+      weight: core.length
+    }
+  ];
+};
+
 const PATTERNS: Readonly<Record<MaskSeedKind, (value: string) => Pattern[]>> = {
   name: namePatterns,
   email: emailPatterns,
   phone: phonePatterns,
   link: linkPatterns,
-  org: orgPatterns
+  org: orgPatterns,
+  term: termPatterns
 };
 
 const patternsOf = (seeds: readonly MaskSeed[]): Pattern[] => {

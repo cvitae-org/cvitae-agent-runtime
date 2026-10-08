@@ -269,7 +269,7 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     'browser.configure': async ({enabled}) => ok(await harness.browser.configure(enabled)),
     'browser.poll': ({after}) => ok(harness.browser.store.poll(after)),
     'browser.collection': () => ok(harness.browser.store.collection()),
-    'protocol.get': () => ok({ version: 2, features: ['cv-contexts', 'checked-writes', 'durable-proposals', 'context-copy', 'offer-snapshot-runs', 'board-workspaces-v1', 'board-application-agent-v1', 'browser-companion-v1', 'studio-browser-v1', 'discovery-board-threads-v1', 'provider-connection-test-v1', 'grounding-record', 'grounding-selection', 'grounding-history', 'grounding-assembly', 'grounding-budget', 'grounding-preview', 'grounding-offers', 'grounding-edits', 'grounding-compaction', 'masking', 'masking-detectors', 'masking-embedding', 'masking-strict'], languages: ['pl', 'en'] }),
+    'protocol.get': () => ok({ version: 2, features: ['cv-contexts', 'checked-writes', 'durable-proposals', 'context-copy', 'offer-snapshot-runs', 'board-workspaces-v1', 'board-application-agent-v1', 'browser-companion-v1', 'studio-browser-v1', 'discovery-board-threads-v1', 'provider-connection-test-v1', 'grounding-record', 'grounding-selection', 'grounding-history', 'grounding-assembly', 'grounding-budget', 'grounding-preview', 'grounding-offers', 'grounding-edits', 'grounding-compaction', 'masking', 'masking-detectors', 'masking-embedding', 'masking-strict', 'masking-terms'], languages: ['pl', 'en'] }),
     'board.application.start': request => ok(harness.applicationAgent.start(request)),
     'board.application.observe': async request => ok(await harness.applicationAgent.observe(request)),
     'board.application.report': request => ok(harness.applicationAgent.report(request)),
@@ -788,7 +788,11 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
       if (!view) return failed('not_found', `No such conversation: ${conversationId}`);
 
       return ok(view);
-    }
+    },
+
+    'masking.terms.get': () => ok({ terms: harness.maskTerms.read(), declared: harness.maskTerms.declared() }),
+
+    'masking.terms.set': ({ terms }) => ok({ terms: harness.maskTerms.set(terms), declared: harness.maskTerms.declared() })
   };
 
   const handle = async (channel: Channel, payload: unknown): Promise<Response> => {

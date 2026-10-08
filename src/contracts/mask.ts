@@ -17,9 +17,10 @@
  *
  * `name` covers a full name and each part of it, so that "Anna" alone in a
  * message is masked as well as "Anna Kowalska" in a CV. `org` is an employer or
- * a school, whole, and only in the strict scope (`MaskScope`).
+ * a school, whole, and only in the strict scope (`MaskScope`). `term` is a word
+ * or a phrase the person asked to have kept (`MaskTerms`), whole, in every scope.
  */
-export const maskSeedKinds = ['name', 'email', 'phone', 'link', 'org'] as const;
+export const maskSeedKinds = ['name', 'email', 'phone', 'link', 'org', 'term'] as const;
 export type MaskSeedKind = (typeof maskSeedKinds)[number];
 
 /** One value to keep from a hosted model: as the person's CV states it. */
@@ -85,3 +86,37 @@ export const isMaskScope = (value: unknown): value is MaskScope =>
  */
 export const maskScopeOf = (stored: string | undefined): MaskScope =>
   stored === undefined ? defaultMaskScope : isMaskScope(stored) ? stored : 'strict';
+
+/**
+ * How many terms a person may have kept, and how long one may be, in characters
+ * once the white space around it is taken off.
+ *
+ * The length is the engine's for every seed (`MIN_SEED_LENGTH`, `MAX_SEED_LENGTH`
+ * in `effects/mask.ts`), so a term the runtime takes is one it masks: a shorter
+ * one would be accepted and kept from nothing.
+ */
+export const maskTermLimits = { count: 100, shortest: 3, longest: 300 } as const;
+
+/**
+ * What a person has asked to have kept from a model besides what their CV states:
+ * a client, a project, a nickname, a place. Studio keeps the list and sends it
+ * when it connects and whenever it changes; the runtime holds it in memory and
+ * never writes it down.
+ */
+export type MaskTerms = {
+  /** The terms in force, in the order they were given, one of each. */
+  read(): readonly string[];
+  /**
+   * Replaces the list. Each term is taken without the white space around it, and
+   * a term that folds to one already given is given once. Throws `invalid_input`
+   * for a term outside `maskTermLimits` or a list longer than it, and keeps what
+   * was there.
+   */
+  set(terms: readonly string[]): readonly string[];
+  /**
+   * Whether a list has been given since the runtime started, an empty one
+   * included. Until then a background call that would be masked is not made
+   * (`index-recovery.ts`): the runtime cannot know what it would have to keep.
+   */
+  declared(): boolean;
+};

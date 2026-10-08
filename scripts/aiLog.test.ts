@@ -254,6 +254,9 @@ test('the desktop host keeps each call in the table as well as echoing it, and p
     now: () => now,
     indexRecovery: true
   });
+  // And what Studio says once it is connected, without which a hosted embedder
+  // is not called by a rebuild.
+  harness.maskTerms.set([]);
 
   try {
     assert.deepEqual(harness.aiCalls.recent().map((call) => call.runId), ['kept']);

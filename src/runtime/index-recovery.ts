@@ -12,14 +12,24 @@ import { embedChunks } from '../retrieval/embed.js';
  */
 const needsAPerson: ReadonlySet<string> = new Set(['credential_rejected', 'misconfigured']);
 
+export type IndexRebuilderOptions = {
+  /**
+   * Whether a job may be taken now, asked before each. False leaves every job
+   * where it is, waiting and not failed, until it is true: the runtime is not yet
+   * told what an embedding has to keep (`MaskTerms.declared`).
+   */
+  readonly ready?: () => boolean;
+};
+
 /** No polling in library/tests unless explicitly started by a host. */
-export const createIndexRebuilder = (jobs: IndexRecoveryStore, ai: AiGateway) => {
+export const createIndexRebuilder = (jobs: IndexRecoveryStore, ai: AiGateway, options: IndexRebuilderOptions = {}) => {
   let stopped = false;
   let active: IndexJob | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
   const abort = new AbortController();
   const runOnce = async (): Promise<void> => {
     if (stopped || active) return;
+    if (options.ready !== undefined && !options.ready()) return;
     const job = jobs.claim();
     if (!job) return;
     active = job;

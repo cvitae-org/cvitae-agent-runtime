@@ -19,6 +19,7 @@ import { createCheckpointer } from '../runs/checkpoint.js';
 import * as emit from '../events/emit.js';
 import { CvContextError, OperationError, RuntimeError, defaultMaskScope, isRunSuspension } from '../contracts/index.js';
 import { maskedGateway } from '../effects/masking.js';
+import { termSeeds } from './mask-terms.js';
 import { cvSeeds } from '../capabilities/cv/seeds.js';
 import { createRecorder, recordingDocuments, recordingRetrieval } from './grounding.js';
 import type { Grounding } from './grounding.js';
@@ -104,9 +105,14 @@ export type RuntimeDeps = {
   /**
    * When a model call of a run is masked and which of a person's values are:
    * what a person has set, asked at the start of every run. Absent means no call
-   * is masked, as before masking.
+   * is masked, as before masking. The terms a person asked to have kept are asked
+   * at each call, as the CV is; absent, there are none.
    */
-  readonly masking?: { readonly mode: () => MaskMode; readonly scope?: () => MaskScope };
+  readonly masking?: {
+    readonly mode: () => MaskMode;
+    readonly scope?: () => MaskScope;
+    readonly terms?: () => readonly string[];
+  };
   /**
    * Keeps the conversation of a run whose host sent none. Absent means a run is
    * given the history and summary it was sent, and nothing else, as before.
@@ -194,6 +200,10 @@ const seedsOf = (documents: DocumentStore, scope: MaskScope): readonly MaskSeed[
  * the scope are asked once, here, so a run is held to what a person had set when
  * it began and not to whatever they have set since. A host that gives no scope
  * is held to the default.
+ *
+ * The terms are values and not a setting, and are asked at each call with the CV:
+ * one added while a run waits is kept from its next call, and they are kept in a
+ * run that may not read the CV, because they are not the CV's.
  */
 const maskedEffects = (
   effects: EffectSet,
@@ -206,7 +216,7 @@ const maskedEffects = (
     ...effects,
     ai: maskedGateway(effects.ai, {
       mode: masking.mode(),
-      seeds: () => seedsOf(documents, scope),
+      seeds: () => [...seedsOf(documents, scope), ...termSeeds(masking.terms?.() ?? [])],
       detect: true
     })
   };

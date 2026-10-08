@@ -603,6 +603,9 @@ const bench = (env: Readonly<Record<string, string>>, query = 'Ada Example ada@e
     indexRecovery: true,
     probe: () => Promise.reject(new Error('connection refused'))
   });
+  // What Studio says when it connects. Until it is said, a rebuild that would be
+  // masked waits (`masking-terms.test.ts`).
+  harness.maskTerms.set([]);
 
   return {
     harness,
