@@ -220,6 +220,9 @@ const BODY = {
   sources: []
 };
 
+/** The overview's `personal` as `read_cv` hands it over: the name and the place, and not how to reach them. */
+const PERSONAL = { name: BODY.personal.name, location: BODY.personal.location };
+
 assert.deepEqual(cvOf(BODY), BODY, 'the fixture CV is in the shape the document parses to');
 
 const HISTORY = [
@@ -603,7 +606,7 @@ test('a posting a snapshot supplied is the server\'s, under the offer', async ()
     assert.equal(after(loop.prompt, POSTING_LABEL), SHORT_POSTING);
 
     const overview = rt.received[0]?.result as { data: Record<string, unknown> };
-    assert.deepEqual(overview.data.personal, BODY.personal);
+    assert.deepEqual(overview.data.personal, PERSONAL);
 
     assert.deepEqual(kept(rt, run), {
       ...record(run, 'succeeded', [
@@ -612,7 +615,7 @@ test('a posting a snapshot supplied is the server\'s, under the offer', async ()
         sent('conversation:offer-chat/summary', SUMMARY),
         { ...sent('offers:offer-1/posting', SHORT_POSTING), origin: 'server' },
         read(rt, 'cv:ctx', BODY, 'port:documents'),
-        handed(rt, 'cv:ctx/overview/personal', BODY.personal, 'tool:read_cv'),
+        handed(rt, 'cv:ctx/overview/personal', PERSONAL, 'tool:read_cv'),
         handed(rt, 'cv:ctx/overview/role_description', BODY.role_description, 'tool:read_cv'),
         handed(rt, 'cv:ctx/overview/skills', BODY.skills, 'tool:read_cv')
       ]),
@@ -665,7 +668,7 @@ test('what the tools hand to the model is what the record says, piece by piece',
     ];
 
     // What the model saw: the overview whole, then one entry of three and only part of it.
-    assert.deepEqual(overview.data.personal, BODY.personal);
+    assert.deepEqual(overview.data.personal, PERSONAL);
     assert.deepEqual(overview.data.role_description, BODY.role_description);
     assert.deepEqual(overview.data.skills, BODY.skills);
     assert.equal(cut.data.items.length, 1, 'the page had room for one entry');
@@ -676,7 +679,7 @@ test('what the tools hand to the model is what the record says, piece by piece',
     assert.deepEqual(kept(rt, run), record(run, 'succeeded', [
       // The CV was read, which the port says and the tool does not.
       read(rt, 'cv:ctx', BODY, 'port:documents'),
-      handed(rt, 'cv:ctx/overview/personal', BODY.personal, 'tool:read_cv'),
+      handed(rt, 'cv:ctx/overview/personal', PERSONAL, 'tool:read_cv'),
       handed(rt, 'cv:ctx/overview/role_description', BODY.role_description, 'tool:read_cv'),
       handed(rt, 'cv:ctx/overview/skills', BODY.skills, 'tool:read_cv'),
       // One entry of three was handed over and part of it was cut, so it says what was left.
@@ -778,7 +781,7 @@ test('a tool that could not say what it hands over hands nothing, and says it wh
     assert.equal(rt.received.length, 1);
     assert.deepEqual(kept(rt, run), record(run, 'succeeded', [
       read(rt, 'cv:ctx', BODY, 'port:documents'),
-      handed(rt, 'cv:ctx/overview/personal', BODY.personal, 'tool:read_cv'),
+      handed(rt, 'cv:ctx/overview/personal', PERSONAL, 'tool:read_cv'),
       handed(rt, 'cv:ctx/overview/role_description', BODY.role_description, 'tool:read_cv'),
       handed(rt, 'cv:ctx/overview/skills', BODY.skills, 'tool:read_cv')
     ]));

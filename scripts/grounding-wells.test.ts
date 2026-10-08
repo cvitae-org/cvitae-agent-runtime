@@ -67,7 +67,7 @@
  *   the whole CV is digested as the stored body    1
  *   the overview leaves out the skills             1
  *   the overview names pieces in another order     1
- *   a piece nobody handed over is recorded         2
+ *   a piece nobody handed over is recorded         3
  *   a piece is digested as the model got it        1
  *   a piece says nothing of what it was cut to     1
  *
@@ -167,6 +167,9 @@ const body = {
   ],
   sources: []
 };
+
+/** The overview's `personal` as `read_cv` hands it over: the name and the place, and not how to reach them. */
+const PERSONAL = { name: body.personal.name, location: body.personal.location };
 
 /** What the tools and the ports see of that body: the skills strip has its rows. */
 const SKILLS = {
@@ -389,11 +392,11 @@ test('a read says which revision it was, as the text of a number', () => {
 /* ---------------------------------------------------------- read_cv, overview */
 
 test('the overview names the three pieces it hands over, each with the digest of what it is', () => {
-  const data = { version: 1, personal: body.personal, role_description: body.role_description, skills: SKILLS };
+  const data = { version: 1, personal: PERSONAL, role_description: body.role_description, skills: SKILLS };
   const entries = kept(cvReadEntries(SCOPE, REVISION, document, { section: 'overview', offset: 0 }, data, 'tool:read_cv'));
 
   assert.deepEqual(entries, [
-    { ref: 'cv:ctx-1/overview/personal', version: '7', digest: digest(body.personal), status: 'included', origin: 'server', via: 'tool:read_cv' },
+    { ref: 'cv:ctx-1/overview/personal', version: '7', digest: digest(PERSONAL), status: 'included', origin: 'server', via: 'tool:read_cv' },
     { ref: 'cv:ctx-1/overview/role_description', version: '7', digest: digest(body.role_description), status: 'included', origin: 'server', via: 'tool:read_cv' },
     { ref: 'cv:ctx-1/overview/skills', version: '7', digest: digest(SKILLS), status: 'included', origin: 'server', via: 'tool:read_cv' }
   ]);
@@ -401,7 +404,7 @@ test('the overview names the three pieces it hands over, each with the digest of
 
 test('a piece the model got only part of says what part, and is not mistaken for the whole', () => {
   const clipped = 'Backend engineer focused on billing';
-  const data = { version: 1, personal: body.personal, role_description: clipped, skills: SKILLS };
+  const data = { version: 1, personal: PERSONAL, role_description: clipped, skills: SKILLS };
   const entries = kept(cvReadEntries(SCOPE, REVISION, document, { section: 'overview', offset: 0 }, data, 'tool:read_cv'));
 
   const description = entries.find((entry) => entry.ref === 'cv:ctx-1/overview/role_description');
@@ -414,7 +417,7 @@ test('a piece the model got only part of says what part, and is not mistaken for
 });
 
 test('a piece the budget had no room for was not handed over, and has no entry', () => {
-  const data = { version: 1, personal: body.personal };
+  const data = { version: 1, personal: PERSONAL };
   const entries = kept(cvReadEntries(SCOPE, REVISION, document, { section: 'overview', offset: 0 }, data, 'tool:read_cv'));
 
   assert.deepEqual(entries.map((entry) => entry.ref), ['cv:ctx-1/overview/personal']);

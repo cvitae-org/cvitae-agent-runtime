@@ -8,7 +8,9 @@
  * the edit arrived with.
  *
  *   cv:<scope>/overview/personal     an item of the overview: personal,
- *                                    role_description or skills
+ *                                    role_description or skills (the contact
+ *                                    details are edited with personal, which
+ *                                    holds them)
  *   cv:<scope>/experience            a list section: experience, education,
  *                                    certificates or languages
  *
@@ -20,9 +22,9 @@
 
 import { OperationError } from '../../contracts/index.js';
 import { formatRef, parseRef } from '../../grounding/index.js';
-import { CV_WELL, LIST_SECTIONS, OVERVIEW, OVERVIEW_ITEMS, cvRef } from './well.js';
+import { CV_WELL, LIST_SECTIONS, OVERVIEW, OVERVIEW_FIELDS, cvRef } from './well.js';
 
-const isItem = (name: string): boolean => (OVERVIEW_ITEMS as readonly string[]).includes(name);
+const isItem = (name: string): boolean => (OVERVIEW_FIELDS as readonly string[]).includes(name);
 const isList = (name: string): boolean => (LIST_SECTIONS as readonly string[]).includes(name);
 
 /** The ref of a section of the CV with this scope, as an edit is aimed at it. */

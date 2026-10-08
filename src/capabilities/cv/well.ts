@@ -10,7 +10,7 @@
  *
  *   scope    the CV context id
  *   version  the document revision
- *   overview     personal, role_description, skills
+ *   overview     personal, contact, role_description, skills
  *   experience   one item per entry, keyed `company~title`
  *   education    keyed `university~degree`
  *   certificates keyed by name
@@ -25,6 +25,13 @@
  * The digest of a piece is the digest of the piece as the parsed, normalised
  * document holds it (`asCvDocument`), whichever way it was read, so two reads of
  * one piece at one revision agree.
+ *
+ * Two overview items are one field of the document. `personal` is the name and
+ * the place, and `contact` the email, the phone and the links, which a model
+ * reads only when it asks for them (`read_cv`'s `contact` section) and not with
+ * every look at the overview. A person's own choice of `personal`, to leave it
+ * out or to send it, is a choice of both: it is what the CV calls personal
+ * details.
  */
 
 import { OperationError } from '../../contracts/index.js';
@@ -40,11 +47,45 @@ export const cvWell: WellDef = {
   id: CV_WELL,
   describe:
     'A CV. One scope per CV context, versioned by the document revision. '
-    + 'Sections: overview, experience, education, certificates, languages.'
+    + 'Sections: overview (personal, contact, role_description, skills), experience, education, '
+    + 'certificates, languages.'
 };
 
 export const OVERVIEW = 'overview';
-export const OVERVIEW_ITEMS = ['personal', 'role_description', 'skills'] as const;
+/** The overview's pieces: what an address, a record and a choice name. */
+export const OVERVIEW_ITEMS = ['personal', 'contact', 'role_description', 'skills'] as const;
+export type OverviewItem = (typeof OVERVIEW_ITEMS)[number];
+/** The overview's fields in the document: what an edit rewrites and an exclusion cuts. */
+export const OVERVIEW_FIELDS = ['personal', 'role_description', 'skills'] as const;
+export type OverviewField = (typeof OVERVIEW_FIELDS)[number];
+/** What of `personal` is the `contact` item. */
+export const CONTACT_FIELDS = ['email', 'phone', 'links'] as const;
+/** What `read_cv` calls the section that reads the `contact` item. */
+export const CONTACT = 'contact';
+
+export const isOverviewItem = (key: string): key is OverviewItem =>
+  (OVERVIEW_ITEMS as readonly string[]).includes(key);
+
+/**
+ * An overview item as a document holds it: a field, or for `personal` and
+ * `contact` the two parts of the one field. What a read hands over, what a block
+ * renders and what an entry's digest is of, so they agree.
+ */
+export const overviewPiece = (document: CvDocument, item: OverviewItem): unknown => {
+  switch (item) {
+    case 'personal':
+      return Object.fromEntries(
+        Object.entries(document.personal).filter(([field]) => !(CONTACT_FIELDS as readonly string[]).includes(field))
+      );
+    case 'contact': {
+      const { email, phone, links } = document.personal;
+      return { email, phone, links };
+    }
+    default:
+      return document[item];
+  }
+};
+
 export const LIST_SECTIONS = ['experience', 'education', 'certificates', 'languages'] as const;
 export type ListSection = (typeof LIST_SECTIONS)[number];
 
@@ -195,8 +236,17 @@ export const cvReadEntries = (
     return OVERVIEW_ITEMS.flatMap((key) =>
       given[key] === undefined
         ? []
-        : [entry(scope, revision, { section: OVERVIEW, key }, document[key], how(given[key]))]
+        : [entry(scope, revision, { section: OVERVIEW, key }, overviewPiece(document, key), how(given[key]))]
     );
+  }
+
+  // `read_cv` reads the contact item as a section of its own, and it is named
+  // where it sits. A read with nothing in it, because it is left out, hands over
+  // nothing and is not an entry.
+  if (request.section === CONTACT) {
+    return Object.keys(given).length === 0
+      ? []
+      : [entry(scope, revision, { section: OVERVIEW, key: 'contact' }, overviewPiece(document, 'contact'), how(given))];
   }
 
   if (!isListSection(request.section)) {

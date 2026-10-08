@@ -6,18 +6,23 @@
  * reads the source document instead. It exposes one bounded section at a time:
  * no path, source reference, credential or outbound effect is reachable from
  * here, and large strings are clipped before they enter a model context.
+ *
+ * The overview carries the person's name and place and not how to reach them.
+ * The email, the phone and the links are a section of their own, `contact`, which
+ * a model reads when a question needs them, so they are not in every answer's
+ * context (and in every masked prompt) because the overview was looked at.
  */
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../../contracts/index.js';
 import { CV_ID, asCvDocument } from './document.js';
-import { cvView, viewOf } from './walls.js';
+import { cvView, viewOf, withheldItem } from './walls.js';
 import type { CvWithheld } from './walls.js';
-import { CV_WELL, OVERVIEW_ITEMS, cvReadEntries } from './well.js';
+import { CONTACT, CV_WELL, OVERVIEW_ITEMS, cvReadEntries, overviewPiece } from './well.js';
 
 export const READ_CV_TOOL = 'read_cv';
 
-const sections = ['overview', 'experience', 'education', 'certificates', 'languages'] as const;
+const sections = ['overview', CONTACT, 'experience', 'education', 'certificates', 'languages'] as const;
 type Section = (typeof sections)[number];
 
 const inputSchema = z.object({
@@ -136,9 +141,13 @@ const select = (
       // An excluded item is left out, and not blanked: a model told the CV has an
       // empty name would say so to the person.
       const overview: Record<string, unknown> = { version: document.version };
-      for (const item of OVERVIEW_ITEMS) if (!(item in withheld.items)) overview[item] = document[item];
+      for (const item of OVERVIEW_ITEMS) {
+        if (item !== CONTACT && !withheldItem(withheld, item)) overview[item] = overviewPiece(document, item);
+      }
       return overview;
     }
+    case CONTACT:
+      return withheldItem(withheld, CONTACT) ? {} : (overviewPiece(document, CONTACT) as Record<string, unknown>);
     case 'experience':
       return page(document.experience, offset, limit);
     case 'education':
@@ -154,7 +163,9 @@ export const readCvTool: ToolDefinition<z.infer<typeof inputSchema>, unknown> = 
   name: READ_CV_TOOL,
   describe:
     "Read the user's current canonical CV, one structured section at a time. "
-    + 'Use this for current profile facts; paginate list sections with offset and limit.',
+    + 'Use this for current profile facts; paginate list sections with offset and limit. '
+    + 'The overview has the name and location; read the contact section only when the email, '
+    + 'phone or links are needed.',
   input: inputSchema,
   execute: async ({ section, offset, limit }, context) => {
     const record = context.documents.read(CV_ID);

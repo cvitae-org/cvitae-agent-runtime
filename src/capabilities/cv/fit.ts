@@ -124,13 +124,14 @@ const prepare = (asked: Pick<GroundingInput, 'offerIds' | 'preferences'>, contex
   const view = found === undefined ? undefined : viewOf(found);
   const terms = made.compared.map(termsOf);
 
-  // Scored once for each skill of each offer a part mentions. The personal details
-  // say nothing about fit, and are never offered as evidence.
+  // Scored once for each skill of each offer a part mentions. The personal details,
+  // and the contact details that are part of them, say nothing about fit, and are
+  // never offered as evidence.
   const scored =
     view === undefined || cards.length === 0
       ? []
       : allLeaves(view)
-          .filter((leaf) => !(leaf.section === OVERVIEW && leaf.key === 'personal'))
+          .filter((leaf) => !(leaf.section === OVERVIEW && (leaf.key === 'personal' || leaf.key === 'contact')))
           .map((leaf, order) => {
             const haystack = leaf.text.toLowerCase();
             const score = terms.reduce((sum, own) => sum + own.filter((term) => mentions(haystack, term)).length, 0);

@@ -9,11 +9,13 @@
  * It renders a piece into a block and makes the entry that says the block was
  * sent, in the same pass over the same piece, and nothing else writes either.
  *
- * A piece is a leaf: an overview item (`personal`, `role_description`, `skills`)
- * or one entry of a list section. A pin or an attachment may name a section, and
- * is then every leaf in it, so an entry that is left out of the conversation is
- * left out of the block and the others still go. One block and one entry for each
- * leaf, which is also how `read_cv` records what it hands over.
+ * A piece is a leaf: an overview item (`personal`, `contact`, `role_description`,
+ * `skills`) or one entry of a list section. A pin or an attachment may name a
+ * section, and is then every leaf in it, so an entry that is left out of the
+ * conversation is left out of the block and the others still go. The personal
+ * details are the name and the contact details both, so a pin of `personal` is
+ * the two leaves, as it was before they were two. One block and one entry for
+ * each leaf, which is also how `read_cv` records what it hands over.
  *
  * What comes out of here fails closed:
  *
@@ -47,9 +49,9 @@ import { contains, digest, isWalled, parseRef, refKey } from '../../grounding/in
 import { renderCompact } from './compact.js';
 import { CV_ID } from './document.js';
 import { render } from './render.js';
-import { viewOf } from './walls.js';
+import { viewOf, withheldItem } from './walls.js';
 import type { CvView } from './walls.js';
-import { CV_WELL, LIST_SECTIONS, OVERVIEW, OVERVIEW_ITEMS, cvKeys, cvRef, placer } from './well.js';
+import { CV_WELL, LIST_SECTIONS, OVERVIEW, OVERVIEW_ITEMS, cvKeys, cvRef, isOverviewItem, overviewPiece, placer } from './well.js';
 import type { ListSection } from './well.js';
 
 export const GROUND_STEP = 'ground';
@@ -80,7 +82,6 @@ export type Leaf = {
 /** What a leaf is when looked up in a view. `walled` is not the same as absent. */
 type Found = { readonly leaf: Leaf } | 'walled' | 'absent' | 'empty';
 
-const isOverviewItem = (key: string): boolean => (OVERVIEW_ITEMS as readonly string[]).includes(key);
 const isListSection = (section: string): section is ListSection => (LIST_SECTIONS as readonly string[]).includes(section);
 
 /**
@@ -93,10 +94,10 @@ const isListSection = (section: string): section is ListSection => (LIST_SECTION
 const leafAt = (view: CvView, section: string, key: string): Found => {
   if (section === OVERVIEW) {
     if (!isOverviewItem(key)) return 'absent';
-    if (key in view.withheld.items) return 'walled';
-    const body = render(`${OVERVIEW}/${key}`, view.shown[key as (typeof OVERVIEW_ITEMS)[number]]);
+    if (withheldItem(view.withheld, key)) return 'walled';
+    const body = render(`${OVERVIEW}/${key}`, overviewPiece(view.shown, key));
     if (body === '') return 'empty';
-    return { leaf: { section, key, original: view.original[key as (typeof OVERVIEW_ITEMS)[number]], text: body } };
+    return { leaf: { section, key, original: overviewPiece(view.original, key), text: body } };
   }
 
   if (!isListSection(section)) return 'absent';
@@ -117,7 +118,7 @@ const leafAt = (view: CvView, section: string, key: string): Found => {
  */
 const shorter = (view: CvView, leaf: Leaf): string | undefined => {
   if (leaf.section === OVERVIEW) {
-    return renderCompact(`${OVERVIEW}/${leaf.key}`, view.shown[leaf.key as (typeof OVERVIEW_ITEMS)[number]]);
+    return isOverviewItem(leaf.key) ? renderCompact(`${OVERVIEW}/${leaf.key}`, overviewPiece(view.shown, leaf.key)) : undefined;
   }
   if (!isListSection(leaf.section)) return undefined;
 
@@ -131,9 +132,8 @@ const leavesOf = (view: CvView, ref: PieceRef): { section: string; key: string }
   if (section === undefined) return [];
 
   if (section === OVERVIEW) {
-    return key === undefined
-      ? OVERVIEW_ITEMS.map((item) => ({ section, key: item }))
-      : [{ section, key }];
+    if (key === undefined) return OVERVIEW_ITEMS.map((item) => ({ section, key: item }));
+    return key === 'personal' ? [{ section, key }, { section, key: 'contact' }] : [{ section, key }];
   }
   if (!isListSection(section)) return [];
 

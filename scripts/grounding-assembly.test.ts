@@ -29,15 +29,16 @@
  *               back, and a piece that was only asked for and held back taints nothing
  *
  * Mutations run, not assumed. Each was applied alone, this file run, the failing
- * tests counted, and the mutation reverted. 139 were applied and every one broke
+ * tests counted, and the mutation reverted. 140 were applied and every one broke
  * at least one test. The number is how many tests failed.
  *
  * what the model reads:
- *   personal details drop the phone                3
- *   personal details drop the links                3
+ *   contact details drop the phone                 3
+ *   contact details drop the links                 3
  *   personal details drop the name                 4
  *   a link is shown without its name               3
  *   personal details have no heading               4
+ *   contact details have no heading                3
  *   a role description has no heading              13
  *   skills drop the role                           4
  *   skills drop the group labels                   4
@@ -318,6 +319,7 @@ const ACME = ref('experience/acme~senior-engineer');
 const GLOBEX = ref('experience/globex~engineer');
 const ROLE = ref('overview/role_description');
 const PERSONAL = ref('overview/personal');
+const CONTACT = ref('overview/contact');
 const SKILLS = ref('overview/skills');
 const EDUCATION = ref('education/mit~bsc-computer-science');
 const CERTIFICATE = ref('certificates/aws-solutions-architect');
@@ -329,7 +331,8 @@ const TEXT = {
   [ACME]: `Experience, Senior Engineer at Acme:\n2021 - present\n- Rewrote the billing pipeline. ${CANARY.acme}\nSkills: Go`,
   [GLOBEX]: `Experience, Engineer at Globex:\n2018 - 2021\n- Built the design system. ${CANARY.globex}`,
   [ROLE]: `Role description:\n${BODY.role_description}`,
-  [PERSONAL]: `Personal details:\nAda Example\nada@example.com\n+48 600 100 200\nKrakow ${CANARY.home}\ngithub: https://github.com/ada`,
+  [PERSONAL]: `Personal details:\nAda Example\nKrakow ${CANARY.home}`,
+  [CONTACT]: 'Contact details:\nada@example.com\n+48 600 100 200\ngithub: https://github.com/ada',
   [SKILLS]: 'Skills:\nRole: Engineer\nLanguages: TypeScript, Go\nFrameworks: React\nLibraries & Tools: Postgres',
   [EDUCATION]: `Education, BSc Computer Science, MIT:\n2012 - 2016\nThesis: Compilers ${CANARY.thesis}\nMark: 5.0`,
   [CERTIFICATE]: 'Certificate, AWS Solutions Architect:\nIssued by Amazon\n2020',
@@ -342,7 +345,8 @@ const STORED = {
   [ACME]: BODY.experience[0],
   [GLOBEX]: BODY.experience[1],
   [ROLE]: BODY.role_description,
-  [PERSONAL]: BODY.personal,
+  [PERSONAL]: { name: BODY.personal.name, location: BODY.personal.location },
+  [CONTACT]: { email: BODY.personal.email, phone: BODY.personal.phone, links: BODY.personal.links },
   [SKILLS]: BODY.skills,
   [EDUCATION]: BODY.education[0],
   [CERTIFICATE]: BODY.certificates[0],
@@ -669,7 +673,9 @@ test('each kind of piece is sent as the model reads it, in the order it was pinn
     await settle(rt.begin(question()));
 
     const sent = loopOf(rt);
-    assert.equal(sent.prompt, prompted(QUESTION, ROLE, ACME, PERSONAL, SKILLS, EDUCATION, CERTIFICATE, POLISH, ENGLISH));
+    // The personal details are the name and the contact details both, as they were
+    // when they were one piece.
+    assert.equal(sent.prompt, prompted(QUESTION, ROLE, ACME, PERSONAL, CONTACT, SKILLS, EDUCATION, CERTIFICATE, POLISH, ENGLISH));
     assert.equal(sent.system, SYSTEM, 'the instructions are not changed by what is attached');
     assert.deepEqual(sent.tools, ['search_profile', 'read_cv'], 'the model keeps its tools unless it is told otherwise');
   } finally {
@@ -730,11 +736,11 @@ test('pins come first and then the attachments, each in its own order, and a pie
   }
 });
 
-test('a section is each entry of it, and an overview is its three items', async () => {
+test('a section is each entry of it, and an overview is its four items', async () => {
   const rt = runtime();
   try {
     await settle(rt.begin(question({ grounding: { once: [ref('languages'), ref('overview')] } })));
-    assert.equal(loopOf(rt).prompt, prompted(QUESTION, POLISH, ENGLISH, PERSONAL, ROLE, SKILLS));
+    assert.equal(loopOf(rt).prompt, prompted(QUESTION, POLISH, ENGLISH, PERSONAL, CONTACT, ROLE, SKILLS));
   } finally {
     rt.dispose();
   }
@@ -746,8 +752,8 @@ test('an overview item with nothing in it sends nothing, and a piece the documen
     const run = rt.begin(question({ grounding: { once: [ref('overview'), ref('certificates')] } }));
     const settled = await settle(run);
 
-    assert.equal(loopOf(rt).prompt, prompted(QUESTION, PERSONAL, SKILLS));
-    assert.deepEqual(settled.data.grounding, { included: [PERSONAL, SKILLS], blocked: [], gone: [], suggested: [] });
+    assert.equal(loopOf(rt).prompt, prompted(QUESTION, PERSONAL, CONTACT, SKILLS));
+    assert.deepEqual(settled.data.grounding, { included: [PERSONAL, CONTACT, SKILLS], blocked: [], gone: [], suggested: [] });
   } finally {
     rt.dispose();
   }
@@ -1112,7 +1118,9 @@ test('an item of the overview that is excluded is not sent when the overview is'
 
     assert.equal(loopOf(rt).prompt, prompted(QUESTION, ROLE, SKILLS));
     assert.ok(!rt.everything().includes(CANARY.home));
-    assert.deepEqual((settled.data.grounding as { blocked: string[] }).blocked, [PERSONAL]);
+    // The contact details are part of the personal details, and go with them.
+    assert.ok(!rt.everything().includes('ada@example.com'));
+    assert.deepEqual((settled.data.grounding as { blocked: string[] }).blocked, [PERSONAL, CONTACT]);
   } finally {
     rt.dispose();
   }
@@ -1616,7 +1624,7 @@ test('what is stale is told apart from what is current, entry by entry', () => {
       ...over
     });
 
-    const current = [entry(ACME), entry(GLOBEX), entry(ROLE), entry(PERSONAL)];
+    const current = [entry(ACME), entry(GLOBEX), entry(ROLE), entry(PERSONAL), entry(CONTACT)];
     assert.deepEqual(staleCv(context, current), []);
 
     assert.deepEqual(staleCv(context, [entry(ACME, { digest: 'f'.repeat(16) })]), [ACME], 'a digest that is not the piece\'s now');

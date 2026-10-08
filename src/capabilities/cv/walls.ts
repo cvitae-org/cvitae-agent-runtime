@@ -19,7 +19,9 @@
  * A piece an exclusion covers is gone from `shown`, not blanked. A list entry is
  * removed. An overview item (name and contact details, the role description, the
  * skills) is emptied in the document and left out of what `read_cv` returns, so
- * the model is not told the CV has no name.
+ * the model is not told the CV has no name. The contact details are part of the
+ * personal details: an exclusion of `personal` takes both, and one of `contact`
+ * empties the email, the phone and the links and leaves the name.
  */
 
 import type { DocumentRecord, PieceRef } from '../../contracts/index.js';
@@ -30,20 +32,23 @@ import {
   CV_WELL,
   LIST_SECTIONS,
   OVERVIEW,
-  OVERVIEW_ITEMS,
+  OVERVIEW_FIELDS,
   cvKeys,
-  cvOf
+  cvOf,
+  isOverviewItem,
+  overviewPiece
 } from './well.js';
-import type { ListSection } from './well.js';
-
-export type OverviewItem = (typeof OVERVIEW_ITEMS)[number];
+import type { ListSection, OverviewItem } from './well.js';
 
 /**
  * The pieces taken out, as plain data. An edit keeps this beside the document it
  * made, and `restoreCv` puts the pieces back.
  */
 export type CvWithheld = {
-  /** The overview items cut out, by name, as they were. */
+  /**
+   * The overview items cut out, by name, as they were. `personal` is the whole
+   * field, contact details and all; `contact` is there when they were cut alone.
+   */
   readonly items: Partial<Record<OverviewItem, unknown>>;
   /** The entries cut out of each list section, with the index each had. Ascending. */
   readonly entries: Readonly<Record<ListSection, readonly { readonly index: number; readonly entry: unknown }[]>>;
@@ -104,12 +109,20 @@ export const cvView = (document: CvDocument, walls: readonly PieceRef[], scope: 
   };
   let walled = false;
 
-  for (const item of OVERVIEW_ITEMS) {
-    if (isWalled(mine, at(OVERVIEW, item))) {
-      items[item] = structuredClone(document[item]);
-      shown[item] = blank[item];
+  for (const field of OVERVIEW_FIELDS) {
+    if (isWalled(mine, at(OVERVIEW, field))) {
+      items[field] = structuredClone(document[field]);
+      shown[field] = blank[field];
       walled = true;
     }
+  }
+
+  // The contact details on their own: the name and the place stay.
+  if (!('personal' in items) && isWalled(mine, at(OVERVIEW, 'contact'))) {
+    items.contact = structuredClone(overviewPiece(document, 'contact'));
+    const { email, phone, links } = blank.personal;
+    shown.personal = { ...document.personal, email, phone, links };
+    walled = true;
   }
 
   for (const section of LIST_SECTIONS) {
@@ -167,9 +180,7 @@ export const cvHolds = (document: CvDocument | undefined, path: readonly string[
   // A CV nothing has been written to has no pieces, and the whole of it is there.
   if (document === undefined) return section === undefined;
   if (section === undefined) return true;
-  if (section === OVERVIEW) {
-    return key === undefined || (OVERVIEW_ITEMS as readonly string[]).includes(key);
-  }
+  if (section === OVERVIEW) return key === undefined || isOverviewItem(key);
   if (!(LIST_SECTIONS as readonly string[]).includes(section)) return false;
   return key === undefined || cvKeys(document)[section as ListSection].includes(key);
 };
@@ -182,7 +193,7 @@ export const cvHolds = (document: CvDocument | undefined, path: readonly string[
  * edit, and a model handed a blank would write a new section over the excluded
  * one's place: the edit says so instead.
  *
- * `section` is an edit's, so it is one of the three overview items or a list
+ * `section` is an edit's, so it is one of the three overview fields or a list
  * section. A list that is empty of its own has nothing excluded in it, and an
  * edit may fill it, unless the whole section is excluded.
  */
@@ -195,7 +206,7 @@ export const cvTargetWalled = (
   const mine = cvWallsOf(walls, scope);
   if (mine.length === 0) return false;
 
-  if ((OVERVIEW_ITEMS as readonly string[]).includes(section)) {
+  if ((OVERVIEW_FIELDS as readonly string[]).includes(section)) {
     return isWalled(mine, { well: CV_WELL, scope, path: [OVERVIEW, section] });
   }
   if (!(LIST_SECTIONS as readonly string[]).includes(section)) return false;
@@ -206,18 +217,30 @@ export const cvTargetWalled = (
 };
 
 /**
+ * Whether an overview item was cut. The contact details go with the personal
+ * details they are part of.
+ */
+export const withheldItem = (withheld: CvWithheld, item: OverviewItem): boolean =>
+  item in withheld.items || (item === 'contact' && 'personal' in withheld.items);
+
+/**
  * Puts what was cut back into a document that was made from `shown`.
  *
  * Overview items come back as they were, whatever the document now says: the
- * model was never shown them and has no say in them. List entries come back at
- * the index each had, in ascending order, so two cut entries keep their order
- * and an entry whose index is now past the end goes last.
+ * model was never shown them and has no say in them. Contact details cut alone
+ * come back into the personal details the edit left, over whatever it wrote
+ * there. List entries come back at the index each had, in ascending order, so
+ * two cut entries keep their order and an entry whose index is now past the end
+ * goes last.
  */
 export const restoreCv = (edited: CvDocument, withheld: CvWithheld): CvDocument => {
   const out: Record<string, unknown> = { ...edited };
 
-  for (const item of OVERVIEW_ITEMS) {
-    if (item in withheld.items) out[item] = structuredClone(withheld.items[item]);
+  for (const field of OVERVIEW_FIELDS) {
+    if (field in withheld.items) out[field] = structuredClone(withheld.items[field]);
+  }
+  if ('contact' in withheld.items && !('personal' in withheld.items)) {
+    out.personal = { ...edited.personal, ...(structuredClone(withheld.items.contact) as object) };
   }
 
   for (const section of LIST_SECTIONS) {

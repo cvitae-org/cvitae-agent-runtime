@@ -41,9 +41,13 @@ export const render = (section: string, item: unknown): string => {
 
   switch (section) {
     case OVERVIEW + '/personal': {
-      const links = Object.entries((row.links ?? {}) as Record<string, string>).map(([name, url]) => `${name}: ${url}`);
-      const body = lines(text(row.name), text(row.email), text(row.phone), text(row.location), ...links);
+      const body = lines(text(row.name), text(row.location));
       return body === '' ? '' : `Personal details:\n${body}`;
+    }
+    case OVERVIEW + '/contact': {
+      const links = Object.entries((row.links ?? {}) as Record<string, string>).map(([name, url]) => `${name}: ${url}`);
+      const body = lines(text(row.email), text(row.phone), ...links);
+      return body === '' ? '' : `Contact details:\n${body}`;
     }
     case OVERVIEW + '/role_description': {
       const body = typeof item === 'string' ? item.trim() : '';

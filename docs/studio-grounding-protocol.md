@@ -90,6 +90,13 @@ The feature `masking-counts` says the record of a run says what masking did in i
 (see "What masking did, in numbers"): `masking` in the record, once a call of the run
 has been counted. Without it, a record never has the field, and show no counts.
 
+The feature `cv-contact` says a CV's email, phone and links are a piece of their own,
+`cv:<context id>/overview/contact` (see "The contact details"). `read_cv`'s overview no
+longer carries them, and a model reads them only when a question needs them. A record
+may name the piece, and a conversation may exclude, pin and attach it. Without the
+feature, name no such piece: it is `invalid_selection`, and the personal details are
+the name and the contact details as one piece.
+
 ## runs.grounding
 
 `runs.grounding {runId}` returns `{record}` for one run.
@@ -201,7 +208,9 @@ Only `ask_profile` is recorded in this step, live and on an offer snapshot.
   `conversation:<id>/attached`, origin `client`. In an offer snapshot run the
   posting is the saved one, `offers:<offerId>/posting`, origin `server`.
 - `read_cv`: the sections and items it returned, as `cv` entries with
-  `via: tool:read_cv`.
+  `via: tool:read_cv`. With `cv-contact`, the overview's `personal` is the name and
+  the location, and the contact details are `overview/contact`, recorded only when
+  the model read them.
 - `search_profile`: one entry per passage it handed over, with
   `via: tool:search_profile`.
 - Reads through the document and retrieval ports: `status: read`.
@@ -312,8 +321,9 @@ was allowed once can always be removed.
 - A conversation about a CV (`cv:<context id>/...`), the pieces of its own CV
   only: the whole CV (`cv:<id>`), a section (`experience`, `education`,
   `certificates`, `languages`, `overview`), an overview item
-  (`overview/personal`, `overview/role_description`, `overview/skills`) or one
-  entry of a list section (`experience/acme~senior-engineer`).
+  (`overview/personal`, `overview/role_description`, `overview/skills`, and with
+  `cv-contact` `overview/contact`) or one entry of a list section
+  (`experience/acme~senior-engineer`).
 - A discovery conversation, whole saved offers: `offers:<offer id>`.
 - A conversation about a CV, whole saved offers too, as `offers:<offer id>`: an
   offer it leaves out is not compared (see "Comparing saved offers with the CV").
@@ -333,6 +343,11 @@ For a conversation about a CV, every run of it reads the CV through walls:
   removed from its section. An excluded overview item (name and contact details,
   the role description, the skills) is left out of the answer, and not blanked,
   so the model is not told the CV has no name.
+- The contact details are part of the personal details. Excluding
+  `overview/personal` leaves out the contact details too, whichever way they are
+  asked for. Excluding `overview/contact` alone leaves out the email, the phone and
+  the links and keeps the name and the location; `read_cv`'s `contact` section then
+  returns nothing.
 - `search_profile` returns no passage from an excluded piece. A passage that
   cannot be placed in the stored CV (its entry was edited since it was indexed,
   or it belongs to no piece) is dropped as well while anything of the CV is
@@ -575,8 +590,12 @@ Skills:
 Languages: TypeScript, Go
 ```
 
-A section is each of its entries, and the overview is its three items, name and
-contact details first. A part with nothing in it sends nothing.
+A section is each of its entries, and the overview is its items, name and contact
+details first. With `cv-contact` they are two blocks, "Personal details" with the name
+and the location and "Contact details" with the email, the phone and the links, and a
+pin or attachment of `overview/personal` sends both, as it did when they were one; one
+of `overview/contact` sends the contact details alone. A part with nothing in it sends
+nothing.
 
 - All the pieces of one message together come to at most 12,000 characters, the
   blocks and the two-character separator between them counted. More is refused
@@ -1109,7 +1128,7 @@ record entry call it by:
 
 | Section | `target` |
 | --- | --- |
-| personal details | `cv:<context id>/overview/personal` |
+| personal details, contact details included | `cv:<context id>/overview/personal` |
 | summary | `cv:<context id>/overview/role_description` |
 | skills | `cv:<context id>/overview/skills` |
 | jobs | `cv:<context id>/experience` |
@@ -1127,7 +1146,8 @@ The `<context id>` is the one of the run (`cv` for a run in no context). A versi
   That is one more model call; a `target` or a `section` skips it.
 - A ref that does not parse is `invalid_ref`. A ref that parses and is not a section
   of this CV is `invalid_selection`: another well (`offers:...`), another CV, the
-  whole CV, the whole overview, one entry of a list (`cv:<id>/experience/acme~dev`),
+  whole CV, the whole overview, the contact details alone (`cv:<id>/overview/contact`;
+  aim at the personal details, which hold them), one entry of a list (`cv:<id>/experience/acme~dev`),
   or a name that is not a section. The message gives examples of a ref that would
   do. Entry-level edits are not offered: an edit returns a whole section.
 - All of these are refused before any model is asked.
@@ -1147,6 +1167,9 @@ conversation ..."). Show it as the reason, with a way to include the section aga
   checked when the CV is read.
 - An exclusion elsewhere does not stop the edit. What is excluded is not sent to the
   model, and the proposal keeps it as it was stored. It is in none of the changes.
+  An edit of the personal details with `overview/contact` excluded is shown the name
+  and the location, and the proposal keeps the email, the phone and the links as
+  stored, whatever the model wrote there.
 
 ### What an edit returns
 
@@ -1734,6 +1757,29 @@ call of the run has been counted:
   same counts for each call, whatever made it, and its line on stderr says
   `masked=<total>`.
 
+## The contact details
+
+With `cv-contact`, a model that looks at a CV's overview is given the name and the
+location, and not the email, the phone or the links. They are `read_cv`'s `contact`
+section, which the model is told to read only when a question needs them ("what is my
+email?", a cover letter's header), so they are not in every call that read the
+overview, masked or not.
+
+```json
+{ "present": true, "revision": 7, "section": "contact",
+  "data": { "email": "anna@example.com", "phone": "+48 600 100 200", "links": { "github": "https://github.com/anna" } } }
+```
+
+- The piece is `cv:<context id>/overview/contact`, and its record entry says so,
+  `via: tool:read_cv`, when the model read it, and only then.
+- It is part of the personal details: excluding `overview/personal` excludes it, and
+  then `contact` returns `data: {}` with no entry, as when `overview/contact` itself
+  is excluded. Pinning or attaching `overview/personal` sends it with the name.
+- It is not a section an edit is aimed at (see "Aiming an edit"); the personal
+  details are.
+- What is masked is unchanged: the email, the phone and the links are still values
+  to keep from a hosted model wherever they turn up.
+
 ## What a person's own machine keeps
 
 - The CV, the record of a message (`runs.grounding`), a preview (`run.preview`) and
@@ -1789,6 +1835,9 @@ call of the run has been counted:
 5. With `masking-counts`, the record view of a message can say what was kept: "3
    details masked in 2 calls", or "Sent as it was" when no call was masked. Use the
    counts, never guess the values, and show nothing when the record has no `masking`.
-6. Do not offer a way to turn masking off. There is none.
-7. Send the settings with the others, and when the person has not touched one, send
+6. With `cv-contact`, the contact details are a piece a person can leave out of a
+   conversation, pin and attach, named "Contact details", beside "Personal details".
+   Say that leaving out the personal details leaves them out too.
+7. Do not offer a way to turn masking off. There is none.
+8. Send the settings with the others, and when the person has not touched one, send
    nothing, so as not to overwrite what another window saved.
