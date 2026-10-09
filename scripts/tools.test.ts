@@ -279,8 +279,13 @@ test('an empty index is distinguished from an unhelpful query', async () => {
   };
 
   assert.deepEqual(result.results, []);
-  // A model told only "no results" rephrases the query forever.
-  assert.match(result.note ?? '', /imported/);
+  // A model told only "no results" rephrases the query forever, and one told
+  // the documents may not be imported says there is nothing without reading
+  // the CV. Word for word, because it was measured (`tools/index.ts`).
+  assert.equal(
+    result.note,
+    'Nothing matched. The search index can be empty or out of date, so read the CV with read_cv before saying it does not say.'
+  );
 });
 
 test('the run\'s signal reaches the search, so a cancelled run stops asking', async () => {

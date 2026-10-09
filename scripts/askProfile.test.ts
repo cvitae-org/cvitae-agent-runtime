@@ -63,12 +63,32 @@
  * from its own schema *can* see. The other seven it cannot: each of them
  * returns a well-formed plan and a plausible result, and each is a loop that
  * ran too long, answered from nothing, or reported the wrong number of turns.
+ *
+ * And what the loop is told when a search finds nothing, and how it is asked
+ * to answer (2026-10-09). Each was applied alone, with this file,
+ * `tools.test.ts`, `grounding-assembly.test.ts` and `grounding-offers.test.ts`
+ * run:
+ *
+ *   the old note on an empty search       2  an empty search sends the model … /
+ *                                            an empty index is distinguished …
+ *   the note names a reader not given     2  the same two
+ *   the note names no reader              2  the same two
+ *   read_cv given only when picked        2  the loop is granted the planner … /
+ *                                            an empty search sends the model …
+ *   no "language of the question"         4  the answer is asked for in the … /
+ *                                            three in grounding-assembly
+ *   every claim asked for its source      4  the same four
+ *   "never a tool or a section" instead   4  the same four
+ *   the old last line                     5  the answer is asked for in the … /
+ *                                            what a conversation came to is … /
+ *                                            three in grounding-assembly
+ *   "If a search finds nothing"           5  the same five
  */
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { capabilities } from '../src/capabilities/index.js';
-import { CV_ID, CV_KIND } from '../src/capabilities/cv/document.js';
+import { CV_ID, CV_KIND, cvDocumentSchema } from '../src/capabilities/cv/document.js';
 import { createRetriever } from '../src/retrieval/search.js';
 import { startRun } from '../src/runtime/run.js';
 import { defaultTools } from '../src/tools/index.js';
@@ -315,26 +335,63 @@ test('a granted tool reads the run\'s own index', async () => {
   );
 });
 
-test('an empty profile is reported as empty, not as no match', async () => {
-  // Nothing is indexed. The tool has to say which of the two it is, because a
-  // model told only "no results" rephrases the query until it runs out of turns.
+test('an empty search sends the model to the CV, which the loop always has', async () => {
+  // Nothing is indexed, as before the index is built and after an edit clears
+  // it. The tool has to say so, because a model told only "no results"
+  // rephrases the query until it runs out of turns; and it has to name the
+  // reader the loop is given, because a model told nothing more says the CV
+  // holds nothing without reading it (`tools/index.ts`).
+  const read: unknown[] = [];
+
   await harness(
     {
       picks: ['search_profile'],
       loop: async (request) => {
-        const answer = (await request.tools[0]?.invoke({ query: 'billing', limit: 5 })) as {
+        const search = request.tools.find((tool) => tool.name === 'search_profile');
+        const answer = (await search?.invoke({ query: 'billing', limit: 5 })) as {
           results: unknown[];
           note?: string;
         };
         assert.deepEqual(answer.results, []);
-        assert.match(answer.note ?? '', /may not have been imported/);
-        return { text: 'Nothing has been imported yet.', steps: 1, finishReason: 'stop' as const };
+
+        // The tool the note names, from the tools this loop was given.
+        const named = request.tools.find(
+          (tool) => tool.name !== 'search_profile' && (answer.note ?? '').includes(tool.name)
+        );
+        assert.ok(named, `the note names no tool the loop has: ${answer.note}`);
+        read.push(await named.invoke({ section: 'experience' }));
+        return { text: 'You rewrote the billing pipeline at Acme.', steps: 3, finishReason: 'stop' as const };
       }
     },
     async (s) => {
-      assert.equal((await ask(s)).data.answer, 'Nothing has been imported yet.');
+      s.deps.documents.update(CV_ID, CV_KIND, () => cvDocumentSchema.parse({
+        experience: [{ company: 'Acme', title: 'Senior Engineer', highlights: ['Rewrote the billing pipeline.'] }]
+      }));
+
+      assert.equal((await ask(s)).data.answer, 'You rewrote the billing pipeline at Acme.');
+      assert.match(JSON.stringify(read[0]), /Rewrote the billing pipeline/);
     }
   );
+});
+
+test('the answer is asked for in the question\'s language, with a source only for work', async () => {
+  await harness({ picks: ['read_cv'] }, async (s, loop) => {
+    await ask(s, { question: 'Jaki jest mój adres e-mail?' });
+    const system = loop.requests[0]?.system ?? '';
+
+    // An email has no employer or role to name. Pinned as measured, and not as a
+    // cure: Polish answers still call the section "contact" as often as before.
+    // And nothing in the rules says "never" near "tool": a model that read that
+    // as "never use a tool" answered from nothing (`askProfile.ts`).
+    assert.match(system, /in the language of the question/);
+    assert.match(system, /Name the employer or role that each claim about work came from\./);
+    assert.doesNotMatch(system, /never/i);
+
+    // What may end an answer is the CV not saying. An empty search is a tool
+    // returning nothing, and a model allowed to stop there does.
+    assert.match(system, /If the CV does not say, say so plainly and stop/);
+    assert.doesNotMatch(system, /If the tools return nothing/);
+  });
 });
 
 /* ------------------------------------------------------- the conversation */
@@ -438,7 +495,7 @@ test('what a conversation came to is context, not a turn in it', async () => {
 
     // The rules survive it. Appending to the wrong side of a compose is how the
     // instruction that requires every claim to come from a tool goes missing.
-    assert.match(request?.system ?? '', /If the tools return nothing, say so plainly/);
+    assert.match(request?.system ?? '', /If the CV does not say, say so plainly/);
   });
 });
 

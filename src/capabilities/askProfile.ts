@@ -80,13 +80,34 @@ export type AskProfileInput = z.infer<typeof inputSchema>;
  * that would search it needs a port that does not exist yet. Promising it in
  * the prompt and having no tool behind it produces exactly the invented answer
  * the last line exists to prevent.
+ *
+ * Two lines were reworded on 2026-10-09, each for what `gemma4:12b` did with it.
+ * The last one said "If the tools return nothing": an empty search is a tool
+ * returning nothing, and with no search index 5 of 8 chats asking about an
+ * employer the CV names stopped there without reading the CV. What may end an
+ * answer is now the CV not saying, and an empty search names `read_cv`
+ * (`tools/index.ts`). Measured together, 14 of 16 such chats answered. The two
+ * that did not were Polish: they searched, were told to read the CV, and did not.
+ *
+ * The one before it asked every claim for its employer or role, and 7 of 12
+ * Polish answers about the email, phone or GitHub link named the section they
+ * were read from, in English: "z sekcji contact". It now asks that only of
+ * claims about work, and asks for the language of the question. Neither changed
+ * it, 7 of 12 again, so the habit is the model's and not this line's. The line
+ * stays as measured, and because an email has no employer to name.
+ *
+ * Not "never a tool or a section", which was tried first. It did stop the
+ * section names, none in 12, but it is worse than either quirk: with it, 3 of 16
+ * Polish chats with a search index called no tool at all, and one of them gave a
+ * phone number that is not in the CV. Every English chat still read something,
+ * so the likely reading is "never use a tool".
  */
 const SYSTEM = [
   "You answer questions about the user's own CV and work history.",
   'You cannot see any of it directly. Use the tools to read it.',
   'Use read_cv for current canonical facts. Use search_profile to locate relevant indexed passages when useful.',
-  'Answer in plain prose. Name the employer or role that each claim came from.',
-  'Base every statement on what a tool returned. If the tools return nothing, say so plainly and stop.'
+  'Answer in plain prose, in the language of the question. Name the employer or role that each claim about work came from.',
+  'Base every statement on what a tool returned. If the CV does not say, say so plainly and stop.'
 ].join('\n');
 
 /**
@@ -120,9 +141,11 @@ const systemFor = (summary: string, rules: string = SYSTEM): string =>
  * What the model is told when it has no tools: the pieces are all there is.
  *
  * The same last line as `SYSTEM`, for the same reason, with the pieces in place of
- * the tools. Nothing here says the pieces are incomplete or that more exist: the
+ * the CV. Nothing here says the pieces are incomplete or that more exist: the
  * model has no way to look, and a line telling it so invites an answer about what
- * it imagines the rest says.
+ * it imagines the rest says. The line before it is the one `SYSTEM` had before
+ * 2026-10-09: the change there was measured on a model reading with tools, and
+ * this one has none.
  */
 const SELECTED_SYSTEM = [
   "You answer questions about the user's own CV and work history.",

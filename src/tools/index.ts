@@ -83,9 +83,18 @@ export const searchProfileTool = defineTool({
       // Distinguished from "no match" on purpose: an empty index and an
       // unhelpful query call for completely different next moves, and a model
       // told only "no results" will rephrase the query forever.
+      //
+      // And the next move is reading the CV, which `ask_profile` always offers.
+      // The index is a derived view, empty until it is built and cleared after
+      // an edit, so finding nothing in it says nothing about the CV. Told only
+      // that the documents might not be imported, `gemma4:12b` took that for
+      // the answer: asked what the person did at an employer the CV names, 5 of
+      // 8 chats with no index said there was nothing, without reading the CV
+      // (2026-10-08). With this note, 14 of 16 read it and answered
+      // (2026-10-09, with `ask_profile`'s last line reworded as well).
       return {
         results: [],
-        note: 'Nothing matched. The documents may not have been imported yet.'
+        note: `Nothing matched. The search index can be empty or out of date, so read the CV with ${readCvTool.name} before saying it does not say.`
       };
     }
 

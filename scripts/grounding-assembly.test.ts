@@ -360,13 +360,13 @@ const LABEL = 'SELECTED CV PARTS — SOURCE DATA';
 const prompted = (question: string, ...refs: (keyof typeof TEXT)[]): string =>
   `${question}\n\n${LABEL}:\n${refs.map((each) => TEXT[each]).join('\n\n')}`;
 
-/** What `ask_profile` told the model before there were pieces, word for word. */
+/** What `ask_profile` tells the model with its tools, pieces or none, word for word. */
 const SYSTEM = [
   "You answer questions about the user's own CV and work history.",
   'You cannot see any of it directly. Use the tools to read it.',
   'Use read_cv for current canonical facts. Use search_profile to locate relevant indexed passages when useful.',
-  'Answer in plain prose. Name the employer or role that each claim came from.',
-  'Base every statement on what a tool returned. If the tools return nothing, say so plainly and stop.'
+  'Answer in plain prose, in the language of the question. Name the employer or role that each claim about work came from.',
+  'Base every statement on what a tool returned. If the CV does not say, say so plainly and stop.'
 ].join('\n');
 
 const QUESTION = 'What did I do with billing?';
