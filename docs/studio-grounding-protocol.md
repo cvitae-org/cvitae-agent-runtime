@@ -1009,7 +1009,7 @@ characters, and never half a skill or half a word:
 ```
 Offer: Backend Engineer at Initech Labs
 Where: Krakow, hybrid
-Level: senior, B2B
+Level: senior, contract: B2B
 Salary: 20000 PLN
 Skills: Python, Postgres
 Posting: We build billing in Python for banks across Poland and need someone ...
