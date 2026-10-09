@@ -30,6 +30,9 @@
  *                stand for nothing
  *   a preview    says what a run would send, and its digest is the run's
  *   a wait       a run that waited is not given an offer that changed or was left out
+ *   a real one   the offers, the Board and the selection as a runtime over a file keeps
+ *                them, and ten offers compared through the channels Studio uses, to a
+ *                network that keeps what it was sent
  *   selection    a profile conversation may leave out a whole saved offer, and nothing finer
  *   the wire     the flag that announces it
  *
@@ -37,7 +40,9 @@
  * tests counted, and the mutation reverted. 148 were applied. The number is how many
  * tests failed. The counts are of the file as it stood before seven tests were added
  * for the ten mutations that first survived; those ten were run again with them, and
- * the two that are not killed by this file are named below.
+ * the two that are not killed by this file are named below. Seven more came with the
+ * test that compares ten offers, which was added last: they are the last section,
+ * counted with it in the file, and one of them repeats a row above.
  *
  * shortlist:
  *   an excluded offer is read from the shelf                   8
@@ -212,6 +217,15 @@
  *   the runtime says no offer is on the Board                  1
  *   the runtime says every offer is on the Board               2
  *   the runtime does not announce that it compares offers      1
+ *
+ * ten offers in a real runtime:
+ *   a number of two digits is not read                         1
+ *   the runtime says no offer is on the Board                  2
+ *   the runtime reads only the first four offers named         1
+ *   the model is not sent its rules                            1
+ *   the record is said without its last entry                  1
+ *   a plan that was approved is refused                        1
+ *   a run Studio starts is given no conversation               1
  */
 
 import assert from 'node:assert/strict';
@@ -1847,6 +1861,155 @@ test('in a real runtime an offer the conversation left out is left out, by the s
     assert.equal(only.refusal?.code, 'needs_unmet');
     assert.match(only.refusal?.message ?? '', /1 is left out of this conversation/);
   } finally {
+    w.dispose();
+  }
+});
+
+/** A request the runtime made of the model, as it left. */
+type Sent = { readonly stream?: boolean; readonly tools?: unknown[]; readonly messages: { role: string; content: unknown }[] };
+
+/** A reply, whole or streamed as it was asked for. */
+const completion = (content: string, stream: boolean) => {
+  if (!stream) {
+    return new globalThis.Response(
+      JSON.stringify({
+        id: 'cmpl',
+        object: 'chat.completion',
+        created: 1,
+        model: 'm',
+        choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 }
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  }
+
+  const chunk = (delta: Record<string, unknown>, finish: string | null = null): string =>
+    `data: ${JSON.stringify({ id: 'cmpl', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+  const body = chunk({ role: 'assistant', content }) + chunk({}, 'stop') + 'data: [DONE]\n\n';
+  return new globalThis.Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+};
+
+/** The offers a person compares in one message, newest first: PY, GO and RS, and seven more. */
+const TEN = [
+  PY,
+  GO,
+  RS,
+  offer('pg', { position: 'Database Engineer', company: 'Massive Dynamic', skills: ['Postgres', 'Python'], text: 'Tune our queries.', lastSeenAt: 65 }),
+  offer('k8s', { position: 'Site Reliability Engineer', company: 'Soylent', skills: ['Kubernetes'], text: 'Keep it up.', lastSeenAt: 60 }),
+  offer('java', { position: 'Java Developer', company: 'Initrode', skills: ['Java'], text: 'Enterprise things.', lastSeenAt: 55 }),
+  offer('scala', { position: 'Data Engineer', company: 'Vandelay', skills: ['Scala', 'Spark'], text: 'Pipelines.', lastSeenAt: 50 }),
+  offer('ts', { position: 'Frontend Developer', company: 'Wonka', skills: ['TypeScript'], text: 'Screens.', lastSeenAt: 45 }),
+  offer('ml', { position: 'ML Engineer', company: 'Cyberdyne', skills: ['Python', 'PyTorch'], text: 'Models.', lastSeenAt: 40 }),
+  offer('svc', { position: 'Backend Developer', company: 'Tyrell', skills: ['Go'], text: 'Services.', lastSeenAt: 35 })
+];
+
+/** An offer the conversation leaves out. Seen last of all, it would be compared first. */
+const KEPT = offer('kept', {
+  position: 'Data Analyst',
+  company: 'Left Out Ltd',
+  skills: ['Excel'],
+  text: 'CANARY-KEPT-5120 is a posting the conversation left out.',
+  lastSeenAt: 200
+});
+
+test('in a real runtime ten offers are compared in one message, as Studio sends it, and each number in the answer is the block it stands for', async () => {
+  const w = runtime();
+  const sent: Sent[] = [];
+  const real = globalThis.fetch;
+  // The numbers are the preferences, the first two cards, the evidence about Acme and the last block; 15 stands for nothing.
+  const answer = 'Backend Engineer fits best [2], as you asked [1], and you wrote Python at Acme [13]. Platform Engineer next [3], from Globex [14]. Not [15].';
+
+  globalThis.fetch = (async (_: unknown, init?: { body?: unknown }) => {
+    const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Sent;
+    sent.push(body);
+    return completion(answer, body.stream === true);
+  }) as typeof globalThis.fetch;
+
+  try {
+    for (const each of [...TEN.slice(3), KEPT]) w.harness.offers.save(each);
+    // XL, saved by `runtime`, goes onto the Board. It and KEPT are the only offers that list Excel.
+    w.board.add({ offerId: 'xl', operationId: randomUUID() });
+    data(await w.dispatch('selection.update', { conversationId: w.profile.id, expectedRevision: 0, exclude: ['offers:kept'] }));
+
+    // Twelve named, in the order a person picked them.
+    const named = ['ts', 'kept', 'go', 'ml', 'xl', 'py', 'java', 'svc', 'rs', 'scala', 'k8s', 'pg'];
+    const preferences = 'Remote, and Python if I can.';
+    const asked = w.ask({ offerIds: named, preferences, cite: true });
+
+    // Studio's order: a full preview, the run started with the plan it showed, the answer, the record.
+    const made = data<Preview>(await w.dispatch('run.preview', { ...asked, mode: 'full' }));
+    const started = data<{ runId: string }>(await w.dispatch('run.context.start', { ...asked, approved: { planDigest: made.planDigest } }));
+    const result = data<{ data: Record<string, unknown>; degraded: string[] }>(await w.dispatch('run.await', { runId: started.runId }));
+    const { record, planDigest } = data<{ record: { entries: RecordEntry[] }; planDigest: string }>(
+      await w.dispatch('runs.grounding', { runId: started.runId })
+    );
+
+    const offers = { compared: TEN.map((each) => each.id), left: { ...NONE_LEFT, excluded: ['kept'], board: ['xl'] }, preferences: 'supplied' };
+    assert.deepEqual(made.offers, offers);
+    assert.deepEqual(result.data.offers, offers);
+    assert.deepEqual(result.degraded, ['offers']);
+    assert.equal(planDigest, made.planDigest, 'the run was made of what was approved');
+
+    // One request: no tools to choose among, and none offered.
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0]?.tools, undefined);
+    const stored = createOfferStore(w.s.db);
+    const cards = TEN.map((each, at) => `[${at + 2}] ${cardText(stored.get(each.id) as OfferRecord)}`);
+    const evidence = [`[12] ${SKILLS_TEXT}`, `[13] ${ACME_TEXT}`, `[14] ${GLOBEX_TEXT}`];
+    const prompt = prompted(under(SECTION.preferences, `[1] ${preferences}`), under(SECTION.cards, ...cards), under(SECTION.evidence, ...evidence));
+    assert.deepEqual(sent[0]?.messages, [
+      { role: 'system', content: `${FIT_SYSTEM}\n${CITE_RULE}` },
+      { role: 'user', content: prompt }
+    ]);
+
+    // Nothing of the offer left out, of the offer on the Board, or of the part of the CV only they would have found.
+    const wire = JSON.stringify(sent);
+    for (const canary of ['CANARY-KEPT-5120', 'Left Out Ltd', 'Hooli', 'Spreadsheets all day.', 'Reported on sales with Excel.']) {
+      assert.equal(wire.includes(canary), false, canary);
+    }
+
+    // What they come to is measured without the numbers, as every size is, and is inside the budget for offers.
+    const blocks = [preferences, ...TEN.map((each) => cardText(stored.get(each.id) as OfferRecord)), SKILLS_TEXT, ACME_TEXT, GLOBEX_TEXT];
+    const size = blocks.reduce((total, block) => total + block.length, 0) + 2 * (blocks.length - 1);
+    assert.equal(made.size.parts.offers, size);
+    assert.ok(size <= OFFERS_BUDGET);
+
+    // The numbers, read back: each is the entry recorded at its place, and the one past the last is said.
+    const cv = (path: string) => `cv:${w.context.id}/${path}`;
+    assert.deepEqual(result.data.cited, ['offers:py/card', PREFERENCES_REF, cv('experience/acme~senior-engineer'), 'offers:go/card', cv('experience/globex~engineer')]);
+    assert.deepEqual(result.data.unresolved, [15]);
+    assert.equal(result.data.answer, answer);
+
+    // The record is what was sent, block for block, and holds the offer left out as held back.
+    const document = storedCv(w.harness.documents.read(w.context.id) as never) as NonNullable<ReturnType<typeof storedCv>>;
+    assert.deepEqual(
+      included(record.entries),
+      [
+        { ref: PREFERENCES_REF, digest: digest(preferences), status: 'included', origin: 'client', via: 'input' },
+        ...TEN.map((each) => ({
+          ref: `offers:${each.id}/card`,
+          ...cardDigests(stored.get(each.id) as OfferRecord),
+          status: 'included',
+          origin: 'server',
+          via: 'ground:offer'
+        })),
+        { ref: cv('overview/skills'), version: '1', digest: digest(document.skills), status: 'included', origin: 'server', via: 'ground:evidence' },
+        { ref: cv('experience/acme~senior-engineer'), version: '1', digest: digest(document.experience[0]), status: 'included', origin: 'server', via: 'ground:evidence' },
+        { ref: cv('experience/globex~engineer'), version: '1', digest: digest(document.experience[1]), status: 'included', origin: 'server', via: 'ground:evidence' }
+      ].map((entry) => JSON.parse(JSON.stringify(entry)) as RecordEntry)
+    );
+    assert.deepEqual(
+      record.entries.filter((entry) => entry.status === 'blocked').map((entry) => [entry.ref, entry.via]),
+      [['offers:kept', 'ground:offer']]
+    );
+    // Beside them, only the CV read for evidence; the offer on the Board is not recorded at all.
+    assert.deepEqual(
+      record.entries.filter((entry) => entry.status !== 'included' && entry.status !== 'blocked').map((entry) => [entry.ref, entry.status, entry.via]),
+      [[`cv:${w.context.id}`, 'read', 'port:documents']]
+    );
+  } finally {
+    globalThis.fetch = real;
     w.dispose();
   }
 });
