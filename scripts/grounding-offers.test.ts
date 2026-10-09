@@ -315,7 +315,7 @@ const RS = offer('rs', { position: 'Rust Developer', company: 'Pied Piper', skil
 const PY_CARD = [
   'Offer: Backend Engineer at Initech Labs',
   'Where: Krakow, hybrid',
-  'Level: senior, B2B',
+  'Level: senior, contract: B2B',
   'Salary: 20000 PLN',
   'Skills: Python, Postgres',
   'Posting: We build billing in Python for banks across Poland and need someone who owns it end to end.'
@@ -560,6 +560,18 @@ test('a card says what an offer says, one line to a field, with the skills and t
   );
 });
 
+test('a contract is said as a contract and never as a level, with a level or alone', () => {
+  const line = (over: Partial<OfferRecord>): string | undefined =>
+    cardText(offer('terms', { position: 'Engineer', text: 'Build things.', ...over }))
+      .split('\n')
+      .find((each) => each.startsWith('Level: ') || each.startsWith('Contract: '));
+
+  assert.equal(line({ seniority: 'senior', contractType: 'B2B' }), 'Level: senior, contract: B2B');
+  assert.equal(line({ contractType: 'B2B' }), 'Contract: B2B');
+  assert.equal(line({ seniority: 'senior' }), 'Level: senior');
+  assert.equal(line({}), undefined);
+});
+
 test('a card is never more than CARD_LIMIT characters and never ends a skill or a word half way', () => {
   const prose = 'Our team builds and runs the billing platform used by banks across the country and expects every engineer to own what they ship. '.repeat(40);
   const skills = Array.from({ length: 120 }, (_, at) => `Technology${at}`);
@@ -567,7 +579,7 @@ test('a card is never more than CARD_LIMIT characters and never ends a skill or 
 
   for (const size of [0, 10, 79, 80, 81, 200, 1_000]) {
     for (const each of [
-      offer('long', { position: long(size), company: long(size), location: long(size), seniority: long(size), salary: long(size), skills, text: prose }),
+      offer('long', { position: long(size), company: long(size), location: long(size), seniority: long(size), contractType: long(size), salary: long(size), skills, text: prose }),
       offer('few', { position: long(size), skills: ['Python'], text: prose }),
       offer('prose', { position: 'Engineer', text: prose })
     ]) {
