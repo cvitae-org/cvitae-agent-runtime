@@ -126,6 +126,16 @@ export interface ChunkReader {
 
   /** What a document's chunks were embedded with, so a caller can detect drift. */
   fingerprintOf(documentId: string): EmbeddingFingerprint | undefined;
+
+  /**
+   * How many of a document's chunks a search can find now: those indexed from
+   * the revision it is at, with vectors or with text alone.
+   *
+   * Zero until the document is first indexed and again after every edit, until
+   * the rebuild catches up. Not narrowed by what a person excluded: a walled
+   * reader passes on the count beneath it, and its searches find less.
+   */
+  countOf(documentId: string): number;
 }
 
 export interface ChunkIndex extends ChunkReader {
@@ -194,4 +204,16 @@ export interface ChunkIndex extends ChunkReader {
  */
 export interface Retriever {
   search(query: ChunkQuery, signal: AbortSignal): Promise<ChunkHit[]>;
+
+  /**
+   * How many of a document's chunks `search` looks in, as `ChunkReader.countOf`.
+   *
+   * So that a caller about to offer a search of a document with nothing indexed
+   * can offer something else, rather than have nothing found read as the document
+   * holding nothing (`capabilities/askProfile.ts`). Optional, and `undefined` when
+   * the retriever cannot say: a wrapper says what the retriever beneath it says,
+   * and a caller is to take a retriever that does not say as having something to
+   * search, which is what every caller did before it could ask.
+   */
+  countOf?(documentId: string): number | undefined;
 }

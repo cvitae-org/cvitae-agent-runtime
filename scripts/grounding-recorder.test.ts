@@ -728,3 +728,25 @@ test('a search that fails fails the same way, and records nothing', async () => 
 
   assert.deepEqual(store.seen.appends, []);
 });
+
+test('how much is indexed is passed on as asked, and is not recorded', () => {
+  const store = fakeStore();
+  const inner = fakeDocuments({ cv: cvRecord(3) });
+  const asked: string[] = [];
+  const counting: Retriever = {
+    ...fakeRetrieval([]).port,
+    countOf: (id) => {
+      asked.push(id);
+      return 4;
+    }
+  };
+
+  assert.equal(recordingRetrieval(counting, inner.port, live(store)).countOf?.('cv'), 4);
+  assert.deepEqual(asked, ['cv']);
+  // A number, and no text of the CV: nothing was read for it.
+  assert.deepEqual(inner.seen.reads, []);
+  assert.deepEqual(store.seen.appends, []);
+
+  // A retriever that cannot say still cannot.
+  assert.equal(recordingRetrieval(fakeRetrieval([]).port, inner.port, live(store)).countOf?.('cv'), undefined);
+});

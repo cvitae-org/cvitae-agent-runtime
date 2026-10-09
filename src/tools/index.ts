@@ -91,7 +91,11 @@ export const searchProfileTool = defineTool({
       // the answer: asked what the person did at an employer the CV names, 5 of
       // 8 chats with no index said there was nothing, without reading the CV
       // (2026-10-08). With this note, 14 of 16 read it and answered
-      // (2026-10-09, with `ask_profile`'s last line reworded as well).
+      // (2026-10-09, with `ask_profile`'s last line reworded as well). Since
+      // then `ask_profile` offers a CV with nothing indexed `read_cv` alone, so
+      // the note is for an indexed CV with nothing that matches, as one indexed
+      // by keyword alone and searched in other words, and for a retriever that
+      // cannot say how much is indexed.
       return {
         results: [],
         note: `Nothing matched. The search index can be empty or out of date, so read the CV with ${readCvTool.name} before saying it does not say.`

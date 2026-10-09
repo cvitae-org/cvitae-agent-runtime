@@ -72,6 +72,11 @@ test('snapshot ports cannot read live data or write; retrieval works after clear
     const hits = await bound.retrieval.search({ text: 'TypeScript', limit: 5 }, new AbortController().signal);
     assert.ok(hits.length > 0);
     assert.ok(hits.every((hit) => hit.documentId === snapshot.context.id && hit.sourceRevision === 1));
+    // What it searches is the snapshot's own, so the live index being cleared
+    // leaves it something to search.
+    assert.ok((bound.retrieval.countOf?.('cv') ?? 0) > 0);
+    assert.equal(bound.retrieval.countOf?.('cv'), bound.index.countOf('cv'));
+    assert.throws(() => bound.retrieval.countOf?.('other'), { code: 'context_conflict' });
     assert.equal((await bound.effects.offers.resolve(offer.url, { traceId: 't', signal: new AbortController().signal })).text, offer.text);
     await assert.rejects(bound.effects.offers.resolve('https://example.com/other', { traceId: 't', signal: new AbortController().signal }), { code: 'context_conflict' });
   } finally { h.close(); s.dispose(); }

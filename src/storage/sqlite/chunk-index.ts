@@ -104,6 +104,10 @@ export const createChunkIndex = (db: Db, now: () => number = Date.now): ChunkInd
     'SELECT fingerprint, dim FROM chunks WHERE document_id = ? AND source_revision = (SELECT revision FROM documents WHERE id = chunks.document_id) LIMIT 1'
   );
 
+  const selectCount = db.prepare<[string]>(
+    'SELECT COUNT(*) AS chunks FROM chunks WHERE document_id = ? AND source_revision = (SELECT revision FROM documents WHERE id = chunks.document_id)'
+  );
+
   const revisionOf = (documentId: string, expected?: number): number => {
     const row = db.prepare('SELECT revision FROM documents WHERE id = ?').get(documentId) as { revision: number } | undefined;
     const actual = row?.revision ?? 0;
@@ -282,6 +286,10 @@ export const createChunkIndex = (db: Db, now: () => number = Date.now): ChunkInd
         normalisation: normalisation === 'l2' ? 'l2' : 'none',
         chunkerVersion: Number(chunker.slice(1))
       };
+    },
+
+    countOf(documentId) {
+      return (selectCount.get(documentId) as { chunks: number }).chunks;
     },
 
     replace(documentId, fingerprint, chunks, options) {

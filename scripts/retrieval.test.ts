@@ -111,7 +111,8 @@ const scored = (id: string, score: number): ScoredChunk => ({
 const fakeReader = (lexical: ScoredChunk[], vector: ScoredChunk[]): ChunkReader => ({
   lexical: () => lexical,
   neighbours: () => vector,
-  fingerprintOf: () => fingerprint()
+  fingerprintOf: () => fingerprint(),
+  countOf: () => lexical.length
 });
 
 test('agreement between the two halves beats a single strong opinion', async () => {
@@ -197,7 +198,8 @@ test('the pool the halves are asked for is deeper than the limit', async () => {
       asked.push(query.limit);
       return [];
     },
-    fingerprintOf: () => fingerprint()
+    fingerprintOf: () => fingerprint(),
+    countOf: () => 0
   };
 
   const retriever = createRetriever({ reader, ai: stubEmbedder().ai, traceId: 'trace-1' });

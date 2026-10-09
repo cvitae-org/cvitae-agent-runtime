@@ -66,15 +66,19 @@
  *
  * And what the loop is told when a search finds nothing, and how it is asked
  * to answer (2026-10-09). Each was applied alone, with this file,
- * `tools.test.ts`, `grounding-assembly.test.ts` and `grounding-offers.test.ts`
- * run:
+ * `tools.test.ts`, `grounding-assembly.test.ts`, `grounding-offers.test.ts`,
+ * `indexRevision.test.ts`, `grounding-walls.test.ts`,
+ * `grounding-recorder.test.ts`, `runtimeContracts.test.ts` and
+ * `retrieval.test.ts` run:
  *
- *   the old note on an empty search       2  an empty search sends the model … /
+ *   the old note on an empty search       2  an empty search of an indexed … /
  *                                            an empty index is distinguished …
  *   the note names a reader not given     2  the same two
  *   the note names no reader              2  the same two
- *   read_cv given only when picked        2  the loop is granted the planner … /
- *                                            an empty search sends the model …
+ *   read_cv given only when picked        4  the loop is granted the planner … /
+ *                                            a retriever that cannot say … /
+ *                                            an empty search of an indexed … /
+ *                                            in a real runtime a CV with something …
  *   no "language of the question"         4  the answer is asked for in the … /
  *                                            three in grounding-assembly
  *   every claim asked for its source      4  the same four
@@ -83,16 +87,63 @@
  *                                            what a conversation came to is … /
  *                                            three in grounding-assembly
  *   "If a search finds nothing"           5  the same five
+ *
+ * And what a CV with nothing indexed is offered, and the count that says so,
+ * the same way:
+ *
+ *   an unindexed CV is searched anyway    2  a CV with nothing indexed is … /
+ *                                            in a real runtime a CV with nothing …
+ *   the rules always name the search      2  the same two
+ *   the rules never name the search       5  a retriever that cannot say … /
+ *                                            in a real runtime a CV with something … /
+ *                                            three in grounding-assembly
+ *   a count unsaid is taken as nothing   16  a retriever that cannot say … /
+ *                                            15 in other files, whose fake
+ *                                            retrievers cannot say
+ *   one chunk is not enough to search     2  an empty search of an indexed … /
+ *                                            in a real runtime a CV with something …
+ *   the count asked of another document  10  eight here / two in grounding-offers
+ *   the index counts every revision       1  what a search can find is … (in
+ *                                            indexRevision)
+ *   the index counts every document       2  that one / a bound context counts …
+ *   the index leaves out text alone       3  an empty search of an indexed … /
+ *                                            in a real runtime a CV with something … /
+ *                                            what a search can find is …
+ *   the retriever cannot say              4  a CV with nothing indexed is … /
+ *                                            in a real runtime a CV with nothing … /
+ *                                            two in indexRevision
+ *   the CV scope does not pass it on      2  in a real runtime a CV with nothing … /
+ *                                            a bound context counts …
+ *   the CV scope counts the alias         2  in a real runtime a CV with something … /
+ *                                            a bound context counts …
+ *   its index counts the alias            1  a bound context counts …
+ *   the walls do not pass it on           2  in a real runtime a CV with nothing … /
+ *                                            what only changes the index … (in
+ *                                            grounding-walls)
+ *   the walls give the index's count     16  what only changes the index … /
+ *                                            15 in other files, over an index
+ *                                            that is empty
+ *   the record does not pass it on        2  in a real runtime a CV with nothing … /
+ *                                            how much is indexed is passed on … (in
+ *                                            grounding-recorder)
+ *   a snapshot says it has nothing        1  snapshot ports cannot read … (in
+ *                                            runtimeContracts)
+ *   a snapshot's search cannot say        1  the same one
+ *   a snapshot counts for any document    1  the same one
  */
 
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { capabilities } from '../src/capabilities/index.js';
 import { CV_ID, CV_KIND, cvDocumentSchema } from '../src/capabilities/cv/document.js';
 import { createRetriever } from '../src/retrieval/search.js';
+import { createHarness, silentLogger } from '../src/runtime/create.js';
 import { startRun } from '../src/runtime/run.js';
+import { createCvContextStore } from '../src/storage/sqlite/cv-contexts.js';
 import { defaultTools } from '../src/tools/index.js';
 import { createToolRegistry } from '../src/tools/registry.js';
+import { scratch } from './support/db.js';
 import { spine, type Spine } from './support/spine.js';
 import type {
   AiGateway,
@@ -229,6 +280,8 @@ const ask = (s: Spine, input: Record<string, unknown> = {}) =>
 
 test('the loop is granted the planner choice plus the canonical CV reader', async () => {
   await harness({ picks: ['search_profile'] }, async (s, loop) => {
+    // Indexed, so that there is a search to offer.
+    seed(s);
     await ask(s);
     assert.deepEqual(loop.granted(), ['search_profile', 'read_cv']);
   });
@@ -247,6 +300,7 @@ test('a choice the registry does not recognise falls back to every tool', async 
   // grant, and an empty grant is a loop that cannot look anything up and
   // answers from its priors instead.
   await harness({ picks: ['send_email', 'read_file'] }, async (s, loop) => {
+    seed(s);
     await ask(s);
     assert.deepEqual(loop.granted(), createToolRegistry(defaultTools).names());
     assert.ok(!loop.granted().includes('send_email'));
@@ -255,6 +309,7 @@ test('a choice the registry does not recognise falls back to every tool', async 
 
 test('a planner that is unavailable costs efficiency, not the run', async () => {
   await harness({}, async (s, loop) => {
+    seed(s);
     const result = await ask(s);
 
     // Offering everything is what a runtime with no planner would do: less
@@ -335,12 +390,63 @@ test('a granted tool reads the run\'s own index', async () => {
   );
 });
 
-test('an empty search sends the model to the CV, which the loop always has', async () => {
-  // Nothing is indexed, as before the index is built and after an edit clears
-  // it. The tool has to say so, because a model told only "no results"
-  // rephrases the query until it runs out of turns; and it has to name the
-  // reader the loop is given, because a model told nothing more says the CV
-  // holds nothing without reading it (`tools/index.ts`).
+/** A CV that names Acme, for a loop that is to find it by reading. */
+const acme = (s: Spine) =>
+  s.deps.documents.update(CV_ID, CV_KIND, () => cvDocumentSchema.parse({
+    experience: [{ company: 'Acme', title: 'Senior Engineer', highlights: ['Rewrote the billing pipeline.'] }]
+  }));
+
+test('a CV with nothing indexed is read, and not searched', async () => {
+  // As before the index is first built and after every edit until the rebuild
+  // catches up. A search then finds nothing whatever the CV says, and a model
+  // offered one took nothing found for the answer (`askProfile.ts`).
+  const read: unknown[] = [];
+
+  await harness(
+    {
+      picks: ['search_profile'],
+      loop: async (request) => {
+        read.push(await request.tools[0]?.invoke({ section: 'experience' }));
+        return { text: 'You rewrote the billing pipeline at Acme.', steps: 2, finishReason: 'stop' as const };
+      }
+    },
+    async (s, loop) => {
+      acme(s);
+
+      assert.equal((await ask(s)).data.answer, 'You rewrote the billing pipeline at Acme.');
+      assert.match(JSON.stringify(read[0]), /Rewrote the billing pipeline/);
+      assert.deepEqual(loop.granted(), ['read_cv']);
+
+      // With one tool there is nothing to choose, and the choosing is a model call.
+      assert.deepEqual(loop.goals, []);
+
+      // And the rules name the tool the loop has, and not the one it was not given.
+      const system = loop.requests[0]?.system ?? '';
+      assert.match(system, /Use read_cv for current canonical facts\./);
+      assert.doesNotMatch(system, /search_profile/);
+    }
+  );
+});
+
+test('a retriever that cannot say what is indexed keeps the search', async () => {
+  // What every retriever did before it could be asked: offer the search, and let
+  // an empty one say so.
+  await harness({ picks: ['search_profile'] }, async (s, loop) => {
+    const retrieval = { search: s.deps.retrieval.search };
+    await ask({ ...s, deps: { ...s.deps, retrieval } });
+
+    assert.deepEqual(loop.granted(), ['search_profile', 'read_cv']);
+    assert.match(loop.requests[0]?.system ?? '', /Use search_profile/);
+  });
+});
+
+test('an empty search of an indexed CV sends the model to the CV, which the loop always has', async () => {
+  // Indexed by keyword alone, as when the embedder was not running, and searched
+  // in other words than the CV's: nothing matches, though the CV says. The tool
+  // has to say so, because a model told only "no results" rephrases the query
+  // until it runs out of turns; and it has to name the reader the loop is given,
+  // because a model told nothing more says the CV holds nothing without reading
+  // it (`tools/index.ts`).
   const read: unknown[] = [];
 
   await harness(
@@ -348,7 +454,8 @@ test('an empty search sends the model to the CV, which the loop always has', asy
       picks: ['search_profile'],
       loop: async (request) => {
         const search = request.tools.find((tool) => tool.name === 'search_profile');
-        const answer = (await search?.invoke({ query: 'billing', limit: 5 })) as {
+        assert.ok(search, 'the search was not offered');
+        const answer = (await search.invoke({ query: 'invoicing systems', limit: 5 })) as {
           results: unknown[];
           note?: string;
         };
@@ -364,9 +471,12 @@ test('an empty search sends the model to the CV, which the loop always has', asy
       }
     },
     async (s) => {
-      s.deps.documents.update(CV_ID, CV_KIND, () => cvDocumentSchema.parse({
-        experience: [{ company: 'Acme', title: 'Senior Engineer', highlights: ['Rewrote the billing pipeline.'] }]
-      }));
+      const { revision } = acme(s);
+      s.chunks.keepText(
+        CV_ID,
+        [{ id: 'c0', kind: 'highlight', text: 'Rewrote the billing pipeline.', position: 0, meta: { section: 'experience' } }],
+        { expectedRevision: revision }
+      );
 
       assert.equal((await ask(s)).data.answer, 'You rewrote the billing pipeline at Acme.');
       assert.match(JSON.stringify(read[0]), /Rewrote the billing pipeline/);
@@ -457,6 +567,8 @@ test('more conversation than the ceiling is refused, not quietly trimmed', async
 
 test('the tool selector is told what the follow-up is about', async () => {
   await harness({ picks: ['read_cv'] }, async (s, loop) => {
+    // Indexed, or there is nothing to select among and no selector is asked.
+    seed(s);
     await ask(s, { question: 'And the second one?', history: EARLIER });
 
     const goal = loop.goals[0] ?? '';
@@ -523,4 +635,111 @@ test('offer questions keep the actual question, history and captured posting in 
     assert.equal(loop.requests[0]!.history?.length, 1);
     assert.deepEqual(loop.granted(), ['read_cv']);
   });
+});
+
+/* ------------------------------------------------------------ a real runtime */
+
+/** A request the runtime made of the model, as it left. */
+type Sent = {
+  readonly stream?: boolean;
+  readonly tools?: { function: { name: string } }[];
+  readonly messages: { role: string; content: unknown }[];
+};
+
+/** A reply, whole or streamed as it was asked for. */
+const completion = (content: string, stream: boolean): Response => {
+  const usage = { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 };
+  if (!stream) {
+    return new Response(
+      JSON.stringify({
+        id: 'cmpl',
+        object: 'chat.completion',
+        created: 1,
+        model: 'm',
+        choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+        usage
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  }
+
+  const chunk = (delta: Record<string, unknown>, finish: string | null = null): string =>
+    `data: ${JSON.stringify({ id: 'cmpl', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+  const body = chunk({ role: 'assistant', content }) + chunk({}, 'stop') + 'data: [DONE]\n\n';
+  return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+};
+
+/**
+ * One question asked of a real runtime over a file, about a CV of the person's
+ * own in a conversation about it, with every port it has: the CV scope, the walls
+ * and the record over the stored index. The model is a network that keeps what
+ * it was sent: a loop is answered in a sentence, and the choosing of its tools
+ * with `search_profile`.
+ */
+const asked = async (index: (chunks: ReturnType<typeof createHarness>['chunks'], id: string, revision: number) => void): Promise<Sent[]> => {
+  const s = scratch();
+  const harness = createHarness({
+    databasePath: s.path,
+    logger: silentLogger,
+    env: { LOCAL_BASE_URL: 'http://127.0.0.1:9' },
+    probe: () => Promise.reject(new Error('no local server in these tests'))
+  });
+  const sent: Sent[] = [];
+  const real = globalThis.fetch;
+
+  globalThis.fetch = (async (_: unknown, init?: { body?: unknown }): Promise<Response> => {
+    const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Sent;
+    sent.push(body);
+    return completion(
+      body.tools === undefined ? JSON.stringify({ tools: ['search_profile'] }) : 'You rewrote the billing pipeline at Acme.',
+      body.stream === true
+    );
+  }) as typeof globalThis.fetch;
+
+  try {
+    const context = createCvContextStore(s.db).create(randomUUID(), 'en');
+    const { record } = harness.profile.replaceContext(context.id, cvDocumentSchema.parse({
+      experience: [{ company: 'Acme', title: 'Senior Engineer', highlights: ['Rewrote the billing pipeline.'] }]
+    }), 0);
+    index(harness.chunks, context.id, record.revision);
+    const conversation = harness.conversations.create({ kind: 'profile', id: context.id });
+
+    const run = harness.begin({
+      capability: 'ask_profile',
+      input: { question: 'What did I do at Acme?' },
+      contextId: context.id,
+      conversationId: conversation.id
+    });
+    assert.equal((await run.settled).data.answer, 'You rewrote the billing pipeline at Acme.');
+    return sent;
+  } finally {
+    globalThis.fetch = real;
+    harness.close();
+    s.dispose();
+  }
+};
+
+const offered = (request: Sent | undefined): string[] => (request?.tools ?? []).map((tool) => tool.function.name);
+const rules = (request: Sent | undefined): string => JSON.stringify(request?.messages.filter((message) => message.role === 'system'));
+
+test('in a real runtime a CV with nothing indexed is offered its reader alone, and no model is asked to choose', async () => {
+  const sent = await asked(() => undefined);
+
+  // One request, and it is the loop: the choosing was not made.
+  assert.equal(sent.length, 1);
+  assert.deepEqual(offered(sent[0]), ['read_cv']);
+  assert.doesNotMatch(rules(sent[0]), /search_profile/);
+});
+
+test('in a real runtime a CV with something indexed is searched, and the tools are chosen first', async () => {
+  // By keyword alone, as when the embedder was not running: that is something a
+  // search finds.
+  const sent = await asked((chunks, id, revision) => {
+    chunks.keepText(id, [{ id: 'c0', kind: 'highlight', text: 'Rewrote the billing pipeline.', position: 0 }], { expectedRevision: revision });
+  });
+
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0]?.tools, undefined, 'the choosing comes first, and offers no tools');
+  assert.deepEqual(offered(sent[1]), ['search_profile', 'read_cv']);
+  assert.match(rules(sent[1]), /Use search_profile/);
 });

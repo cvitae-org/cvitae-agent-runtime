@@ -30,6 +30,7 @@ export const bindOfferScope = (snapshot: OfferSnapshot, effects: EffectSet): {
     },
     neighbours: (query) => { check(query.documentId); return []; },
     fingerprintOf: (id) => { check(id); return undefined; },
+    countOf: (id) => { check(id); return pieces.length; },
     replace: reject, clear: reject, keepText: reject
   };
   return {
@@ -41,7 +42,10 @@ export const bindOfferScope = (snapshot: OfferSnapshot, effects: EffectSet): {
         check(id); return structuredClone(snapshot.document);
       }, update: reject
     }, index,
-    retrieval: { search: async (query) => index.lexical(query).map((hit) => ({ ...hit, found: ['lexical'] })) },
+    retrieval: {
+      search: async (query) => index.lexical(query).map((hit) => ({ ...hit, found: ['lexical'] })),
+      countOf: (id) => index.countOf(id)
+    },
     effects: { ...effects, offers: { resolve: async (url) => {
       if (!snapshot.offer.url || url !== snapshot.offer.url) reject();
       return { url, finalUrl: url, text: snapshot.offer.text,

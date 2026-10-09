@@ -269,5 +269,8 @@ export const recordingRetrieval = (
     }
 
     return hits;
-  }
+  },
+
+  // A number, and no text of the CV, so there is nothing in it to record.
+  countOf: (id) => retrieval.countOf?.(id)
 });

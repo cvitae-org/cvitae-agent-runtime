@@ -6,6 +6,7 @@ import { createRetriever } from '../src/retrieval/search.js';
 import { bindCvScope } from '../src/runtime/cv-scope.js';
 import { searchProfileTool } from '../src/tools/index.js';
 import type { EffectSet, EmbeddingFingerprint, IndexedChunk } from '../src/contracts/index.js';
+import { CV_ID } from '../src/capabilities/cv/document.js';
 import { stubGateway } from './support/spine.js';
 import { scratch } from './support/db.js';
 import { open } from '../src/storage/sqlite/open.js';
@@ -99,6 +100,59 @@ test('stale or unknown-revision rows are excluded from lexical, vector and finge
     assert.equal(index.lexical({ text: 'Engineer', limit: 4 }).length, 1, 'rebuilding restores retrieval');
     s.db.prepare('UPDATE chunks SET source_revision = NULL').run();
     assert.deepEqual(index.lexical({ text: 'Engineer', limit: 4 }), []);
+  } finally { s.dispose(); }
+});
+
+test('what a search can find is counted per document, at the revision it is at', () => {
+  const s = scratch();
+  try {
+    const docs = createDocumentStore(s.db);
+    const index = createChunkIndex(s.db);
+    const retrieval = createRetriever({ reader: index, ai: stubGateway(), traceId: 'test' });
+    assert.equal(index.countOf('cv'), 0, 'no document');
+    docs.update('cv', 'cv', () => ({}));
+    docs.update('other', 'cv', () => ({}));
+    assert.equal(index.countOf('cv'), 0, 'not indexed yet');
+    index.replace('cv', fingerprint, [chunk(), { ...chunk('Second'), id: 'second', position: 1 }], { expectedRevision: 1 });
+    index.replace('other', fingerprint, [chunk()], { expectedRevision: 1 });
+    assert.equal(index.countOf('cv'), 2);
+    assert.equal(retrieval.countOf?.('cv'), 2);
+
+    // An edit leaves the rows behind it, where no search looks.
+    docs.update('cv', 'cv', () => ({}));
+    assert.equal(index.countOf('cv'), 0);
+    assert.equal(createChunkIndex(s.connect()).countOf('cv'), 0);
+    assert.equal(retrieval.countOf?.('cv'), 0);
+    assert.equal(index.countOf('other'), 1);
+
+    // Text with no vector counts: the keyword half finds it.
+    index.keepText('cv', [{ id: 'role', kind: 'role', text: 'Engineer', position: 0 }], { expectedRevision: 2 });
+    assert.equal(index.countOf('cv'), 1);
+    assert.equal(retrieval.countOf?.('cv'), 1);
+  } finally { s.dispose(); }
+});
+
+test('a bound context counts its own chunks by the CV alias, and no other context\'s', () => {
+  const s = scratch();
+  try {
+    const documents = createDocumentStore(s.db);
+    const index = createChunkIndex(s.db);
+    documents.update('pl', 'cv', () => ({}));
+    documents.update('en', 'cv', () => ({}));
+    index.replace('pl', fingerprint, [chunk(), { ...chunk('Second'), id: 'second', position: 1 }], { expectedRevision: 1 });
+    index.replace('en', fingerprint, [chunk()], { expectedRevision: 1 });
+    const retrieval = createRetriever({ reader: index, ai: stubGateway(), traceId: 'test' });
+
+    const scoped = bindCvScope('pl', { documents, retrieval, index });
+    assert.equal(scoped.retrieval.countOf?.(CV_ID), 2);
+    assert.equal(scoped.retrieval.countOf?.('pl'), 2);
+    assert.equal(scoped.index.countOf(CV_ID), 2);
+    assert.throws(() => scoped.retrieval.countOf?.('en'), { code: 'context_conflict' });
+    assert.throws(() => scoped.index.countOf('en'), { code: 'context_conflict' });
+
+    // A retriever that cannot say is not made to.
+    const silent = bindCvScope('pl', { documents, retrieval: { search: retrieval.search }, index });
+    assert.equal(silent.retrieval.countOf?.(CV_ID), undefined);
   } finally { s.dispose(); }
 });
 

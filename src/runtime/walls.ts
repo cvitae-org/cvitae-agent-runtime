@@ -97,13 +97,15 @@ export const wallPorts = <P extends WalledPorts>(ports: P, walls: Walls, scope: 
   };
 
   const retrieval: Retriever = {
-    search: async (query, signal) => allowed(await ports.retrieval.search(query, signal))
+    search: async (query, signal) => allowed(await ports.retrieval.search(query, signal)),
+    countOf: (id) => ports.retrieval.countOf?.(id)
   };
 
   const index: ChunkIndex = {
     lexical: (query) => allowed(ports.index.lexical(query)),
     neighbours: (query) => allowed(ports.index.neighbours(query)),
     fingerprintOf: (id) => ports.index.fingerprintOf(id),
+    countOf: (id) => ports.index.countOf(id),
     replace: (id, fingerprint, chunks, options) => ports.index.replace(id, fingerprint, chunks, options),
     clear: (id, options) => ports.index.clear(id, options),
     keepText: (id, chunks, options) => ports.index.keepText(id, chunks, options)

@@ -486,13 +486,23 @@ const ports = (body: Record<string, unknown> = BODY): Ports => {
         return stored;
       }
     },
-    retrieval: { search: async () => passages(7) },
+    retrieval: {
+      search: async () => passages(7),
+      countOf: (id) => {
+        forwarded.push(`retrieval countOf ${id}`);
+        return 5;
+      }
+    },
     index: {
       lexical: chunks,
       neighbours: chunks,
       fingerprintOf: (id) => {
         forwarded.push(`fingerprintOf ${id}`);
         return undefined;
+      },
+      countOf: (id) => {
+        forwarded.push(`countOf ${id}`);
+        return 7;
       },
       replace: (id) => {
         forwarded.push(`replace ${id}`);
@@ -669,8 +679,20 @@ test('what only changes the index is not cut', () => {
   behind.index.replace(CV_ID, FINGERPRINT, [], { expectedRevision: 7 });
   behind.index.clear(CV_ID, { expectedRevision: 7 });
   behind.index.keepText(CV_ID, [], { expectedRevision: 7 });
+  // The count beneath, excluded chunks and all: it says whether a search has
+  // anything to look in, and the search itself is what is cut.
+  assert.equal(behind.index.countOf(CV_ID), 7);
+  // And the search's, which is the count of the retriever beneath, or nothing
+  // when that one cannot say.
+  assert.equal(behind.retrieval.countOf?.(CV_ID), 5);
+  const cannot: Retriever = { search: under.retrieval.search };
+  const silent = wallPorts({ ...under, retrieval: cannot }, changing(walls(ref())), CONTEXT);
+  assert.equal(silent.retrieval.countOf?.(CV_ID), undefined);
 
-  assert.deepEqual(under.forwarded, [`fingerprintOf ${CV_ID}`, `replace ${CV_ID}`, `clear ${CV_ID}`, `keepText ${CV_ID}`]);
+  assert.deepEqual(under.forwarded, [
+    `fingerprintOf ${CV_ID}`, `replace ${CV_ID}`, `clear ${CV_ID}`, `keepText ${CV_ID}`, `countOf ${CV_ID}`,
+    `retrieval countOf ${CV_ID}`
+  ]);
 });
 
 /* ------------------------------------------------------------------- runtime */
