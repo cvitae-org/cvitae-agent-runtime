@@ -21,6 +21,7 @@ import type { z } from 'zod';
 import type { EffectSet, ToolHandle } from './effects.js';
 import type { Retriever } from './chunk-index.js';
 import type { DocumentStore } from './document-store.js';
+import type { RecordSink } from './grounding.js';
 
 /**
  * What a tool is allowed to reach.
@@ -37,6 +38,14 @@ export type ToolContext = {
   readonly effects: EffectSet;
   readonly documents: DocumentStore;
   readonly retrieval: Retriever;
+  /**
+   * Where a tool says what it handed to the model, when the run has a record.
+   *
+   * A tool knows which pieces of its result a model received and in what form,
+   * which a port cannot see, so the precise entries come from here and the ports
+   * only say what was read.
+   */
+  readonly record?: RecordSink;
 };
 
 export type ToolDefinition<TInput = unknown, TOutput = unknown> = {

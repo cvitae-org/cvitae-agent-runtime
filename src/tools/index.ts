@@ -24,7 +24,11 @@
  */
 
 import { z } from 'zod';
+import type { ChunkHit, ToolContext } from '../contracts/index.js';
+import { CV_ID } from '../capabilities/cv/document.js';
 import { readCvTool } from '../capabilities/cv/tools.js';
+import { storedCv } from '../capabilities/cv/walls.js';
+import { CV_WELL, cvHitEntries } from '../capabilities/cv/well.js';
 import { defineTool } from './registry.js';
 
 /**
@@ -35,6 +39,30 @@ import { defineTool } from './registry.js';
  * one tool result than on the rest of the conversation.
  */
 const MAX_RESULT_CHARS = 6_000;
+
+/**
+ * Says which passages of the CV a search handed to the model.
+ *
+ * The passages are placed in the document as it is now, which is the revision
+ * they were found at: the scoped retriever drops a passage indexed from any
+ * other. A passage is part of a piece and not the whole of it, so each entry
+ * carries the digest of the passage the model received as well as the digest of
+ * the piece it came from.
+ */
+const reportPassages = (context: ToolContext, hits: readonly ChunkHit[]): void => {
+  const scope = context.record?.scopes[CV_WELL];
+  if (context.record === undefined || scope === undefined || hits.length === 0) return;
+
+  // Placed in the document as it is stored, whatever of it the run may see:
+  // a passage says which entry it came from by that document's positions.
+  const found = context.documents.read(CV_ID);
+  const cv = found === undefined ? undefined : storedCv(found);
+  if (found === undefined || cv === undefined) return;
+
+  context.record.add(
+    cvHitEntries(scope, found.revision, cv, hits, { status: 'included', via: 'tool:search_profile', passage: true })
+  );
+};
 
 export const searchProfileTool = defineTool({
   name: 'search_profile',
@@ -55,9 +83,22 @@ export const searchProfileTool = defineTool({
       // Distinguished from "no match" on purpose: an empty index and an
       // unhelpful query call for completely different next moves, and a model
       // told only "no results" will rephrase the query forever.
+      //
+      // And the next move is reading the CV, which `ask_profile` always offers.
+      // The index is a derived view, empty until it is built and cleared after
+      // an edit, so finding nothing in it says nothing about the CV. Told only
+      // that the documents might not be imported, `gemma4:12b` took that for
+      // the answer: asked what the person did at an employer the CV names, 5 of
+      // 8 chats with no index said there was nothing, without reading the CV
+      // (2026-10-08). With this note, 14 of 16 read it and answered
+      // (2026-10-09, with `ask_profile`'s last line reworded as well). Since
+      // then `ask_profile` offers a CV with nothing indexed `read_cv` alone, so
+      // the note is for an indexed CV with nothing that matches, as one indexed
+      // by keyword alone and searched in other words, and for a retriever that
+      // cannot say how much is indexed.
       return {
         results: [],
-        note: 'Nothing matched. The documents may not have been imported yet.'
+        note: `Nothing matched. The search index can be empty or out of date, so read the CV with ${readCvTool.name} before saying it does not say.`
       };
     }
 
@@ -70,6 +111,9 @@ export const searchProfileTool = defineTool({
       budget -= hit.text.length;
       results.push({ text: hit.text, kind: hit.kind, meta: { ...hit.meta } });
     }
+
+    // Only the passages that fit are the ones the model receives.
+    reportPassages(context, hits.slice(0, results.length));
 
     // The score is not returned. It is a fused rank with no meaning outside
     // this one query, and a model given a number will reason about it.

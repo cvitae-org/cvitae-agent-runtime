@@ -6,15 +6,23 @@
  * reads the source document instead. It exposes one bounded section at a time:
  * no path, source reference, credential or outbound effect is reachable from
  * here, and large strings are clipped before they enter a model context.
+ *
+ * The overview carries the person's name and place and not how to reach them.
+ * The email, the phone and the links are a section of their own, `contact`, which
+ * a model reads when a question needs them, so they are not in every answer's
+ * context (and in every masked prompt) because the overview was looked at.
  */
 
 import { z } from 'zod';
 import type { ToolDefinition } from '../../contracts/index.js';
 import { CV_ID, asCvDocument } from './document.js';
+import { cvView, viewOf, withheldItem } from './walls.js';
+import type { CvWithheld } from './walls.js';
+import { CONTACT, CV_WELL, OVERVIEW_ITEMS, cvReadEntries, overviewPiece } from './well.js';
 
 export const READ_CV_TOOL = 'read_cv';
 
-const sections = ['overview', 'experience', 'education', 'certificates', 'languages'] as const;
+const sections = ['overview', CONTACT, 'experience', 'education', 'certificates', 'languages'] as const;
 type Section = (typeof sections)[number];
 
 const inputSchema = z.object({
@@ -125,16 +133,21 @@ const select = (
   section: Section,
   document: ReturnType<typeof asCvDocument>,
   offset: number,
-  limit: number
+  limit: number,
+  withheld: CvWithheld
 ): Record<string, unknown> => {
   switch (section) {
-    case 'overview':
-      return {
-        version: document.version,
-        personal: document.personal,
-        role_description: document.role_description,
-        skills: document.skills
-      };
+    case 'overview': {
+      // An excluded item is left out, and not blanked: a model told the CV has an
+      // empty name would say so to the person.
+      const overview: Record<string, unknown> = { version: document.version };
+      for (const item of OVERVIEW_ITEMS) {
+        if (item !== CONTACT && !withheldItem(withheld, item)) overview[item] = overviewPiece(document, item);
+      }
+      return overview;
+    }
+    case CONTACT:
+      return withheldItem(withheld, CONTACT) ? {} : (overviewPiece(document, CONTACT) as Record<string, unknown>);
     case 'experience':
       return page(document.experience, offset, limit);
     case 'education':
@@ -150,7 +163,9 @@ export const readCvTool: ToolDefinition<z.infer<typeof inputSchema>, unknown> = 
   name: READ_CV_TOOL,
   describe:
     "Read the user's current canonical CV, one structured section at a time. "
-    + 'Use this for current profile facts; paginate list sections with offset and limit.',
+    + 'Use this for current profile facts; paginate list sections with offset and limit. '
+    + 'The overview has the name and location; read the contact section only when the email, '
+    + 'phone or links are needed.',
   input: inputSchema,
   execute: async ({ section, offset, limit }, context) => {
     const record = context.documents.read(CV_ID);
@@ -164,9 +179,23 @@ export const readCvTool: ToolDefinition<z.infer<typeof inputSchema>, unknown> = 
 
     // Parse at the read boundary. A corrupt or future-version body must not be
     // presented to the model as if it were a canonical CV.
-    const document = asCvDocument(record.body);
+    //
+    // What is read is what the document port handed over, which has the
+    // excluded pieces out of it. `view` keeps where each remaining entry sat in
+    // the stored document, because that is what a record names it by.
+    const view = viewOf(record) ?? cvView(asCvDocument(record.body), [], '');
     const budget: Budget = { remaining: CONTENT_BUDGET, truncated: false };
-    const data = bounded(select(section, document, offset, limit), budget);
+    const data = bounded(select(section, view.shown, offset, limit, view.withheld), budget);
+
+    // Said before the result is returned: a tool that cannot say what it hands
+    // to the model hands nothing. The entries are made from the copy that is
+    // about to be returned, so they cannot disagree with it.
+    const scope = context.record?.scopes[CV_WELL];
+    if (context.record !== undefined && scope !== undefined) {
+      context.record.add(
+        cvReadEntries(scope, record.revision, view.original, { section, offset }, data, 'tool:read_cv', view)
+      );
+    }
 
     return {
       present: true,

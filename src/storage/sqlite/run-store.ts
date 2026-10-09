@@ -22,6 +22,7 @@ import type {
 } from '../../contracts/index.js';
 import { CvContextError } from '../../contracts/index.js';
 import { requireConversationContext } from './context-ownership.js';
+import { recordWrites } from './grounding-record.js';
 import type { Db } from './open.js';
 import { packBool, packJson, unpackBool, unpackJson, unpackStrings } from './rows.js';
 
@@ -98,6 +99,8 @@ const toStep = (row: StepRow): RunStepRecord => ({
 });
 
 export const createRunStore = (db: Db): RunStore => {
+  const records = recordWrites(db);
+
   const insertRun = db.prepare<[
     string, string, string, string, number | null, number, string | null, string | null, number | null, number | null, string | null
   ]>(
@@ -262,6 +265,9 @@ export const createRunStore = (db: Db): RunStore => {
       run.contextRevision ?? null,
       run.offerSnapshotId ?? null
     );
+    // A run in a conversation gets a record in the same transaction that makes
+    // the run, so there is never a moment a conversation run has none.
+    if (run.conversationId !== undefined) records.open(run.id, run.conversationId, run.createdAt);
     appendEvents(run.id, events);
   }).immediate;
 
@@ -296,6 +302,10 @@ export const createRunStore = (db: Db): RunStore => {
         fields.endedAt ?? null,
         patch.runId
       );
+      // Every ending of a run, and every pause, is a status written here. The
+      // record follows in the same transaction, so no path that ends a run can
+      // forget to settle it.
+      records.settle(patch.runId, fields);
     }
 
     appendEvents(patch.runId, events);

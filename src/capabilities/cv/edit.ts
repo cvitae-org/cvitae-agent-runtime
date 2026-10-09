@@ -71,6 +71,7 @@ import {
 } from '../../context/conversation.js';
 import { compose, labelled } from '../../context/render.js';
 import {
+  OperationError,
   RuntimeError,
   type Capability,
   type Plan,
@@ -94,6 +95,11 @@ import {
   skillsSchema,
   type CvDocument
 } from './document.js';
+import { diffCv, outside } from './diff.js';
+import type { CvChange } from './diff.js';
+import { sectionOf, targetOf } from './target.js';
+import { cvTargetWalled, cvView, restoreCv, viewOf } from './walls.js';
+import type { CvWithheld } from './walls.js';
 
 /* ------------------------------------------------------------------ sections */
 
@@ -147,6 +153,17 @@ export const inputSchema = z.object({
    */
   section: z.enum(sectionNames).optional(),
   /**
+   * The section to change, as the ref every other part of grounding calls it by
+   * (`cv:<scope>/experience`, `cv:<scope>/overview/skills`), and the one a
+   * conversation's exclusions are asked about. Names the section like `section`,
+   * and like it skips the routing call. Both may be given when they agree.
+   *
+   * It is required to be this conversation's own CV and a whole section: another
+   * CV, an entry of a list or the whole CV is refused (`invalid_selection`), since
+   * an edit that guessed which section was meant would rewrite the wrong one.
+   */
+  target: z.string().min(1).max(1_024).optional(),
+  /**
    * Edit this instead of the stored CV. Same reasoning as `translate_cv`: the
    * runtime holds the document, and a caller working on something it has not
    * saved has nowhere else to put it.
@@ -174,7 +191,14 @@ export type EditCvResult = {
   /** The whole CV with one section revised. Nothing has been written. */
   readonly document: CvDocument;
   readonly section: Section;
-  /** False when the model handed back what it was given. */
+  /** The ref of the section, whichever way it was named or routed. */
+  readonly target: string;
+  /**
+   * What is different about `document`, in the order to apply it. Every one is
+   * in `section`, and an accept writes these and nothing else.
+   */
+  readonly changes: readonly CvChange[];
+  /** False when the model handed back what it was given: there are no changes. */
   readonly changed: boolean;
 };
 
@@ -207,6 +231,31 @@ const conversation = (input: EditCvInput): string =>
   );
 
 /* ------------------------------------------------------------------- routing */
+
+/**
+ * The section the input names, by `target` or by `section`, and nothing when it
+ * names none and the instruction has to be routed.
+ *
+ * Both may be given, and then they have to be the same section: a caller that
+ * names two has a mistake, and the edit does not choose between them.
+ */
+const named = (input: EditCvInput, context: Pick<RunContext, 'contextId'>): Section | undefined => {
+  const byTarget =
+    input.target === undefined ? undefined : (sectionOf(input.target, context.contextId ?? CV_ID) as Section);
+
+  if (byTarget !== undefined && input.section !== undefined && input.section !== byTarget) {
+    throw new RuntimeError(
+      `The target names ${byTarget} and the section names ${input.section}. Name one of them, or the same.`,
+      'invalid_input'
+    );
+  }
+
+  return byTarget ?? input.section;
+};
+
+/** What a person is told when the section an edit is aimed at is excluded. */
+const excluded = (section: Section): string =>
+  `The ${section} of this CV is excluded from the conversation, so there is nothing of it to edit. Include it again to change it.`;
 
 /**
  * An enum rather than a string, which is where this differed from
@@ -245,7 +294,8 @@ const routing = z.object({
  * refuses, with the one thing the caller can act on: name the section.
  */
 const route = async (input: EditCvInput, context: RunContext): Promise<Section> => {
-  if (input.section) return input.section;
+  const known = named(input, context);
+  if (known) return known;
 
   const refuse = (why: string): never => {
     throw new RuntimeError(
@@ -508,8 +558,13 @@ const rules = (section: Section, extra?: string): string =>
     ...(extra ? [extra] : [])
   ].join('\n');
 
+/** The document the model is shown: the source with whatever the conversation excludes taken out. */
 const source = (context: StepContext): CvDocument =>
   context.completed.source?.document as CvDocument;
+
+/** What was taken out of it, to be put back into the proposal. Absent when nothing was. */
+const withheldOf = (context: StepContext): CvWithheld | undefined =>
+  context.completed.source?.withheld as CvWithheld | undefined;
 
 const reviseStep = (section: Section, input: EditCvInput): Step => {
   const shape = shapes[section];
@@ -649,14 +704,50 @@ const merge = (context: StepContext, section: Section): EditCvResult => {
       break;
   }
 
+  // The pieces the model was not shown go back where they were. The proposal is
+  // written over the stored document, so a proposal without them would delete
+  // what the person excluded from the conversation.
+  const withheld = withheldOf(context);
+  const whole = withheld === undefined ? document : restoreCv(document, withheld);
+
+  // The whole document, so `version` and `sources` are proven to still be the
+  // ones that were read rather than whatever the model had to say.
+  const proposed = normaliseCv(cvDocumentSchema.parse(whole));
+  const original = withheld === undefined ? from : restoreCv(from, withheld);
+
+  const changes = proposalChanges(original, proposed, section);
+
   return {
-    // The whole document, so `version` and `sources` are proven to still be
-    // the ones that were read rather than whatever the model had to say.
     ...(context.completed.source?.base ? { base: context.completed.source.base as CvProposalBase } : {}),
-    document: cvDocumentSchema.parse(document),
+    document: proposed,
     section,
-    changed: JSON.stringify(document[section]) !== JSON.stringify(from[section])
+    target: targetOf(context.contextId ?? CV_ID, section),
+    changes,
+    changed: changes.length > 0
   };
+};
+
+/**
+ * What the proposal changes, and the proof that it is the section it was aimed at.
+ *
+ * A section is the only thing the model was shown and the only thing that is
+ * merged back, so a change anywhere else cannot come from the model. This does
+ * not rely on that: the proposal is the document with the section replaced and
+ * the differences are the whole of what an accept writes, so one that reaches
+ * elsewhere is refused here, where nothing has been stored.
+ */
+export const proposalChanges = (original: CvDocument, proposed: CvDocument, section: Section): CvChange[] => {
+  const changes = diffCv(original, proposed);
+  const elsewhere = outside(changes, section);
+
+  if (elsewhere.length > 0) {
+    throw new OperationError(
+      'proposal_out_of_scope',
+      `The edit to ${section} also changes ${[...new Set(elsewhere.map((change) => String(change.path[0])))].join(', ')}, which it was not aimed at.`
+    );
+  }
+
+  return changes;
 };
 
 /* --------------------------------------------------------------- capability */
@@ -666,6 +757,25 @@ export const editCv: Capability<EditCvInput> = {
   describe:
     "Apply a written instruction to one section of the user's stored CV and return the proposed document without saving it.",
   input: inputSchema,
+
+  /**
+   * The section the edit is aimed at, when the input names it, is the one thing the
+   * edit cannot go on without. Asked before a plan is made, which may call a model:
+   * an edit aimed at a section the conversation leaves out is refused having spent
+   * nothing. An instruction that names no section is routed by a model, and what it
+   * routes to is checked when the document is read, as it always was.
+   */
+  needs: (input, context) => {
+    const section = named(input, context);
+    if (section === undefined) return [];
+
+    // Whether the section is excluded as a whole is known from the ref alone; an
+    // empty document stands in for the one that is not read yet.
+    const gone = cvTargetWalled(context.walls?.pieces() ?? [], context.contextId ?? CV_ID, section, emptyDocument());
+    return [
+      { name: 'target', required: true, ...(gone ? { unmet: excluded(section), code: 'target_excluded' } : {}) }
+    ];
+  },
 
   plan: async (input, context: RunContext): Promise<Plan> => {
     const section = await route(input, context);
@@ -688,12 +798,33 @@ export const editCv: Capability<EditCvInput> = {
               name: 'source',
               critical: true,
               run: async (context) => {
+                // What the conversation has excluded, and which CV it is. The
+                // document a caller supplies is cut like the stored one: it is
+                // the same CV, and the section the model is shown is taken from it.
+                const walls = context.walls?.pieces() ?? [];
+                const scope = context.contextId ?? CV_ID;
+
+                const aimed = (document: CvDocument): void => {
+                  if (cvTargetWalled(walls, scope, section, document)) {
+                    throw new OperationError('target_excluded', excluded(section));
+                  }
+                };
+
                 // Normalised even when the caller supplied it: a client that
                 // sent only the three legacy arrays would otherwise be shown a
                 // skills strip with no rows in it, and asked to edit that.
-                if (input.document) return { document: normaliseCv(input.document) };
+                if (input.document) {
+                  const whole = normaliseCv(input.document);
+                  aimed(whole);
+                  const view = cvView(whole, walls, scope);
+                  return view.walled ? { document: view.shown, withheld: view.withheld } : { document: whole };
+                }
 
                 const record = context.documents.read(CV_ID);
+                // The record is the cut one when something is excluded, and
+                // remembers the document it was cut from: the edit is made on
+                // what is left, and written back over what is stored.
+                const view = record === undefined ? undefined : viewOf(record);
                 /**
                  * An empty document rather than a refusal, which is where this
                  * parts company with `translate_cv`. There is nothing to
@@ -702,8 +833,13 @@ export const editCv: Capability<EditCvInput> = {
                  * reasonable way to start. Nothing is written either way, so
                  * the caller decides whether the proposal becomes a document.
                  */
+                const stored = record === undefined ? emptyDocument() : (view?.original ?? asCvDocument(record.body));
+                aimed(stored);
+                const cut = view?.walled === true ? view : undefined;
+
                 return {
-                  document: record ? asCvDocument(record.body) : emptyDocument(),
+                  document: cut === undefined ? stored : cut.shown,
+                  ...(cut === undefined ? {} : { withheld: cut.withheld }),
                   base: { contextId: context.contextId ?? CV_ID, revision: record?.revision ?? 0, generation: context.contextGeneration ?? 0 }
                 };
               }

@@ -13,7 +13,7 @@
  * disk — are ones the run is about to discover for itself anyway.
  */
 
-import type { AiCall, AiLog, AiLogEntry, FinishReason } from '../../contracts/index.js';
+import type { AiCall, AiLog, AiLogEntry, FinishReason, MaskCounts } from '../../contracts/index.js';
 import type { Db } from './open.js';
 
 type CallRow = {
@@ -35,6 +35,7 @@ type CallRow = {
   finish_reason: string | null;
   outcome: string;
   error_code: string | null;
+  masked: string | null;
 };
 
 /**
@@ -66,7 +67,8 @@ const toCall = (row: CallRow): AiCall => ({
   latencyMs: row.latency_ms,
   ...(row.finish_reason === null ? {} : { finishReason: row.finish_reason as FinishReason }),
   outcome: row.outcome as AiLogEntry['outcome'],
-  ...(row.error_code === null ? {} : { errorCode: row.error_code })
+  ...(row.error_code === null ? {} : { errorCode: row.error_code }),
+  ...(row.masked === null ? {} : { masked: JSON.parse(row.masked) as MaskCounts })
 });
 
 /** What `recent` returns when a caller does not say. Enough to read, not to page. */
@@ -78,12 +80,12 @@ export const createAiLog = (db: Db): AiLog => {
        (at, trace_id, run_id, step, operation, provider_id, model_id,
         prompt_chars, input_bytes, completion_chars,
         input_tokens, output_tokens, total_tokens,
-        latency_ms, finish_reason, outcome, error_code)
+        latency_ms, finish_reason, outcome, error_code, masked)
      VALUES
        (:at, :traceId, :runId, :step, :operation, :providerId, :modelId,
         :promptChars, :inputBytes, :completionChars,
         :inputTokens, :outputTokens, :totalTokens,
-        :latencyMs, :finishReason, :outcome, :errorCode)`
+        :latencyMs, :finishReason, :outcome, :errorCode, :masked)`
   );
 
   const forRun = db.prepare<[string]>(
@@ -116,7 +118,8 @@ export const createAiLog = (db: Db): AiLog => {
           latencyMs: entry.latencyMs,
           finishReason: entry.finishReason ?? null,
           outcome: entry.outcome,
-          errorCode: entry.errorCode ?? null
+          errorCode: entry.errorCode ?? null,
+          masked: entry.masked === undefined ? null : JSON.stringify(entry.masked)
         });
       } catch (error) {
         // The message only, and to stderr — stdout is the host's transport.

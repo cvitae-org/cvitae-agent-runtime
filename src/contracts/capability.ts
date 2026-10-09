@@ -17,6 +17,7 @@
 
 import type { z } from 'zod';
 import type { ConversationTurn } from './effects.js';
+import type { SentField } from './grounding.js';
 import type { RunContext, StepContext, StepKind, RuntimeErrorCode } from './run.js';
 
 type StepBase = {
@@ -35,13 +36,38 @@ type StepBase = {
 };
 
 /**
+ * What a step that calls a model says about the input it sends.
+ *
+ * Only the three kinds that reach a model have it. A `transform` runs no model,
+ * and a field it reads has not reached anything.
+ */
+type Sends = {
+  /**
+   * The fields of the run's input that go into this step's model call.
+   *
+   * Recorded as the call goes out and not when the plan is made, because a
+   * `generate` step that answers from `directText` makes no call, and a field
+   * that never left the process has not been sent.
+   */
+  readonly sends?: readonly SentField[];
+
+  /**
+   * The name of an earlier step that made part of this call's input and says what
+   * it is made of (`Grounded`), or the names of several. Their entries are recorded
+   * as the call goes out, for the same reason `sends` is: a call that never goes
+   * out has sent nothing.
+   */
+  readonly groundedFrom?: string | readonly string[];
+};
+
+/**
  * One structured call against a narrow schema.
  *
  * No tool calling, so this runs on models that cannot do it. Narrow is the
  * operative word: a schema with four fields is answered reliably by a model
  * that returns `{}` for a schema with twenty.
  */
-export type ExtractStep = StepBase & {
+export type ExtractStep = StepBase & Sends & {
   readonly kind: 'extract';
   /** Only these typed failures may degrade even when this step is critical. */
   readonly fallbackOn?: readonly RuntimeErrorCode[];
@@ -82,7 +108,7 @@ export type ExtractStep = StepBase & {
  * The rule this leaves behind: **`extract` is for values carved out of text,
  * `generate` is for text.** A schema earns its place when the output has parts.
  */
-export type GenerateStep = StepBase & {
+export type GenerateStep = StepBase & Sends & {
   readonly kind: 'generate';
   /** Use a known answer from earlier steps without another model call. */
   readonly directText?: (context: StepContext) => string | undefined;
@@ -94,7 +120,7 @@ export type GenerateStep = StepBase & {
   readonly fallback?: Readonly<Record<string, unknown>>;
 };
 
-export type ToolLoopStep = StepBase & {
+export type ToolLoopStep = StepBase & Sends & {
   readonly kind: 'tool_loop';
   readonly system: string;
   readonly prompt: string | ((context: StepContext) => string);
@@ -177,6 +203,29 @@ export type RunResult<T = Record<string, unknown>> = {
 };
 
 /**
+ * Something a capability needs of a run, said before any model is called.
+ *
+ * A capability that is asked to answer from pieces nobody selected has nothing to
+ * answer from, and finding that out after a model call has been paid for helps no
+ * one. A required need that cannot be met fails the run before it starts; an
+ * optional one is named under `degraded` once the run has finished, so the answer
+ * says what it was made without.
+ */
+export type Need = {
+  /** What is named under `degraded` when an optional need is not met. */
+  readonly name: string;
+  readonly required: boolean;
+  /** Why it cannot be met, in plain words. Absent when it can. */
+  readonly unmet?: string;
+  /**
+   * The code a required need that is not met fails the run with, when it has one
+   * of its own: a limit has a name a host words, and `needs_unmet` would only say
+   * that something was not as it should be. The message is then `unmet` alone.
+   */
+  readonly code?: string;
+};
+
+/**
  * A unit of work the runtime exposes.
  *
  * `plan` is where the two execution modes diverge: return a fixed list of stages
@@ -201,6 +250,47 @@ export interface Capability<TInput extends Record<string, unknown> = Record<stri
    * arrives here has already been proven to match `TInput`.
    */
   plan(input: TInput, context: RunContext): Plan | Promise<Plan>;
+
+  /**
+   * What this run needs, asked after the input is validated and before `plan`,
+   * which may itself call a model. A method for the reason `plan` is one. It reads
+   * the context but runs nothing: no model, no tool, no write.
+   */
+  needs?(input: TInput, context: RunContext): readonly Need[];
+
+  /**
+   * What a message to this capability is made of, in characters by part, which a
+   * preview shows beside the limit (`runtime/preview.ts`). The same numbers
+   * `needs` holds the message to, so that what is shown is what a run would be
+   * refused for. Reads the context and nothing else.
+   */
+  measure?(input: TInput, context: RunContext): Readonly<Record<string, number>>;
+
+  /**
+   * Whether the runs of this capability say, in their record, everything they
+   * send to a model.
+   *
+   * It is what lets a later run trust the record to tell what an answer was built
+   * from. An answer of a capability that is not recorded has no such account, and
+   * the runtime treats where it came from as unknown. A recorded capability that
+   * takes `history` and `summary` is also one whose conversation the runtime keeps
+   * itself when the host sends neither (`runtime/history.ts`).
+   */
+  readonly recorded?: boolean;
+
+  /**
+   * Present on a capability whose runs send what a person handed in, as it is, to
+   * a model: the text of a document, a screenshot. Masking cannot help there,
+   * since reading those details is what the call is for, so the person is asked
+   * instead. Answers the one hosted provider the input says the person agreed
+   * may read it, or `undefined` when it names none.
+   *
+   * A run of such a capability goes to a provider on this machine or to that one.
+   * It is refused before its first call when it would go anywhere else, and so is
+   * each call that would (`effects/consent.ts`), with `egress_consent_required`.
+   * A method for the reason `plan` is one.
+   */
+  consented?(input: TInput): string | undefined;
 
   /**
    * Folds step outputs into the capability's result shape. Defaults to a

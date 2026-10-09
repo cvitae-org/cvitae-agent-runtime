@@ -321,3 +321,18 @@ export interface OfferStore {
    */
   byIdentity(company: string, position: string): OfferRecord[];
 }
+
+/**
+ * A look at the saved offers, for a message that asks which of some offers fit a
+ * CV. Read-only: nothing here can change an offer, a board or a selection.
+ *
+ * Present on a run that is about a CV of the person's own and whose runtime keeps
+ * offers. An offer is never read for a wall: the caller asks only for the ids that
+ * no exclusion covers.
+ */
+export interface OfferShelf {
+  /** The saved offers of these ids as they are now. An id nothing carries is left out. */
+  read(ids: readonly string[]): readonly OfferRecord[];
+  /** Which of these ids are on the Board now (an archived entry is not). */
+  onBoard(ids: readonly string[]): ReadonlySet<string>;
+}

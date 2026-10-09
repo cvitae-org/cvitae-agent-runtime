@@ -14,7 +14,7 @@ import { createBoardStore } from '../storage/sqlite/board.js';
 import { createApplicationAgent } from './application-agent.js';
 import { createBoardService } from './board.js';
 import type { BoardRunInput } from '../contracts/board.js';
-import type { OfferReader } from '../contracts/index.js';
+import type { MaskTerms, OfferReader } from '../contracts/index.js';
 import { createOfferFactStore } from '../storage/sqlite/offer-facts.js';
 import { createFactPort } from './offer-facts.js';
 import { createOpportunityStore } from '../storage/sqlite/opportunities.js';
@@ -57,11 +57,17 @@ import { join, dirname, resolve } from 'node:path';
 import { open } from '../storage/sqlite/open.js';
 import { migrate } from '../storage/sqlite/migrate.js';
 import { createRunStore } from '../storage/sqlite/run-store.js';
+import { createRecordStore } from '../storage/sqlite/grounding-record.js';
+import { createSelectionStore } from '../storage/sqlite/grounding-selection.js';
+import { createLimitStore } from '../storage/sqlite/grounding-limits.js';
 import { createEventLog } from '../storage/sqlite/event-log.js';
 import { createApprovalGate, createApprovalStore } from '../storage/sqlite/approvals.js';
 import { createDocumentStore } from '../storage/sqlite/document-store.js';
 import { createIndexRecoveryStore } from '../storage/sqlite/index-recovery.js';
 import { createIndexRebuilder } from './index-recovery.js';
+import { createMaskTerms, termSeeds } from './mask-terms.js';
+import { maskedGateway, masksEmbedding } from '../effects/masking.js';
+import { cvSeeds } from '../capabilities/cv/seeds.js';
 import { createCvLifecycle } from '../storage/sqlite/cv-lifecycle.js';
 import { createOfferSnapshots } from '../storage/sqlite/offer-snapshots.js';
 import { createContextPhotos } from '../storage/sqlite/context-photos.js';
@@ -69,7 +75,7 @@ import { createCvContextStore } from '../storage/sqlite/cv-contexts.js';
 import { createCvCopies } from '../storage/sqlite/cv-copy.js';
 import { bindOfferScope, snapshotInput } from './offer-scope.js';
 import { bindCvScope } from './cv-scope.js';
-import { CvContextError, RuntimeError } from '../contracts/index.js';
+import { CvContextError, RuntimeError, maskModeOf, maskScopeOf } from '../contracts/index.js';
 import { createChunkIndex } from '../storage/sqlite/chunk-index.js';
 import { createOfferStore } from '../storage/sqlite/offers.js';
 import { createDiscoveryCatalogue } from '../storage/sqlite/discovery.js';
@@ -108,13 +114,27 @@ import { createRetriever } from '../retrieval/search.js';
 import { createToolRegistry } from '../tools/registry.js';
 import { defaultTools } from '../tools/index.js';
 import { capabilities as defaultCapabilities } from '../capabilities/index.js';
+import { cvChangesSchema } from '../capabilities/cv/diff.js';
 import { CV_ID, CV_KIND, cvDocumentSchema, normaliseCv } from '../capabilities/cv/document.js';
+import { cvHolds } from '../capabilities/cv/walls.js';
+import { CV_WELL, cvOf } from '../capabilities/cv/well.js';
+import { OFFERS_WELL } from '../capabilities/offers/well.js';
 import { requireSameRun } from './run-identity.js';
 import { route, validateInput } from '../core/router.js';
 import { createCheckpointer } from '../runs/checkpoint.js';
+import { previewRun } from './preview.js';
+import type { Preview, PreviewRequest } from './preview.js';
 import { beginRun, startRun, type RunHandle, type RuntimeDeps, type RunRequest } from './run.js';
 import { beginResume, resumeRun, type ResumeRequest } from './resume.js';
 import { recoverInterruptedRuns } from './recover.js';
+import { defaultWells } from './grounding.js';
+import { createCompaction } from './compaction.js';
+import type { Compaction } from './compaction.js';
+import { createHistory } from './history.js';
+import { createSelectionService } from './selection.js';
+import type { SelectionService } from './selection.js';
+import { createLimitService } from './limits.js';
+import type { LimitService } from './limits.js';
 import type {
   AiLog,
   AiLogEntry,
@@ -134,6 +154,7 @@ import type {
   EventLog,
   MailSender,
   OfferStore,
+  RecordStore,
   RunRecord,
   RunResult,
   RunStore,
@@ -181,6 +202,11 @@ export const aiLine = (entry: AiLogEntry): string =>
     entry.usage.outputTokens === undefined ? undefined : `out=${entry.usage.outputTokens}t`,
     `${entry.latencyMs}ms`,
     entry.finishReason ? `finish=${entry.finishReason}` : undefined,
+    // How many placeholders a masked call sent, all kinds together: whoever wants
+    // them kind by kind reads the table.
+    entry.masked === undefined
+      ? undefined
+      : `masked=${Object.values(entry.masked).reduce((sum, count) => sum + count, 0)}`,
     entry.outcome === 'ok' ? 'ok' : `failed=${entry.errorCode ?? 'unknown'}`
   ].filter(Boolean).join(' ');
 
@@ -257,12 +283,47 @@ export type Harness = {
    * between — a CLI, a test.
    */
   begin(request: RunRequest): RunHandle;
+  /**
+   * What a message would be made of, said without making a run: nothing is
+   * written and no model is asked, in either mode (`runtime/preview.ts`).
+   */
+  preview(request: PreviewRequest): Promise<Preview>;
   findRun(request: RunRequest): RunRecord | undefined;
   beginResume(request: ResumeRequest): RunHandle;
   cancelSuspended(runId: string): boolean;
   run(request: RunRequest): Promise<RunResult>;
   resume(request: ResumeRequest): Promise<RunResult>;
   readonly runs: RunStore;
+  /**
+   * What each chat run was given and what it read, read back.
+   *
+   * The read half only. The run writes its own record as it goes and a host has
+   * no business adding to it: a record a host can write is a record that says
+   * what the host wishes had happened.
+   */
+  readonly groundingRecords: Pick<RecordStore, 'read'>;
+  /**
+   * What each conversation leaves out of what its runs are given. Reading and
+   * changing it go through here, and a change is checked against what the
+   * conversation can enforce.
+   */
+  readonly selection: SelectionService;
+  /**
+   * The most the material of one message may come to: one setting for everything
+   * and one a conversation may have of its own, in characters.
+   */
+  readonly limits: LimitService;
+  /**
+   * The terms a person asked to have kept from a model besides what the CV states,
+   * in memory only. A background rebuild that would be masked waits until they are
+   * set, an empty list included.
+   */
+  readonly maskTerms: MaskTerms;
+  /**
+   * What a `/compact` would fold, decided where the exclusions are known: the turns
+   * a host may give the model that writes the conversation's note, and no more.
+   */
+  readonly compaction: Compaction;
   readonly events: EventLog;
   readonly documents: DocumentStore;
   /** Checked context lifecycle; legacy work must settle before transition. */
@@ -371,6 +432,10 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   migrate(db);
 
   const runs = createRunStore(db);
+  const groundingRecords = createRecordStore(db);
+  const selectionStore = createSelectionStore(db);
+  const limitStore = createLimitStore(db);
+  const wells = defaultWells();
   const events = createEventLog(db);
   const approvals = createApprovalStore(db, options.now);
   const documents = createDocumentStore(db, options.now);
@@ -485,8 +550,29 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     ...(options.now ? { now: options.now } : {})
   });
 
+  // In memory and nowhere else: Studio sends them when it connects.
+  const maskTerms = createMaskTerms();
+
+  // What the index is made from, and what it is searched with, is the person's CV
+  // and the person's words, and neither happens inside a run, so a run's own
+  // wrapper never sees them. This is the same rule for the one call a run does not
+  // make: an embedder that is not on this machine is sent placeholders, and the
+  // vectors that come back need nothing put right. The mode, the scope, the CV
+  // and the terms are asked at each call, as a run asks them at each message.
+  const embedder = maskedGateway(ai, {
+    mode: () => maskModeOf(settings.read().maskMode),
+    seeds: () => [...cvSeeds(documents, maskScopeOf(settings.read().maskScope)), ...termSeeds(maskTerms.read())],
+    detect: true
+  });
+
   const indexJobs = createIndexRecoveryStore(db, chunks, options.now);
-  const indexRebuilder = createIndexRebuilder(indexJobs, ai);
+  // A rebuild starts by itself, before any host has said a word, so it is the one
+  // call that could be made before the runtime is told the terms. One that would
+  // be masked waits for them, an empty list included; one that would not is sent
+  // as it always was.
+  const indexRebuilder = createIndexRebuilder(indexJobs, embedder, {
+    ready: () => maskTerms.declared() || !masksEmbedding(maskModeOf(settings.read().maskMode), ai)
+  });
   if (options.indexRecovery) indexRebuilder.start();
 
   // One reader, two names on it. The pairing `retrieval` and `index` make on
@@ -514,7 +600,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
 
   // The reader half only. `chunks` keeps the write half up here, where indexing
   // happens, and a step is handed something with no `replace` on it at all.
-  const retrieval = createRetriever({ reader: chunks, ai, traceId: 'retrieval' });
+  const retrieval = createRetriever({ reader: chunks, ai: embedder, traceId: 'retrieval' });
 
   const deps: RuntimeDeps = {
     scopeLegacy: assertLegacy,
@@ -528,14 +614,19 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
       if (!snapshot || snapshot.conversationId !== conversationId || !conversations.read(conversationId)) {
         throw new CvContextError('context_conflict', 'Snapshot and conversation do not match.');
       }
-      return bindOfferScope(snapshot, effects);
+      return { ...bindOfferScope(snapshot, effects), offerId: snapshot.offer.id };
     },
     finish: db.transaction((runId: string, result: RunResult, commit: (result: RunResult) => void) => {
       const run = runs.get(runId);
       let final = result;
       if (run?.contextId && !run.offerSnapshotId && run.capability === 'edit_cv' && result.data.changed === true && result.data.base) {
         const proposal = cvLifecycle.propose(runId, result.data.base as CvProposalBase,
-          normaliseCv(cvDocumentSchema.parse(result.data.document)));
+          normaliseCv(cvDocumentSchema.parse(result.data.document)),
+          // What the edit was aimed at and what it changed, which an accept writes
+          // and nothing else. Parsed, so that what is stored is what a host is told.
+          typeof result.data.target === 'string' && result.data.changes !== undefined
+            ? { target: result.data.target, changes: cvChangesSchema.parse(result.data.changes) }
+            : undefined);
         final = { ...result, data: { ...result.data, proposalId: proposal.id } };
       }
       if (run?.offerSnapshotId) {
@@ -569,6 +660,34 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     documents,
     retrieval,
     index: chunks,
+    grounding: { records: groundingRecords, wells },
+    // Asked at the start of every run, so a change made in settings is in force
+    // for the next message and no run is half one thing and half the other.
+    masking: {
+      mode: () => maskModeOf(settings.read().maskMode),
+      scope: () => maskScopeOf(settings.read().maskScope),
+      terms: maskTerms.read
+    },
+    selection: selectionStore,
+    limits: limitStore,
+    offerShelf: {
+      read: (ids) =>
+        ids.flatMap((id) => {
+          const offer = offers.get(id);
+          return offer === undefined ? [] : [offer];
+        }),
+      // The Board is made below, and is asked at the time a message is, not now.
+      onBoard: (ids) => {
+        const onBoard = new Set(boardStore.list().map((entry) => entry.offerId));
+        return new Set(ids.filter((id) => onBoard.has(id)));
+      }
+    },
+    history: createHistory({
+      conversations,
+      records: groundingRecords,
+      walls: (conversationId) => selectionStore.walls(conversationId),
+      capabilities: options.capabilities ?? defaultCapabilities
+    }),
     logger,
     ...(options.deltas ? { deltas: options.deltas } : {}),
     newRunId: options.newRunId ?? (() => crypto.randomUUID()),
@@ -576,9 +695,9 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs })
   };
 
-  const discoveryChatStore = createDiscoveryChatStore(db, conversations, options.now, offerQueryStore);
+  const discoveryChatStore = createDiscoveryChatStore(db, conversations, options.now, offerQueryStore, (conversationId) => selectionStore.walls(conversationId));
   const discoveryChat = createDiscoveryChatService(discoveryChatStore, (scope, signal, onText) => beginRun({
-    ...bindDiscoveryScope(deps), timeoutMs: Math.min(options.timeoutMs ?? 120000,120000), capabilities: { ask_discovery: askDiscoverySql(scope, createDiscoverySqlPort(offerQueries, offerQueryStore, discoveryChatStore.recordSql, factPort, collectionPort)) },
+    ...bindDiscoveryScope(deps), timeoutMs: Math.min(options.timeoutMs ?? 120000,120000), capabilities: { ask_discovery: askDiscoverySql(scope, createDiscoverySqlPort(offerQueries, offerQueryStore, discoveryChatStore.recordSql, factPort, collectionPort, discoveryChatStore.scope)) },
     deltas: (delta) => { onText(delta.text); deps.deltas?.(delta); },
     finish: (runId,result,commit) => {
       if (signal.aborted) throw new RuntimeError('Cancelled','aborted');
@@ -598,7 +717,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
 
   const factPort=createFactPort(offerQueryStore,createOfferFactStore(db),(id,signal)=>enrichment.details.ensure(id,false,signal),()=>environment.env.LOCAL_BASE_URL?.trim()??'default');
 
-  const collectionPort=createCollectionPort(discovery,discoverySearches,offerQueryStore,(id,signal)=>enrichment.details.ensure(id,false,signal));
+  const collectionPort=createCollectionPort(discovery,discoverySearches,offerQueryStore,(id,signal)=>enrichment.details.ensure(id,false,signal),undefined,(searchId)=>discoveryChatStore.excluded(searchId));
 
   const detailQueue = createDetailQueue(createDetailQueueStore(db), enrichment, discoverySearches);
 
@@ -650,6 +769,7 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
       return record;
     },
     begin: (request) => beginRun(deps, request),
+    preview: (request) => previewRun(deps, request),
     cancelSuspended: db.transaction((runId: string) => {
       if (runs.get(runId)?.status !== 'suspended') return false;
       createCheckpointer(runs, runId, options.now ?? Date.now).cancelled();
@@ -659,6 +779,29 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
     run: (request) => startRun(deps, request),
     resume: (request) => resumeRun(deps, request),
     runs,
+    // The read half only: the type says so, and so does handing out a wrapper
+    // that has no `append` for a caller that ignores the type.
+    groundingRecords: { read: (runId) => groundingRecords.read(runId) },
+    limits: createLimitService({ store: limitStore, conversations }),
+    maskTerms,
+    compaction: createCompaction({
+      conversations,
+      records: groundingRecords,
+      walls: (conversationId) => selectionStore.walls(conversationId),
+      capabilities: options.capabilities ?? defaultCapabilities
+    }),
+    selection: createSelectionService({
+      store: selectionStore,
+      conversations,
+      wells,
+      holds: (ref) => {
+        if (ref.well === CV_WELL) {
+          const found = documents.read(ref.scope);
+          return cvHolds(found !== undefined && found.kind === CV_KIND ? cvOf(found.body) : undefined, ref.path);
+        }
+        return ref.well === OFFERS_WELL && offers.get(ref.scope) !== undefined;
+      }
+    }),
     events,
     documents,
     offerSnapshots,

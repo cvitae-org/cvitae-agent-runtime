@@ -122,6 +122,11 @@ export interface ConversationStore {
    * folded in twice and read as having been said twice.
    */
   summarise(id: string, summary: string, through: number): Conversation | undefined;
-  /** Whether there was one. Its messages go with it. */
+  /**
+   * Whether there was one. Its messages go with it, and so do its selection, its
+   * pins and its limit. So do the runs it made and what each was given, once they
+   * have ended: all but a run a CV proposal still points at, which stays as long
+   * as the proposal does, and one that is still going.
+   */
   delete(id: string): boolean;
 }

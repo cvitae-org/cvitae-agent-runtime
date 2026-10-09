@@ -38,6 +38,8 @@ import {
   cvDocumentSchema,
   type CvDocument
 } from './document.js';
+import { cvView, restoreCv, viewOf } from './walls.js';
+import type { CvWithheld } from './walls.js';
 
 /* ------------------------------------------------------------------- input */
 
@@ -268,8 +270,13 @@ const languagesTranslation = z.object({
 
 /* ------------------------------------------------------------------- steps */
 
+/** The document that is translated: the source, with whatever the conversation excludes taken out. */
 const source = (context: StepContext): CvDocument =>
   context.completed.source?.document as CvDocument;
+
+/** What was taken out of it. It is not translated, and goes back into the result as it was. */
+const withheldOf = (context: StepContext): CvWithheld | undefined =>
+  context.completed.source?.withheld as CvWithheld | undefined;
 
 const rules = (input: TranslateCvInput): string => {
   const from = languageName(input.source_language) ?? input.source_language;
@@ -575,6 +582,12 @@ const assemble = (context: StepContext): CvDocument => {
   return document;
 };
 
+/** The assembled document with what was never shown to the model put back. */
+const restored = (context: StepContext, document: CvDocument): CvDocument => {
+  const withheld = withheldOf(context);
+  return withheld === undefined ? document : restoreCv(document, withheld);
+};
+
 /* -------------------------------------------------------------- capability */
 
 export const translateCv: Capability<TranslateCvInput> = {
@@ -607,7 +620,13 @@ export const translateCv: Capability<TranslateCvInput> = {
               name: 'source',
               critical: true,
               run: async (context) => {
-                if (input.document) return { document: input.document };
+                // What the conversation has excluded is not sent to a model, so
+                // it is not translated. It is not lost either: the result is a
+                // whole document, and `assemble` puts it back.
+                if (input.document) {
+                  const view = cvView(input.document, context.walls?.pieces() ?? [], context.contextId ?? CV_ID);
+                  return view.walled ? { document: view.shown, withheld: view.withheld } : { document: input.document };
+                }
 
                 const record = context.documents.read(CV_ID);
                 if (!record) {
@@ -617,7 +636,11 @@ export const translateCv: Capability<TranslateCvInput> = {
                   );
                 }
 
-                return { document: cvDocumentSchema.parse(record.body) };
+                const cut = viewOf(record);
+                return {
+                  document: cvDocumentSchema.parse(record.body),
+                  ...(cut?.walled === true ? { withheld: cut.withheld } : {})
+                };
               }
             }
           ]
@@ -643,7 +666,7 @@ export const translateCv: Capability<TranslateCvInput> = {
               critical: true,
               run: async (context) =>
                 ({
-                  document: assemble(context),
+                  document: restored(context, assemble(context)),
                   translated: selected.map((step) => step.name as Section),
                   source_language: input.source_language,
                   target_language: input.target_language

@@ -50,6 +50,7 @@ import {
   CV_PHOTO_KIND
 } from '../../capabilities/cv/photo.js';
 import { all, page } from '../../events/tail.js';
+import { planDigestOf } from '../../grounding/index.js';
 import type { RunHandle } from '../../runtime/run.js';
 import type { RunRecord, RunResult } from '../../contracts/index.js';
 import type { Harness } from '../../runtime/create.js';
@@ -168,7 +169,7 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
    * describes. Here the mapped type does it: a handler that reads a field its
    * schema does not declare fails to compile.
    */
-  const launch = ({ capability, input, runId, contextId, conversationId, contextGeneration, contextRevision, offerSnapshotId }: {
+  type Launch = {
     capability: string;
     input: unknown;
     runId?: string;
@@ -177,26 +178,82 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     contextGeneration?: number;
     contextRevision?: number;
     conversationId?: string;
-  }): Response => {
-    const existing = harness.findRun({ capability, input,
-      ...(runId === undefined ? {} : { runId }), ...(contextId === undefined ? {} : { contextId }),
-      ...(conversationId === undefined ? {} : { conversationId }), ...(offerSnapshotId === undefined ? {} : { offerSnapshotId }),
-      ...(contextGeneration === undefined ? {} : { contextGeneration }), ...(contextRevision === undefined ? {} : { contextRevision }) });
-    if (existing) return ok({ runId: existing.id, status: existing.status, recovered: true });
+    approved?: { planDigest: string };
+  };
+
+  /** What a run is looked for by, and a preview is made from: everything but the way it is started. */
+  const scopeOf = ({ contextId, conversationId, contextGeneration, contextRevision, offerSnapshotId }: Omit<Launch, 'capability' | 'input'>) => ({
+    ...(contextId === undefined ? {} : { contextId }),
+    ...(conversationId === undefined ? {} : { conversationId }),
+    ...(offerSnapshotId === undefined ? {} : { offerSnapshotId }),
+    ...(contextGeneration === undefined ? {} : { contextGeneration }),
+    ...(contextRevision === undefined ? {} : { contextRevision })
+  });
+
+  const recovered = ({ capability, input, runId, ...rest }: Launch): Response | undefined => {
+    const existing = harness.findRun({ capability, input, ...(runId === undefined ? {} : { runId }), ...scopeOf(rest) });
+    return existing ? ok({ runId: existing.id, status: existing.status, recovered: true }) : undefined;
+  };
+
+  const start = ({ capability, input, runId, ...rest }: Launch): Response => {
     const { controller, deadline } = started();
     return track(harness.begin({
       capability,
       input,
-      ...(offerSnapshotId === undefined ? {} : { offerSnapshotId }),
-      ...(contextId === undefined ? {} : { contextId }),
-      ...(contextGeneration === undefined ? {} : { contextGeneration }),
-      ...(contextRevision === undefined ? {} : { contextRevision }),
-      ...(conversationId === undefined ? {} : { conversationId }),
+      ...scopeOf(rest),
       runId: runId ?? crypto.randomUUID(),
       signal: controller.signal,
       ...deadline
     }), controller);
   };
+
+  const launch = (request: Launch): Response => recovered(request) ?? start(request);
+
+  /**
+   * A start that names the plan the person approved.
+   *
+   * A run that already exists is answered first, as it is for any start: a retry
+   * of a start that went through must find its run and not be told the plan has
+   * moved because the run it began has since changed the record. Then the message
+   * is previewed in full, now, and sent only if it is made of what was approved.
+   * A message that would be refused is refused with its own reason and not with
+   * a conflict, because the person needs to know which of the two it was. No run
+   * is made for either.
+   *
+   * The check and the start are two readings: this protects a person from what
+   * changed since they looked, and not from what changes in the instant between
+   * the check and the start.
+   */
+  const approving = async (request: Launch, approved: { planDigest: string }): Promise<Response> => {
+    const already = recovered(request);
+    if (already) return already;
+
+    const { capability, input, contextId, conversationId, contextGeneration, contextRevision, offerSnapshotId } = request;
+    const preview = await harness.preview({
+      mode: 'full',
+      capability,
+      input,
+      ...(contextId === undefined ? {} : { contextId }),
+      ...(conversationId === undefined ? {} : { conversationId }),
+      ...(offerSnapshotId === undefined ? {} : { offerSnapshotId }),
+      ...(contextGeneration === undefined ? {} : { contextGeneration }),
+      ...(contextRevision === undefined ? {} : { contextRevision })
+    });
+
+    if (preview.refusal) return failed(preview.refusal.code, preview.refusal.message);
+    if (preview.planDigest !== approved.planDigest) {
+      return failed(
+        'plan_conflict',
+        'What this message would be made of is not what was approved. Preview it again.',
+        { planDigest: preview.planDigest }
+      );
+    }
+
+    return start(request);
+  };
+
+  const launching = (request: Launch): Promise<Response> | Response =>
+    request.approved === undefined ? launch(request) : approving(request, request.approved);
 
   const handlers: { [C in Channel]: (input: PayloadOf<C>) => Promise<Response> | Response } = {
     'capabilities.list': () =>
@@ -212,7 +269,7 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     'browser.configure': async ({enabled}) => ok(await harness.browser.configure(enabled)),
     'browser.poll': ({after}) => ok(harness.browser.store.poll(after)),
     'browser.collection': () => ok(harness.browser.store.collection()),
-    'protocol.get': () => ok({ version: 2, features: ['cv-contexts', 'checked-writes', 'durable-proposals', 'context-copy', 'offer-snapshot-runs', 'board-workspaces-v1', 'board-application-agent-v1', 'browser-companion-v1', 'studio-browser-v1', 'discovery-board-threads-v1', 'provider-connection-test-v1'], languages: ['pl', 'en'] }),
+    'protocol.get': () => ok({ version: 2, features: ['cv-contexts', 'checked-writes', 'durable-proposals', 'context-copy', 'offer-snapshot-runs', 'board-workspaces-v1', 'board-application-agent-v1', 'browser-companion-v1', 'studio-browser-v1', 'discovery-board-threads-v1', 'provider-connection-test-v1', 'grounding-record', 'grounding-selection', 'grounding-history', 'grounding-assembly', 'grounding-budget', 'grounding-preview', 'grounding-offers', 'grounding-edits', 'grounding-compaction', 'masking', 'masking-detectors', 'masking-embedding', 'masking-strict', 'masking-terms', 'masking-counts', 'cv-contact', 'egress-consent'], languages: ['pl', 'en'] }),
     'board.application.start': request => ok(harness.applicationAgent.start(request)),
     'board.application.observe': async request => ok(await harness.applicationAgent.observe(request)),
     'board.application.report': request => ok(harness.applicationAgent.report(request)),
@@ -236,7 +293,7 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     'profile.contexts.assignLanguage': ({ contextId, language, expectedRevision }) => ok({ context: harness.cvContexts.assignLanguage(contextId, language, expectedRevision) }),
     'profile.contexts.copy': ({ id, language, sourceContextId, expectedSourceRevision }) => ok(harness.cvCopies.copy({ id, language, sourceContextId, expectedSourceRevision })),
     'profile.contexts.provenance': ({ contextId }) => { harness.profile.readContext(contextId); return ok(harness.cvCopies.get(contextId)?.provenance ?? null); },
-    'run.offer.start': launch,
+    'run.offer.start': launching,
     'profile.contexts.list': () => ok({ contexts: harness.cvContexts.list() }),
     'profile.context.reindex': ({ contextId }) => {
       harness.profile.readContext(contextId);
@@ -418,7 +475,9 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     },
 
     'run.start': launch,
-    'run.context.start': launch,
+    'run.context.start': launching,
+
+    'run.preview': async (request) => ok(await harness.preview(request)),
 
     'run.resume': ({ runId }) => {
       const { controller, deadline } = started();
@@ -509,6 +568,19 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
       return ok({ run: record, steps: harness.runs.steps(runId) });
     },
 
+    'runs.grounding': ({ runId }) => {
+      if (!harness.runs.get(runId)) return failed('not_found', `No such run: ${runId}`);
+
+      const record = harness.groundingRecords.read(runId);
+
+      // Two different absences. A run that has no conversation has nothing to be
+      // grounded in and no record, and a caller that is told "no such run" for
+      // it would go looking for a typo in the id.
+      if (!record) return failed('not_found', `Run ${runId} has no record of what it was given.`);
+
+      return ok({ record, planDigest: planDigestOf(record.entries) });
+    },
+
     'runs.events': ({ runId, after, limit }) => {
       if (!harness.runs.get(runId)) return failed('not_found', `No such run: ${runId}`);
 
@@ -568,7 +640,9 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
           modelId: settings.modelId ?? undefined,
           localBaseUrl: settings.localBaseUrl ?? undefined,
           embeddingProviderId: settings.embeddingProviderId ?? undefined,
-          embeddingModelId: settings.embeddingModelId ?? undefined
+          embeddingModelId: settings.embeddingModelId ?? undefined,
+          maskMode: settings.maskMode === undefined ? harness.settings.read().maskMode : (settings.maskMode ?? undefined),
+          maskScope: settings.maskScope === undefined ? harness.settings.read().maskScope : (settings.maskScope ?? undefined)
         })
       }),
 
@@ -663,8 +737,62 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
       return ok({ conversation: noted });
     },
 
+    'conversations.compactPlan': ({ conversationId, keep }) => {
+      const plan = harness.compaction.plan(conversationId, keep);
+
+      if (!plan) return failed('not_found', `No such conversation: ${conversationId}`);
+
+      return ok(plan);
+    },
+
     'conversations.delete': ({ conversationId }) =>
-      ok({ deleted: harness.conversations.delete(conversationId) })
+      ok({ deleted: harness.conversations.delete(conversationId) }),
+
+    'selection.get': ({ conversationId }) => {
+      const view = harness.selection.get(conversationId);
+
+      if (!view) return failed('not_found', `No such conversation: ${conversationId}`);
+
+      return ok(view);
+    },
+
+    'selection.update': ({ conversationId, expectedRevision, exclude, clear, pin, unpin }) => {
+      const result = harness.selection.update(conversationId, { expectedRevision, exclude, clear, pin, unpin });
+
+      if (!result) return failed('not_found', `No such conversation: ${conversationId}`);
+
+      // Nothing was written. What is current comes back with the refusal, so the
+      // caller reloads from the answer and does not have to ask again.
+      if (!result.applied) {
+        return failed('selection_conflict', 'The selection changed since it was read. Reload it and try again.', {
+          revision: result.view.revision,
+          exclusions: result.view.exclusions,
+          pins: result.view.pins
+        });
+      }
+
+      return ok(result.view);
+    },
+
+    'limits.get': ({ conversationId }) => {
+      const view = harness.limits.get(conversationId);
+
+      if (!view) return failed('not_found', `No such conversation: ${conversationId}`);
+
+      return ok(view);
+    },
+
+    'limits.set': ({ conversationId, context }) => {
+      const view = harness.limits.set(conversationId, context);
+
+      if (!view) return failed('not_found', `No such conversation: ${conversationId}`);
+
+      return ok(view);
+    },
+
+    'masking.terms.get': () => ok({ terms: harness.maskTerms.read(), declared: harness.maskTerms.declared() }),
+
+    'masking.terms.set': ({ terms }) => ok({ terms: harness.maskTerms.set(terms), declared: harness.maskTerms.declared() })
   };
 
   const handle = async (channel: Channel, payload: unknown): Promise<Response> => {

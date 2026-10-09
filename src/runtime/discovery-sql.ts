@@ -4,11 +4,23 @@ import { OperationError } from '../contracts/operation-error.js';
 import type { createOfferQueryService } from './offer-query.js';
 import type { OfferQueryStore } from '../storage/sqlite/offer-query-store.js';
 
-export function createDiscoverySqlPort(service: ReturnType<typeof createOfferQueryService>, store: OfferQueryStore, record: (context:DiscoveryAnswerContext)=>DiscoveryAnswerContext, facts?:DiscoverySqlPort['facts'], collection?:DiscoverySqlPort['collection']): DiscoverySqlPort {
+type Frozen = { offer_id: string; evidence_id: string; metadata: string }[];
+
+/**
+ * `remaining` is the members a turn may query once an exclusion cut some out of its
+ * snapshot (`storage/sqlite/discovery-chat.ts`). Without one the snapshot the
+ * host captured is queried as it is.
+ */
+export function createDiscoverySqlPort(service: ReturnType<typeof createOfferQueryService>, store: OfferQueryStore, record: (context:DiscoveryAnswerContext)=>DiscoveryAnswerContext, facts?:DiscoverySqlPort['facts'], collection?:DiscoverySqlPort['collection'], remaining?:(context:DiscoveryAnswerContext)=>Frozen): DiscoverySqlPort {
  return {
   record, facts, collection, schema: service.schema,
   async capture(context,signal) {
-   if(context.queryContext) return context.queryContext;
+   if(context.queryContext && !(context.withheldOffers && remaining)) return context.queryContext;
+   // The host's snapshot holds an offer this conversation excludes. Query a snapshot of the rest.
+   if(context.queryContext) {
+    const s=await store.capture(context.request.searchId,context.queryContext.scope,signal,remaining!(context));
+    return {snapshotId:s.id,scopeRevision:s.fingerprint!,scope:context.queryContext.scope};
+   }
    const scope={kind:'search' as const,searchId:context.request.searchId};
    // Legacy membership and metadata were captured at acceptance, never recaptured live.
    if(!context.capturedMembers) throw new OperationError('query_scope_expired','The original scope is unavailable. Resend this question.');

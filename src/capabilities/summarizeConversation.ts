@@ -47,7 +47,14 @@ import type { Capability, Plan } from '../contracts/index.js';
  * marker does not move on a failed run, so the backlog grows until one
  * succeeds, and this is what stops that one call being unbounded.
  */
-const MAX_TURNS = 40;
+export const MAX_TURNS = 40;
+
+/**
+ * How much of the turns the model is shown, as a transcript. A transcript longer
+ * than this is clipped at its end, which is the newest turns, so whatever picks
+ * the turns to fold keeps them within it (`runtime/compaction.ts`).
+ */
+export const TURNS_BUDGET = SUMMARY_BUDGET * 6;
 
 const CHARS_PER_TOKEN = 3;
 
@@ -161,7 +168,7 @@ export const summarizeConversation: Capability<SummarizeConversationInput> = {
             system: SYSTEM,
             prompt: compose(
               labelled('NOTE', input.summary, SUMMARY_BUDGET * 2),
-              labelled('NEW TURNS', renderTurns(input.turns), SUMMARY_BUDGET * 6)
+              labelled('NEW TURNS', renderTurns(input.turns), TURNS_BUDGET)
             ),
             maxOutputTokens:
               Math.ceil(SUMMARY_BUDGET / CHARS_PER_TOKEN) + THINKING_ALLOWANCE

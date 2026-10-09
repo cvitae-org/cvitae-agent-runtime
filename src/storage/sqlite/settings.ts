@@ -18,6 +18,8 @@ type SettingsRow = {
   local_base_url: string | null;
   embedding_provider_id: string | null;
   embedding_model_id: string | null;
+  mask_mode: string | null;
+  mask_scope: string | null;
 };
 
 /** Blank is unset, and `undefined` never becomes the string "undefined". */
@@ -33,18 +35,21 @@ const toSettings = (row: SettingsRow): Settings => ({
   modelId: unpack(row.model_id),
   localBaseUrl: unpack(row.local_base_url),
   embeddingProviderId: unpack(row.embedding_provider_id),
-  embeddingModelId: unpack(row.embedding_model_id)
+  embeddingModelId: unpack(row.embedding_model_id),
+  maskMode: unpack(row.mask_mode),
+  maskScope: unpack(row.mask_scope)
 });
 
 export const createSettingsStore = (db: Db, now: () => number = Date.now): SettingsStore => {
   const select = db.prepare<[]>('SELECT * FROM settings WHERE id = 1');
 
   const update = db.prepare<
-    [string | null, string | null, string | null, string | null, string | null, number]
+    [string | null, string | null, string | null, string | null, string | null, string | null, string | null, number]
   >(
     `UPDATE settings
         SET provider_id = ?, model_id = ?, local_base_url = ?,
-            embedding_provider_id = ?, embedding_model_id = ?, updated_at = ?
+            embedding_provider_id = ?, embedding_model_id = ?, mask_mode = ?, mask_scope = ?,
+            updated_at = ?
       WHERE id = 1`
   );
 
@@ -59,6 +64,8 @@ export const createSettingsStore = (db: Db, now: () => number = Date.now): Setti
         pack(next.localBaseUrl),
         pack(next.embeddingProviderId),
         pack(next.embeddingModelId),
+        pack(next.maskMode),
+        pack(next.maskScope),
         now()
       );
 

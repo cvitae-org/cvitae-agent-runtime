@@ -17,7 +17,16 @@ import { plan as makePlan } from '../core/planner.js';
 import { route, validateInput } from '../core/router.js';
 import { createCheckpointer } from '../runs/checkpoint.js';
 import * as emit from '../events/emit.js';
-import { CvContextError, OperationError, RuntimeError, isRunSuspension } from '../contracts/index.js';
+import { CvContextError, OperationError, RuntimeError, defaultMaskScope, isRunSuspension } from '../contracts/index.js';
+import { maskedGateway } from '../effects/masking.js';
+import { consentedGateway } from '../effects/consent.js';
+import { termSeeds } from './mask-terms.js';
+import { cvSeeds } from '../capabilities/cv/seeds.js';
+import { createRecorder, recordingDocuments, recordingRetrieval } from './grounding.js';
+import type { Grounding } from './grounding.js';
+import type { HistorySupplier } from './history.js';
+import { checkNeeds, withoutNeeds } from './needs.js';
+import { wallPorts } from './walls.js';
 import type {
   AiLogger,
   ApprovalGate,
@@ -25,13 +34,25 @@ import type {
   ChunkIndex,
   DocumentStore,
   EffectSet,
+  LimitStore,
+  Limits,
+  MaskMode,
+  MaskScope,
+  MaskSeed,
+  MaskTally,
+  OfferShelf,
+  RecordSink,
   Retriever,
   RunContext,
   RunResult,
   RunStore,
+  SelectionStore,
   StepDelta,
   StepOutcome,
-  ToolRegistry
+  SuppliedHistory,
+  ToolRegistry,
+  Pins,
+  Walls
 } from '../contracts/index.js';
 
 /**
@@ -44,11 +65,62 @@ import type {
 export type RuntimeDeps = {
   /** Resolves and validates captured context ownership before creating a run. */
   readonly scopeLegacy?: () => void;
-  readonly scopeOffer?: (snapshotId: string, conversationId: string) => Pick<RuntimeDeps, 'documents' | 'retrieval' | 'index' | 'effects'> & { readonly contextGeneration: number; readonly contextRevision: number };
+  readonly scopeOffer?: (snapshotId: string, conversationId: string) => Pick<RuntimeDeps, 'documents' | 'retrieval' | 'index' | 'effects' | 'offerId'> & { readonly contextGeneration: number; readonly contextRevision: number };
   readonly offerInput?: (snapshotId: string, capability: string, input: unknown) => unknown;
   readonly scopeCv?: (contextId: string, conversationId?: string, generation?: number, revision?: number) => Pick<RuntimeDeps, 'documents' | 'retrieval' | 'index'> & { readonly contextGeneration: number; readonly contextRevision: number };
   readonly contextGeneration?: number;
   readonly contextRevision?: number;
+  /**
+   * The saved offer a snapshot run is about, set by `scopeOffer` and by nothing
+   * else, so it exists only on the deps of a run bound to a snapshot.
+   */
+  readonly offerId?: string;
+  /**
+   * What lets a chat run say what the model was given and what it read.
+   *
+   * The run store opens and settles a record for every run that has a
+   * conversation, whether or not this is set. Absent means nothing writes into
+   * it: the record is still there, closed, with no entries, and the runtime
+   * behaves as it did before records existed. A record that is empty because
+   * nothing was recorded is not a statement that the model was given nothing,
+   * so a host that shows records must set this.
+   */
+  readonly grounding?: Grounding;
+  /**
+   * What each conversation has excluded. A run that belongs to a conversation
+   * reads the CV through ports with those pieces taken out, asked again at every
+   * read. Absent means nothing is excluded from any run, as before selections.
+   * `pins` are what the same conversation keeps in every message; absent means
+   * nothing is pinned, as before assembly.
+   */
+  readonly selection?: Pick<SelectionStore, 'walls'> & Partial<Pick<SelectionStore, 'pins'>>;
+  /**
+   * What a person has set as the most the material of a message may come to.
+   * Absent means nothing is set and each part is held to its own baseline only,
+   * as before limits.
+   */
+  readonly limits?: Pick<LimitStore, 'effective'>;
+  /**
+   * The saved offers a message may compare. Absent means the runtime keeps no
+   * offers a chat run can read, and a message that names some is refused.
+   */
+  readonly offerShelf?: OfferShelf;
+  /**
+   * When a model call of a run is masked and which of a person's values are:
+   * what a person has set, asked at the start of every run. Absent means no call
+   * is masked, as before masking. The terms a person asked to have kept are asked
+   * at each call, as the CV is; absent, there are none.
+   */
+  readonly masking?: {
+    readonly mode: () => MaskMode;
+    readonly scope?: () => MaskScope;
+    readonly terms?: () => readonly string[];
+  };
+  /**
+   * Keeps the conversation of a run whose host sent none. Absent means a run is
+   * given the history and summary it was sent, and nothing else, as before.
+   */
+  readonly history?: HistorySupplier;
   readonly finish?: (runId: string, result: RunResult, commit: (result: RunResult) => void) => RunResult;
   readonly capabilities: CapabilityMap;
   readonly runs: RunStore;
@@ -107,6 +179,100 @@ export const scopedDeps = (deps: RuntimeDeps, contextId?: string, conversationId
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
+/**
+ * What a run's model is not to be told, read from the CV the run is bound to.
+ *
+ * From the store the run was handed and not from the walled ports: a piece a
+ * person has left out of a message is a piece to keep from the model twice over,
+ * and a name that is excluded from the CV is still a name. A run that is not
+ * allowed to read the CV at all — discovery is not — has nothing of the person's
+ * to keep out of its calls, and says so by refusing the read; that refusal is
+ * the one thing not passed on.
+ */
+const seedsOf = (documents: DocumentStore, scope: MaskScope): readonly MaskSeed[] => {
+  try {
+    return cvSeeds(documents, scope);
+  } catch (error) {
+    if (error instanceof OperationError && error.code === 'search_scope') return [];
+    throw error;
+  }
+};
+
+/**
+ * The effects a run is handed: the same, with the gateway that masks. The mode and
+ * the scope are asked once, here, so a run is held to what a person had set when
+ * it began and not to whatever they have set since. A host that gives no scope
+ * is held to the default.
+ *
+ * The terms are values and not a setting, and are asked at each call with the CV:
+ * one added while a run waits is kept from its next call, and they are kept in a
+ * run that may not read the CV, because they are not the CV's.
+ *
+ * A run with a record has each call counted in it, before the call goes.
+ */
+const maskedEffects = (
+  effects: EffectSet,
+  masking: NonNullable<RuntimeDeps['masking']>,
+  documents: DocumentStore,
+  record: RecordSink | undefined
+): EffectSet => {
+  const scope = masking.scope?.() ?? defaultMaskScope;
+
+  return {
+    ...effects,
+    ai: maskedGateway(effects.ai, {
+      mode: masking.mode(),
+      seeds: () => [...seedsOf(documents, scope), ...termSeeds(masking.terms?.() ?? [])],
+      detect: true,
+      ...(record === undefined ? {} : { tally: (count: MaskTally) => record.masking(count) })
+    })
+  };
+};
+
+/**
+ * The effects a run is handed: masked when the host masks, and held to the
+ * provider a person agreed to when the capability sends their sources as they
+ * are (`effects/consent.ts`). Held over the mask and not under it, so a call that
+ * is refused is never counted as made. The source reader reads an image through
+ * the same gateway. A run with neither is handed the effects as they are.
+ */
+const runEffects = (
+  deps: RuntimeDeps,
+  capability: string,
+  input: Readonly<Record<string, unknown>>,
+  record: RecordSink | undefined
+): EffectSet => {
+  const masked =
+    deps.masking === undefined ? deps.effects : maskedEffects(deps.effects, deps.masking, deps.documents, record);
+  const declared = deps.capabilities[capability];
+  const ai =
+    declared?.consented === undefined ? masked.ai : consentedGateway(masked.ai, declared.consented(input));
+
+  return ai === deps.effects.ai ? deps.effects : { ...masked, ai, sources: deps.effects.sources.through(ai) };
+};
+
+/**
+ * The input a run is planned and run from: the one it was validated to, with the
+ * conversation put in when the runtime keeps it (`history.ts`).
+ *
+ * The stored input is never this one. A run's identity is its input as validated,
+ * and a retry of the same request has to find the same run whatever the
+ * conversation has grown by since. Shared with `resume.ts`, which reads the
+ * conversation again: a run that waited for a person is given what the
+ * conversation holds now, exclusions made while it waited included.
+ */
+export const givenInput = (
+  deps: Pick<RuntimeDeps, 'history'>,
+  capability: string,
+  conversationId: string | undefined,
+  runId: string,
+  input: Readonly<Record<string, unknown>>
+): { readonly input: Readonly<Record<string, unknown>>; readonly supplied?: SuppliedHistory } => {
+  const made =
+    conversationId === undefined ? undefined : deps.history?.supply({ capability, conversationId, runId, input });
+  return made === undefined ? { input } : made;
+};
+
 export const buildRunContext = (
   deps: RuntimeDeps,
   fields: {
@@ -121,20 +287,91 @@ export const buildRunContext = (
     input: Readonly<Record<string, unknown>>;
     signal: AbortSignal;
     deadlineAt: number;
-  }
-): RunContext => ({
-  ...fields,
-  effects: deps.effects,
-  tools: deps.tools,
-  documents: deps.documents,
-  retrieval: deps.retrieval,
-  index: deps.index,
-  approvals: deps.gate(fields.runId, 'plan'),
-  logger: deps.logger,
-  // The run id is added here rather than passed by the step, because a step
-  // that had to name the run it belongs to could name the wrong one.
-  deltas: (delta) => deps.deltas?.({ ...delta, runId: fields.runId })
-});
+    /** A context made for a preview, which calls no model (`preview.ts`). */
+    preview?: true;
+  },
+  /** What `fields.input` holds as the conversation, when the runtime put it there. */
+  supplied?: SuppliedHistory
+): RunContext => {
+  // Only a run that belongs to a conversation has a record, and building the
+  // sink reads nothing: the record is first touched by the first step that has
+  // something to say, which is inside the run's own failure handling.
+  const record =
+    deps.grounding === undefined || fields.conversationId === undefined
+      ? undefined
+      : createRecorder(deps.grounding, {
+          runId: fields.runId,
+          conversationId: fields.conversationId,
+          ...(fields.contextId === undefined ? {} : { contextId: fields.contextId }),
+          ...(deps.offerId === undefined ? {} : { offerId: deps.offerId }),
+          input: fields.input,
+          ...(supplied === undefined ? {} : { supplied })
+        });
+
+  // What the conversation has excluded, read at every access. Only a run that is
+  // about a CV of the person's own has anything to cut: a run about a saved offer
+  // reads a copy the offer was captured with, and no selection names that.
+  const { selection } = deps;
+  const { conversationId, contextId } = fields;
+  const walls: Walls | undefined =
+    selection === undefined || conversationId === undefined || contextId === undefined || deps.offerId !== undefined
+      ? undefined
+      : { pieces: () => selection.walls(conversationId) };
+
+  // What the conversation keeps in every message, on the runs that have walls and
+  // no others: a pin is a piece of the CV a run is about.
+  const pins: Pins | undefined =
+    walls === undefined || selection?.pins === undefined
+      ? undefined
+      : { pieces: () => selection.pins!(conversationId!) };
+
+  // What the person has set as the most a message's material may come to, on every
+  // run that belongs to a conversation, asked again at every message. A saved
+  // offer's conversation has a limit too: it is the amount of text that is
+  // bounded, and not what the text is about.
+  const limits: Limits | undefined =
+    conversationId === undefined || deps.limits === undefined
+      ? undefined
+      : { context: () => deps.limits!.effective(conversationId!) };
+
+  // Cut first and recorded after, so the record sees the stored document through
+  // the cut one and can say what of it the model was shown.
+  const ports =
+    walls === undefined || contextId === undefined
+      ? { documents: deps.documents, retrieval: deps.retrieval, index: deps.index }
+      : wallPorts({ documents: deps.documents, retrieval: deps.retrieval, index: deps.index }, walls, contextId);
+
+  // The one place a model is reached from a run, so the one place it is masked and
+  // held to where a person agreed their sources may go: every capability, step,
+  // tool and source read is handed this gateway. A preview calls no model and is
+  // left as it was.
+  const effects: EffectSet =
+    fields.preview === true ? deps.effects : runEffects(deps, fields.capability, fields.input, record);
+
+  return {
+    ...fields,
+    effects,
+    tools: deps.tools,
+    // The ports say what they were asked for. Wrapped only when there is a
+    // record to say it to, so every other run holds the ports it always did.
+    documents: record === undefined ? ports.documents : recordingDocuments(ports.documents, record),
+    retrieval:
+      record === undefined ? ports.retrieval : recordingRetrieval(ports.retrieval, ports.documents, record),
+    index: ports.index,
+    ...(record === undefined ? {} : { record }),
+    ...(walls === undefined ? {} : { walls }),
+    ...(pins === undefined ? {} : { pins }),
+    ...(limits === undefined ? {} : { limits }),
+    // On the runs that have walls and no others: an offer is left out by the same
+    // conversation that leaves a piece of its CV out.
+    ...(walls === undefined || deps.offerShelf === undefined ? {} : { offers: deps.offerShelf }),
+    approvals: deps.gate(fields.runId, 'plan'),
+    logger: deps.logger,
+    // The run id is added here rather than passed by the step, because a step
+    // that had to name the run it belongs to could name the wrong one.
+    deltas: (delta) => deps.deltas?.({ ...delta, runId: fields.runId })
+  };
+};
 
 /**
  * Records how a run ended and rethrows.
@@ -223,30 +460,40 @@ export const beginRun = (deps: RuntimeDeps, request: RunRequest): RunHandle => {
   const checkpoint = createCheckpointer(deps.runs, runId, now);
   checkpoint.started(deps.effects.ai.describe());
 
-  const context = buildRunContext(bound, {
-    ...(request.offerSnapshotId === undefined ? {} : { offerSnapshotId: request.offerSnapshotId }),
-      ...(request.contextId === undefined ? {} : { contextId: request.contextId }),
-      ...(bound.contextGeneration === undefined ? {} : { contextGeneration: bound.contextGeneration }),
-      ...(bound.contextRevision === undefined ? {} : { contextRevision: bound.contextRevision }),
-    ...(request.conversationId === undefined ? {} : { conversationId: request.conversationId }),
-    runId,
-    traceId,
-    capability: capability.name,
-    input,
-    signal: request.signal ?? new AbortController().signal,
-    deadlineAt
-  });
-
   const settled = (async (): Promise<RunResult> => {
     try {
-      const plan = await makePlan(capability, input, context);
+      // Read here and not before the run row exists: a conversation that cannot
+      // be read is a failure of this run, which has an id by now to say so with.
+      const given = givenInput(bound, capability.name, request.conversationId, runId, input);
 
-      const result = await executePlan(plan, context, {
-        checkpoint,
-        aggregate: capability.aggregate?.bind(capability),
-        approvalsFor: (step) => deps.gate(runId, step),
-        now
-      });
+      const context = buildRunContext(bound, {
+        ...(request.offerSnapshotId === undefined ? {} : { offerSnapshotId: request.offerSnapshotId }),
+        ...(request.contextId === undefined ? {} : { contextId: request.contextId }),
+        ...(bound.contextGeneration === undefined ? {} : { contextGeneration: bound.contextGeneration }),
+        ...(bound.contextRevision === undefined ? {} : { contextRevision: bound.contextRevision }),
+        ...(request.conversationId === undefined ? {} : { conversationId: request.conversationId }),
+        runId,
+        traceId,
+        capability: capability.name,
+        input: given.input,
+        signal: request.signal ?? new AbortController().signal,
+        deadlineAt
+      }, given.supplied);
+
+      // Before the plan, which may call a model: a run that cannot be answered
+      // has cost nothing yet.
+      const went = checkNeeds(capability, given.input, context);
+      const plan = await makePlan(capability, given.input, context);
+
+      const result = withoutNeeds(
+        await executePlan(plan, context, {
+          checkpoint,
+          aggregate: capability.aggregate?.bind(capability),
+          approvalsFor: (step) => deps.gate(runId, step),
+          now
+        }),
+        went
+      );
 
       const commit = (value: RunResult) => checkpoint.succeeded(value.data, value.degraded, value.elapsedMs);
       if (deps.finish) return deps.finish(runId, result, commit);

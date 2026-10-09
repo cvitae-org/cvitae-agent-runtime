@@ -120,7 +120,10 @@ test('the row cannot hold a prompt, a completion or an error message', () => {
       'id', 'at', 'trace_id', 'run_id', 'step', 'operation',
       'provider_id', 'model_id', 'prompt_chars', 'input_bytes',
       'completion_chars', 'input_tokens', 'output_tokens', 'total_tokens',
-      'latency_ms', 'finish_reason', 'outcome', 'error_code'
+      'latency_ms', 'finish_reason', 'outcome', 'error_code',
+      // How many placeholders of each kind a masked call sent: counts by kind,
+      // never what they stood for (migration 0048).
+      'masked'
     ]));
   } finally {
     s.dispose();
@@ -254,6 +257,9 @@ test('the desktop host keeps each call in the table as well as echoing it, and p
     now: () => now,
     indexRecovery: true
   });
+  // And what Studio says once it is connected, without which a hosted embedder
+  // is not called by a rebuild.
+  harness.maskTerms.set([]);
 
   try {
     assert.deepEqual(harness.aiCalls.recent().map((call) => call.runId), ['kept']);

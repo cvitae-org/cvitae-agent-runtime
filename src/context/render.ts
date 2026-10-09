@@ -18,6 +18,7 @@
  */
 
 import { clip, fit } from './budget.js';
+import type { Clipped } from './budget.js';
 
 /**
  * Joins non-empty sections with blank lines.
@@ -32,11 +33,20 @@ export const compose = (...sections: (string | undefined | false | null)[]): str
     .filter((section) => section.length > 0)
     .join('\n\n');
 
+/**
+ * What a labelled block carries of a body: trimmed, then clipped to the limit.
+ *
+ * Exposed because the block and a record of it have to agree on what was
+ * received. Both ask here, so neither can end up with a different idea of what
+ * the model was shown.
+ */
+export const excerpt = (body: string, limit: number): Clipped => clip(body.trim(), limit);
+
 /** A labelled block: `LABEL:` on its own line, then the clipped body. */
 export const labelled = (label: string, body: string, limit: number): string => {
-  const trimmed = body.trim();
-  if (trimmed.length === 0) return '';
-  return `${label}:\n${clip(trimmed, limit).text}`;
+  const shown = excerpt(body, limit);
+  if (shown.text.length === 0) return '';
+  return `${label}:\n${shown.text}`;
 };
 
 /**

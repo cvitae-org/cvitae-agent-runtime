@@ -261,7 +261,11 @@ export const executePlan = async (
 
           const recoverable = step.kind === 'extract' && error instanceof RuntimeError &&
             step.fallbackOn?.includes(error.code) === true;
-          if (step.critical && !recoverable) {
+          // A call refused because the person did not agree to where it would go
+          // is not a step that found nothing: nothing was read. It ends the run
+          // with its own code, whatever the step.
+          const refused = error instanceof RuntimeError && error.code === 'egress_consent_required';
+          if (refused || (step.critical && !recoverable)) {
             deps.checkpoint.stepFailed(ref, describe(error), elapsed);
             stop.abort(error);
             throw error;

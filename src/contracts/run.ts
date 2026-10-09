@@ -12,6 +12,8 @@ import type { AiLogger, EffectSet } from './effects.js';
 import type { ToolRegistry } from './tools.js';
 import type { DocumentStore } from './document-store.js';
 import type { ChunkIndex, Retriever } from './chunk-index.js';
+import type { Limits, Pins, RecordSink, Walls } from './grounding.js';
+import type { OfferShelf } from './offer.js';
 
 /* ------------------------------------------------------------------ states */
 
@@ -290,6 +292,49 @@ export type RunContext = {
    * content is responsible for saying so.
    */
   readonly index: ChunkIndex;
+
+  /**
+   * Where the run says what it was given and what it read, when it has a record.
+   *
+   * Absent for a run that belongs to no conversation, and for a runtime with no
+   * record store. Nothing branches on it except the code that reports: a step
+   * that does not look at it behaves exactly as it did before it existed.
+   */
+  readonly record?: RecordSink;
+
+  /**
+   * What the person has excluded from this run's conversation, for the few steps
+   * that are handed data by the host instead of reading it through a port.
+   *
+   * `documents`, `retrieval` and `index` are already cut by it, so a step that
+   * reads through them never looks here. Absent for a run with no conversation.
+   */
+  readonly walls?: Walls;
+
+  /**
+   * What the person has pinned to this run's conversation, asked for when the
+   * message is prepared. Present on the same runs as `walls`.
+   */
+  readonly pins?: Pins;
+
+  /**
+   * What the person has set as the most the material of a message may come to.
+   * Present on every run that belongs to a conversation; absent on the others.
+   */
+  readonly limits?: Limits;
+
+  /**
+   * The saved offers, for a message that compares some (`capabilities/cv/fit.ts`).
+   * Present on the same runs as `walls`, and only when the runtime keeps offers.
+   */
+  readonly offers?: OfferShelf;
+
+  /**
+   * Present, and `true`, when the context is a preview's and not a run's: nothing
+   * made from it may call a model. A plan that would ask one, to choose its tools,
+   * does without.
+   */
+  readonly preview?: true;
   readonly approvals: ApprovalGate;
   readonly logger: AiLogger;
 
@@ -310,6 +355,15 @@ export type StepContext = RunContext & {
 
 /* ------------------------------------------------------------------- errors */
 
+/**
+ * The error code recovery writes on a run whose process disappeared.
+ *
+ * A name rather than a literal because two modules have to agree on it: the one
+ * that writes it, and the run store, which settles a run's grounding record
+ * differently when this is why the run failed.
+ */
+export const PROCESS_INTERRUPTED = 'process_interrupted';
+
 export type RuntimeErrorCode =
   | 'unknown_capability'
   | 'invalid_input'
@@ -327,7 +381,7 @@ export type RuntimeErrorCode =
   | 'aborted'
   | 'deadline_exceeded'
   /** The process ended while the run was active. Recovery records this and never retries. */
-  | 'process_interrupted'
+  | typeof PROCESS_INTERRUPTED
   /** A run was resumed with an attempt still open. Ask a person; never retry. */
   | 'unsettled_attempt'
   | 'invalid_transition'
@@ -352,6 +406,15 @@ export type RuntimeErrorCode =
    * was a rejected or missing key, and each one was offered "Try again".
    */
   | 'credential_rejected'
+  /**
+   * A run would send what a person handed in, as it is, to a hosted provider
+   * they have not agreed may read it (`effects/consent.ts`).
+   *
+   * Separate from `misconfigured` because nothing is set up wrongly: the person
+   * has to say yes to that provider, or choose a model on this machine, and only
+   * they can. Nothing was sent.
+   */
+  | 'egress_consent_required'
   /**
    * The model server refused, timed out, or answered with something unusable.
    *

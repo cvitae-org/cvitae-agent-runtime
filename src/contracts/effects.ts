@@ -19,6 +19,7 @@
 
 import type { z } from 'zod';
 import type { IntegrationExecution } from './integration.js';
+import type { MaskCounts } from './mask.js';
 import type { StatedFacts, StatedRoutes } from './offer.js';
 
 /* ------------------------------------------------------------------ shared */
@@ -57,7 +58,19 @@ export type TokenUsage = {
   readonly totalTokens?: number;
 };
 
-export type ObjectRequest<T> = EffectCall & {
+/**
+ * What a call that was masked has sent as placeholders so far.
+ *
+ * Set by the masking gateway on a call it masks (`effects/masking.ts`), cleared by
+ * it on one it does not, and read by the gateway below it when the call's line is
+ * logged (`AiLogEntry.masked`). Asked and not given, because a tool loop's tools
+ * add to it while the call runs.
+ */
+export type MaskedCall = {
+  readonly masked?: (() => MaskCounts) | undefined;
+};
+
+export type ObjectRequest<T> = EffectCall & MaskedCall & {
   readonly schema: z.ZodType<T>;
   readonly system: string;
   readonly prompt: string;
@@ -80,7 +93,7 @@ export type ObjectResult<T> = {
   readonly usage: TokenUsage;
 };
 
-export type TextRequest = EffectCall & {
+export type TextRequest = EffectCall & MaskedCall & {
   readonly system: string;
   readonly prompt: string;
   readonly maxOutputTokens: number;
@@ -136,7 +149,7 @@ export type ConversationTurn = {
   readonly text: string;
 };
 
-export type ToolLoopRequest = EffectCall & {
+export type ToolLoopRequest = EffectCall & MaskedCall & {
   readonly system: string;
   readonly prompt: string;
   /**
@@ -201,7 +214,7 @@ export type ImageRequest = EffectCall & {
   readonly maxOutputTokens: number;
 };
 
-export type EmbedRequest = EffectCall & {
+export type EmbedRequest = EffectCall & MaskedCall & {
   readonly values: readonly string[];
 };
 
@@ -245,6 +258,17 @@ export interface AiGateway {
   embed(request: EmbedRequest): Promise<EmbedResult>;
   /** Which provider and model this resolves to, for the run record. */
   describe(): { readonly providerId: string; readonly modelId: string };
+  /**
+   * Which provider and model `embed` resolves to, when that is not the one
+   * `describe` names.
+   *
+   * Embedding resolves on its own (`providers/resolve.ts`): a person can have a
+   * hosted chat model and an embedder on this machine, or the other way round, and
+   * whoever decides what to keep from a provider has to ask the one it is about to
+   * call. Optional, and a gateway that does not say is taken to embed where it
+   * generates.
+   */
+  describeEmbedding?(): { readonly providerId: string; readonly modelId: string };
 }
 
 /* ----------------------------------------------------------------- offers */
@@ -449,6 +473,13 @@ export type SourceText = {
 
 export interface SourceReader {
   read(input: SourceInput, call: EffectCall): Promise<SourceText>;
+  /**
+   * The same reader, reading an image through `ai`. A run hands it its own
+   * gateway (`runtime/run.ts`), so a screenshot read for a run is held to what
+   * every other model call of the run is held to: counted, and sent only where
+   * the person agreed it may go. A reader that calls no model answers itself.
+   */
+  through(ai: AiGateway): SourceReader;
 }
 
 /* ------------------------------------------------------------------- mail */
@@ -553,6 +584,12 @@ export type AiLogEntry = {
   readonly outcome: 'ok' | 'failed';
   /** A code and a redacted message. Never the provider's raw error. */
   readonly errorCode?: string;
+  /**
+   * How many placeholders of each kind the call sent, when it was masked: `{}`
+   * for one that held nothing to keep. Absent when it was sent as it was.
+   * Counts, never what they stood for.
+   */
+  readonly masked?: MaskCounts;
 };
 
 export interface AiLogger {

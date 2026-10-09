@@ -27,6 +27,19 @@ export type Settings = {
   readonly localBaseUrl?: string | undefined;
   readonly embeddingProviderId?: string | undefined;
   readonly embeddingModelId?: string | undefined;
+  /**
+   * When a model call is masked: `hosted` (what an unset field means) or
+   * `always`. Kept as text, so that a value this release does not know — one
+   * written by a later release — does not fail the store. It is read as
+   * `always`: the error that costs nothing is masking more than was asked.
+   */
+  readonly maskMode?: string | undefined;
+  /**
+   * Which of a person's own values are masked: `personal` (what an unset field
+   * means) or `strict`, which adds employers and schools. Kept as text for the
+   * same reason as `maskMode`, and read as `strict` when it is not known.
+   */
+  readonly maskScope?: string | undefined;
 };
 
 export interface SettingsStore {
@@ -35,7 +48,7 @@ export interface SettingsStore {
    * Replaces every field, rather than merging into what is there.
    *
    * A merge cannot express "clear this", and the caller is a settings form that
-   * knows all five values — so the shape that cannot be half-applied is the one
+   * knows every value — so the shape that cannot be half-applied is the one
    * that matches how it is actually used. A partial write here would silently
    * keep an old provider beside a new model, which is a configuration nobody
    * chose and nobody can see.

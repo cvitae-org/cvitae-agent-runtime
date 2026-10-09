@@ -90,10 +90,10 @@ export function createOfferQueryStore(db: Db, now = Date.now) {
             metadata: string;
         }[];
     };
-    async function capture(ownerId: string, scope: QueryScope, signal?: AbortSignal, frozenMembers?: { offer_id: string; evidence_id: string; metadata: string }[]) {
+    async function capture(ownerId: string, scope: QueryScope, signal?: AbortSignal, frozenMembers?: { offer_id: string; evidence_id: string; metadata: string }[], without?: ReadonlySet<string>) {
         const began = performance.now();
         const captured = db.transaction(() => {
-            const members = (frozenMembers ?? sourceMembers(ownerId, scope)).map(m=>{
+            const members = (frozenMembers ?? sourceMembers(ownerId, scope)).filter(m => !without?.has(m.offer_id)).map(m=>{
                 const e=JSON.parse((db.prepare('SELECT value FROM discovery_offer_evidence WHERE id=? AND offer_id=?').get(m.evidence_id,m.offer_id) as {value:string}).value) as DiscoveryEvidence;
                 const metadata=JSON.parse(m.metadata),policy=metadata.__factPolicy;
                 const rows=factRows(db,m.offer_id,e.offer.text??'',policy?.modelVersion).filter(row=>!policy || (policy.allowed && row[10]===0 && policy.criteria.includes(row[11]) && row[14]===policy.modelVersion));

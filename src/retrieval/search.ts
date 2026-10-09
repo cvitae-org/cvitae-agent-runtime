@@ -97,6 +97,8 @@ export const createRetriever = (options: RetrieverOptions): Retriever => {
   const overfetch = options.overfetch ?? OVERFETCH;
 
   return {
+    countOf: (documentId) => reader.countOf(documentId),
+
     async search(query: ChunkQuery, signal: AbortSignal): Promise<ChunkHit[]> {
       const text = query.text.trim();
 

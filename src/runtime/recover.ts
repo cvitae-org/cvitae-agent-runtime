@@ -6,6 +6,7 @@
  * it could repeat work whose outcome never made it back to SQLite.
  */
 
+import { PROCESS_INTERRUPTED } from '../contracts/index.js';
 import type { NewEvent, RunRecord, RunStore, StepPatch } from '../contracts/index.js';
 import * as emit from '../events/emit.js';
 
@@ -45,13 +46,13 @@ export const recoverInterruptedRuns = (
         runId: stale.id,
         run: {
           status: 'failed',
-          errorCode: 'process_interrupted',
+          errorCode: PROCESS_INTERRUPTED,
           errorMessage: MESSAGE,
           endedAt: at
         },
         steps: patches
       },
-      [...events, emit.runFailed({ code: 'process_interrupted', message: MESSAGE }, at)]
+      [...events, emit.runFailed({ code: PROCESS_INTERRUPTED, message: MESSAGE }, at)]
     );
 
     const record = runs.get(stale.id);

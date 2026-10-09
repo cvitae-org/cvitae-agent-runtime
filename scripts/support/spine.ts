@@ -210,7 +210,7 @@ export const spine = (
       listBoard: notReached('sites.listBoard')
     },
     search: { engine: () => undefined, search: notReached('search.search') },
-    sources: { read: notReached('sources.read') },
+    sources: { read: notReached('sources.read'), through() { return this; } },
     ...options.effects,
     attempts: createAttemptLog(db)
   };

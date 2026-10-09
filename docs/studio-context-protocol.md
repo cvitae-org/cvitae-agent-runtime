@@ -89,7 +89,9 @@ remain aliases for `cv`, preserving existing transcripts and summaries.
 `profile.proposals.list {contextId}` restores pending work. Accept/discard with
 `{contextId, proposalId}` on `profile.proposals.accept` / `.discard`. Acceptance
 uses the persisted generation/base and a durable receipt; retries do not overwrite
-later edits. Offer snapshot edit results are historical artifacts, not live CV
+later edits. An edit aimed at a section carries `target` and `changes`, and an
+accept writes those changes (see `studio-grounding-protocol.md`, "Editing one
+section"). Offer snapshot edit results are historical artifacts, not live CV
 proposals, and cannot be accepted through this route.
 
 Persist caller-generated `runId` before starting work. Repeating `run.start`,

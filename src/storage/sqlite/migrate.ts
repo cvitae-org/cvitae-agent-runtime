@@ -1,3 +1,12 @@
+import { maskMode0046 } from './migrations/0046-mask-mode.js';
+import { maskScope0047 } from './migrations/0047-mask-scope.js';
+import { maskCounts0048 } from './migrations/0048-mask-counts.js';
+import { groundingLimits0044 } from './migrations/0044-grounding-limits.js';
+import { cvProposalChanges0045 } from './migrations/0045-cv-proposal-changes.js';
+import { groundingPins0043 } from './migrations/0043-grounding-pins.js';
+import { discoveryTurnScope0042 } from './migrations/0042-discovery-turn-scope.js';
+import { groundingSelection0041 } from './migrations/0041-grounding-selection.js';
+import { groundingRecord0040 } from './migrations/0040-grounding-record.js';
 import { boardChatRemoval0039 } from './migrations/0039-board-chat-removal.js';
 import { indexParking0038 } from './migrations/0038-index-parking.js';
 import { integrationDirectories0037 } from './migrations/0037-integration-directories.js';
@@ -91,7 +100,16 @@ export const migrations: readonly Migration[] = [
   { version: 36, sql: integrationSettings0036 },
   { version: 37, sql: integrationDirectories0037 },
   { version: 38, sql: indexParking0038 },
-  { version: 39, sql: boardChatRemoval0039 }
+  { version: 39, sql: boardChatRemoval0039 },
+  { version: 40, sql: groundingRecord0040 },
+  { version: 41, sql: groundingSelection0041 },
+  { version: 42, sql: discoveryTurnScope0042 },
+  { version: 43, sql: groundingPins0043 },
+  { version: 44, sql: groundingLimits0044 },
+  { version: 45, sql: cvProposalChanges0045 },
+  { version: 46, sql: maskMode0046 },
+  { version: 47, sql: maskScope0047 },
+  { version: 48, sql: maskCounts0048 }
 ];
 
 export const latestVersion = migrations.reduce((max, m) => Math.max(max, m.version), 0);

@@ -17,6 +17,10 @@ export type DiscoveryAnswerContext = {
  matchedCount?: number;
  aggregates?: Record<string, unknown>;
  limitations?: string[];
+ /** How many offers of the captured snapshot this conversation excludes, when it excludes any. */
+ withheldOffers?: number;
+ /** The runs whose messages this turn was given as history; null for a message that belongs to no run. */
+ historyRuns?: (string | null)[];
 };
 
 export type DiscoverySqlArtifact = {

@@ -44,7 +44,7 @@ import { z } from 'zod';
 import { discoveryFiltersSchema, discoveryBudgetSchema, discoveryBudgetDefaults, discoveryChatRequestSchema, discoveryImportSchema, discoverySearchBatchSchema, discoveryImportBatchSchema, discoveryImportIdentitySchema, discoverySearchPageSchema } from '../../contracts/discovery-search.js';
 import { cvDocumentSchema } from '../../capabilities/cv/document.js';
 import { cvPhotoSchema } from '../../capabilities/cv/photo.js';
-import { runStatuses } from '../../contracts/index.js';
+import { maskModes, maskScopes, maskTermLimits, runStatuses } from '../../contracts/index.js';
 
 /* ------------------------------------------------------------------ inputs */
 
@@ -57,6 +57,9 @@ const runId = z.string().min(1);
 const setting = z.string().max(200).nullish();
 
 const conversationId = z.string().min(1);
+
+/** The digest of a plan as a preview answers it: sixteen lowercase hex characters. */
+const approvedPlan = z.object({ planDigest: z.string().regex(/^[0-9a-f]{16}$/) }).strict();
 
 /**
  * What a conversation is about.
@@ -82,7 +85,12 @@ const settings = z.object({
   modelId: setting,
   localBaseUrl: setting,
   embeddingProviderId: setting,
-  embeddingModelId: setting
+  embeddingModelId: setting,
+  // Absent on `settings.set` keeps what is stored and `null` returns it to the
+  // default, so a host that predates the field cannot undo it by saving.
+  maskMode: z.enum(maskModes).nullish(),
+  // The same for the scope: absent keeps what is stored, `null` is the default.
+  maskScope: z.enum(maskScopes).nullish()
 });
 
 export const payloads = {
@@ -103,7 +111,7 @@ export const payloads = {
   'profile.contexts.assignLanguage': z.object({ protocolVersion: z.literal(2), contextId: z.string().min(1), language: z.enum(['pl', 'en']), expectedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict(),
   'profile.contexts.copy': z.object({ protocolVersion: z.literal(2), id: z.string().uuid(), language: z.enum(['pl', 'en']), sourceContextId: z.string().min(1), expectedSourceRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict(),
   'profile.contexts.provenance': z.object({ contextId: z.string().min(1) }).strict(),
-  'run.offer.start': z.object({ protocolVersion: z.literal(2), offerSnapshotId: z.string().uuid(), contextId: z.string().min(1), conversationId: z.string().min(1), capability: z.string().min(1), input: z.unknown(), runId }).strict(),
+  'run.offer.start': z.object({ protocolVersion: z.literal(2), offerSnapshotId: z.string().uuid(), contextId: z.string().min(1), conversationId: z.string().min(1), capability: z.string().min(1), input: z.unknown(), runId, approved: approvedPlan.optional() }).strict(),
   'profile.contexts.list': z.object({}).strict(),
   'profile.context.reindex': z.object({ contextId: z.string().min(1).max(200) }).strict(),
   'profile.context.indexStatus': z.object({ contextId: z.string().min(1).max(200) }).strict(),
@@ -244,7 +252,30 @@ export const payloads = {
     capability: z.string().min(1),
     input: z.unknown(),
     /** Lets a caller name the run before it finishes, so it can follow it. */
-    runId: runId.optional()
+    runId: runId.optional(),
+    /**
+     * The plan the person approved, from a `full` preview of this same message. The
+     * message is sent only if it is still made of that, and otherwise answers
+     * `plan_conflict` with no run made.
+     */
+    approved: approvedPlan.optional()
+  }).strict(),
+
+  /**
+   * What a message would be made of, said without sending it. `fast` is advisory
+   * and cheap enough to ask while a person types; `full` is everything a run does
+   * before generation and answers with a `planDigest` to send back as `approved`.
+   * Neither asks a model to answer, and neither writes a run.
+   */
+  'run.preview': z.object({
+    mode: z.enum(['fast', 'full']),
+    contextId: z.string().min(1).max(200),
+    conversationId: z.string().min(1).max(200),
+    contextRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+    contextGeneration: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+    offerSnapshotId: z.string().uuid().optional(),
+    capability: z.string().min(1),
+    input: z.unknown()
   }).strict(),
 
   'run.start': z.object({ capability: z.string().min(1), input: z.unknown(), runId: runId.optional() }).strict(),
@@ -282,6 +313,17 @@ export const payloads = {
   }),
 
   'runs.get': z.object({ runId }),
+
+  /**
+   * What a chat run was given and what it read, as the run wrote it down.
+   *
+   * A channel of its own rather than a field of `runs.get`. That answer is the
+   * run row and its steps, every caller pays for what it carries, and a record
+   * can be long: one entry for each passage a search handed over. A caller that
+   * wants to show what an answer was based on asks for this one run's record
+   * and leaves the rest alone.
+   */
+  'runs.grounding': z.object({ runId }).strict(),
 
   /**
    * The tail. `after` is the last `seq` the caller saw, which is the whole
@@ -402,7 +444,80 @@ export const payloads = {
     through: z.number().int().min(0)
   }),
 
-  'conversations.delete': z.object({ conversationId })
+  /**
+   * Which turns of a conversation a `/compact` may fold into its summary, and how
+   * far the summary will then reach. Reads and writes nothing: the host runs
+   * `summarize_conversation` with the turns it is given, and records the result
+   * with `conversations.summarise` and the `through` it is given. `keep` is how
+   * many of the newest exchanges stay as they are; the default is the runtime's.
+   */
+  'conversations.compactPlan': z
+    .object({ conversationId, keep: z.number().int().min(0).max(10).optional() })
+    .strict(),
+
+  'conversations.delete': z.object({ conversationId }),
+
+  /**
+   * What a conversation leaves out of what its runs are given, and whether each
+   * exclusion still names something. Not a field of `conversations.get`, which a
+   * window calls for every transcript it draws.
+   */
+  'selection.get': z.object({ conversationId }).strict(),
+
+  /**
+   * Excludes and clears pieces, against the revision the caller last saw.
+   *
+   * `exclude` and `clear` are canonical refs with no version, such as
+   * `cv:<context>/experience/acme~engineer`. A change made against a revision
+   * that is no longer current is refused as `selection_conflict` and carries the
+   * current selection, so a window reloads and offers the change again.
+   *
+   * `pin` and `unpin` keep a section or an entry of the CV in every message of
+   * the conversation, or stop doing so. They belong to the same selection and the
+   * same revision, so one change may carry both.
+   */
+  'selection.update': z.object({
+    conversationId,
+    expectedRevision: z.number().int().min(0),
+    exclude: z.array(z.string().min(1).max(1024)).max(50).default([]),
+    clear: z.array(z.string().min(1).max(1024)).max(50).default([]),
+    pin: z.array(z.string().min(1).max(1024)).max(50).default([]),
+    unpin: z.array(z.string().min(1).max(1024)).max(50).default([])
+  }).strict(),
+
+  /**
+   * The most the material of one message may come to, in characters, as it is set
+   * for everything and for one conversation, with the numbers a window draws it
+   * from. Without a conversation it is the global setting that is read.
+   */
+  'limits.get': z.object({ conversationId: conversationId.optional() }).strict(),
+
+  /**
+   * Sets the limit, or removes it with `null`: for the one conversation named, or
+   * for everything when none is. The amount is not checked here: outside the floor
+   * and the ceiling it is refused as `invalid_limit`, which says what they are.
+   */
+  'limits.set': z.object({
+    conversationId: conversationId.optional(),
+    context: z.number().nullable()
+  }).strict(),
+
+  /**
+   * The terms a person asked to have kept from a model, and whether any list has
+   * been sent since the runtime started.
+   */
+  'masking.terms.get': z.object({}).strict(),
+
+  /**
+   * Replaces the terms, an empty list included, which is how a host says there are
+   * none. Held in memory only, so a host sends them again whenever it connects.
+   * A term is measured without the white space around it.
+   */
+  'masking.terms.set': z.object({
+    terms: z
+      .array(z.string().trim().min(maskTermLimits.shortest).max(maskTermLimits.longest))
+      .max(maskTermLimits.count)
+  }).strict()
 } as const;
 
 export type Channel = keyof typeof payloads;

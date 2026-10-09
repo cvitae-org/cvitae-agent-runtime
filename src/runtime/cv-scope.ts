@@ -30,12 +30,14 @@ export const bindCvScope = (
         // that happened, including custom retrievers that retained old hits.
         const revision = ports.documents.read(id)?.revision;
         return hits.filter((hit) => revision !== undefined && hit.documentId === id && hit.sourceRevision === revision);
-      }
+      },
+      countOf: (id) => ports.retrieval.countOf?.(destination(id))
     },
     index: {
       lexical: (query) => ports.index.lexical({ ...query, documentId: destination(query.documentId) }),
       neighbours: (query) => ports.index.neighbours({ ...query, documentId: destination(query.documentId) }),
       fingerprintOf: (id) => ports.index.fingerprintOf(destination(id)),
+      countOf: (id) => ports.index.countOf(destination(id)),
       clear: (id, options) => {
         if (!options) throw new CvContextError('invalid_input', 'Index publication requires its source revision.');
         return guard(() => ports.index.clear(destination(id), options));
