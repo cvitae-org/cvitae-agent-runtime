@@ -5,26 +5,81 @@ on:
     branches: [master]
   pull_request:
 
+# The runtime reads `@cvitae/job-pages` from the scrapper repository, through
+# `file:../cvitae-scrapper/packages/job-pages` and that package's built `dist`.
+# So this checks both out side by side, as they sit on a developer's machine,
+# and builds that package before the runtime is installed. Without it the
+# install fails before a single check runs, which it did on every run until
+# this was added.
+#
+# One thing has to be done by hand: the scrapper is private, and the workflow's
+# own token reads only this repository. Add a fine-grained token with read
+# access to contents on the scrapper repository as the SIBLINGS_READ_TOKEN
+# secret (Studio has a secret of the same name for the same reason). Until then
+# the first step fails and says so.
+
+env:
+  # The scrapper commit the runtime is checked against: the one Studio pins
+  # beside it in its scripts/siblings.json. Move the two together.
+  SCRAPPER_REF: e04ad097f1b3a062495d3c54be8523b3544a9027
+
 jobs:
   check:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # 20.12 is the floor `engines` declares — process.loadEnvFile arrived
-        # there. 24 is what .nvmrc pins locally. Both, so the two cannot drift
-        # apart quietly.
-        node: ['20.12', '24']
+    # Where the runtime runs: Studio ships it on macOS with its own Node 24. The
+    # offer query engine refuses anything else (`queryRuntimeSupported` in
+    # src/storage/sqlite/offer-query-process.ts: macOS, Node 24.14 or later), and
+    # the discovery, facts and opportunity suites call it, so on Linux or on the
+    # 20.12 floor `engines` declares they fail rather than skip. That floor is
+    # wider than what the suite passes on.
+    runs-on: macos-latest
     steps:
+      - name: Check for the token that reads the scrapper
+        env:
+          TOKEN: ${{ secrets.SIBLINGS_READ_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error title=No SIBLINGS_READ_TOKEN secret::The scrapper is private and the workflow token cannot read it. Add a fine-grained token with read access to contents on cvitae-org/cvitae-scrapper as the SIBLINGS_READ_TOKEN secret of this repository."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
+        with:
+          path: cvitae-agent-runtime
+
+      - uses: actions/checkout@v4
+        with:
+          repository: cvitae-org/cvitae-scrapper
+          ref: ${{ env.SCRAPPER_REF }}
+          path: cvitae-scrapper
+          token: ${{ secrets.SIBLINGS_READ_TOKEN }}
 
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: cvitae-agent-runtime/package.json
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version-file: cvitae-agent-runtime/.nvmrc
           cache: pnpm
+          cache-dependency-path: |
+            cvitae-agent-runtime/pnpm-lock.yaml
+            cvitae-scrapper/pnpm-lock.yaml
+
+      # Only the package the runtime reads is built. --ignore-scripts skips the
+      # scrapper's postinstall, which downloads a browser nothing here starts.
+      - name: Build the job-page parsers
+        working-directory: cvitae-scrapper
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run build:job-pages
 
       - run: pnpm install --frozen-lockfile
+        working-directory: cvitae-agent-runtime
+
+      # `scripts/offer-query-stdio.test.ts` starts the built runtime, which a
+      # clean checkout does not have.
+      - run: pnpm build
+        working-directory: cvitae-agent-runtime
 
       - run: pnpm check
+        working-directory: cvitae-agent-runtime
