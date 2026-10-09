@@ -54,13 +54,22 @@ export const cardText = (offer: OfferRecord): string => {
   const head = `Offer: ${[position, company].filter((part) => part !== '').join(' at ') || 'untitled'}`;
 
   const where = [offer.location, offer.workMode].map(flat).filter((part) => part !== '').join(', ');
-  const level = [offer.seniority, offer.contractType].map(flat).filter((part) => part !== '').join(', ');
+  // One line for both, each under its own label, so a contract is not read as a
+  // level and the card's fixed lines stay within its limit; each gets half the
+  // room when both are there.
+  const level = flat(offer.seniority);
+  const contract = flat(offer.contractType);
+  const each = level !== '' && contract !== '' ? FIELD_LIMIT / 2 : FIELD_LIMIT;
+  const terms = [
+    level === '' ? '' : `Level: ${clipped(level, each)}`,
+    contract === '' ? '' : `${level === '' ? 'Contract' : 'contract'}: ${clipped(contract, each)}`
+  ].filter((part) => part !== '').join(', ');
   const salary = flat(offer.salary);
 
   const lines = [
     head,
     where === '' ? '' : `Where: ${clipped(where, FIELD_LIMIT)}`,
-    level === '' ? '' : `Level: ${clipped(level, FIELD_LIMIT)}`,
+    terms,
     salary === '' ? '' : `Salary: ${clipped(salary, FIELD_LIMIT)}`
   ].filter((line) => line !== '');
 
