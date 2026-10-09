@@ -52,3 +52,50 @@ traps.
   not say".
 
 Decided: `auto` stays off, and `reach: selected` stays.
+
+## Step 6: comparing saved offers
+
+2026-10-09, `gemma4:12b` through Ollama's OpenAI endpoint, as the app calls it,
+runtime at `f75f129` (the card before the contract label was fixed).
+[Folder](step-6-offers/).
+
+The question: given five saved offers, a CV and preferences, does the model put
+the best fit first and the partial fit before the ones that do not fit, and when
+asked to cite, do its `[n]` numbers stand for blocks it was given and say what
+those blocks say?
+
+Five offers (one clear fit, one partial fit that breaks two preferences, three
+that do not fit), one CV, "remote, no on-call, B2B". English and Polish, `cite`
+off and on, 8 chats each: 32, each a fresh runtime.
+
+| | best first | partial before the rest | used numbers | unresolved numbers | median seconds |
+|---|---|---|---|---|---|
+| English, cite off | 8/8 | 8/8 | | | 248 |
+| English, cite on | 8/8 | 8/8 | 8/8 | 0 of 238 | 346 |
+| Polish, cite off | 8/8 | 8/8 | | | 140 |
+| Polish, cite on | 8/8 | 8/8 | 8/8 | 0 of 253 | 216 |
+
+- No empty answer and no failure in 32. The attempt of 2026-10-06 got empty
+  text in 14 of 26; it called Ollama's own `/api/chat` with an 8,192-token
+  window instead of the OpenAI endpoint the app uses, which most likely
+  explains it (not tested separately).
+- With cite on, a word check counts 203 of 238 English numbers and 169 of 253
+  Polish ones as sitting in a sentence that shares a name, skill or preference
+  with the block. That is a floor: of 15 Polish numbers it rejected, read by hand,
+  14 cited the right block ("preferencji [1]" for the preferences, "hybrydową
+  [3]" for the hybrid offer) and one sentence was too short to judge. The check
+  misses Polish endings and the English words of a card.
+- With cite on, an answer may name offers only by number ("Offer [2]"); the
+  table counts those as the offer, so it was tallied again from `results.json`
+  and differs from the `first=` in `run.txt` for one chat.
+- Slow: 1 to 8 minutes an answer on this machine, and cite adds about half.
+- Found on the way: the card said a contract as `Level: B2B`. Fixed in #20,
+  and checked again with the new card (`Contract: B2B`), 4 chats of each kind,
+  16 in all (`results-new-card.json`): best first 16/16, partial before the rest
+  16/16, no empty answer, 0 of 263 numbers unresolved, and no answer called the
+  contract a level.
+
+Decided: the one shape that is built stays, and `cite` works on this model, so
+it can be offered; whether it is on by default is yours to decide, since it adds
+about half to the wait. Not decided here: the plan shapes B and C were never
+built, and no hosted model was asked.
