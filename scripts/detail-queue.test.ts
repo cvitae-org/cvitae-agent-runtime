@@ -30,13 +30,13 @@ test('automatic queue bounds workers, deduplicates and persists pause/recovery w
  const enrichment=createEnrichmentService(offers,store,{resolve:async url=>{reads++;return new Promise(resolve=>pending.push(()=>resolve(source(url))));}},()=>{assert.fail('automatic details must not use AI');});
  const queue=createDetailQueue(queueStore,enrichment);
  try {
-  queue.enqueue('s',['a0','a1','a2','a0']);await tick();assert.equal(reads,2);
+  await queue.enqueue('s',['a0','a1','a2','a0']);await tick();assert.equal(reads,2);
   assert.equal(queue.poll().queued,1);assert.equal(queue.poll().running,2);
   queue.pause(true);pending[0]!(source(''));pending[1]!(source(''));await tick();
   assert.equal(queue.poll().queued,1);assert.equal(queue.poll().running,0);
   assert.equal(offers.get('a0')?.position,'React Engineer');
-  queue.enqueue('s',['a0']);assert.equal(queue.poll().queued,1);
-  assert.throws(()=>queue.enqueue('other',['a0']),/does not belong/);
+  await queue.enqueue('s',['a0']);assert.equal(queue.poll().queued,1);
+  await assert.rejects(queue.enqueue('other',['a0']),/does not belong/);
   queue.close();enrichment.close();
   const recovered=createDetailQueueStore(db);assert.equal(recovered.paused(),true);
   recovered.set('a2','running');recovered.recover();assert.equal(recovered.next()?.offerId,'a2');
@@ -49,9 +49,9 @@ test('failed automatic reads are not retried; manual consumer survives clearing 
  const enrichment=createEnrichmentService(offers,store,{resolve:async url=>{reads++;if(url.endsWith('a0'))throw new Error('Source refused');return new Promise(done=>{resolve=done;});}},()=>{assert.fail('no model');});
  const queue=createDetailQueue(queueStore,enrichment);
  try {
-  queue.enqueue('s',['a0']);await tick();assert.equal(queue.poll().jobs[0]?.status,'failed');
-  queue.enqueue('s',['a0']);await tick();assert.equal(reads,1);
-  queue.enqueue('s',['a1']);enrichment.details.start('a1');await tick();
+  await queue.enqueue('s',['a0']);await tick();assert.equal(queue.poll().jobs[0]?.status,'failed');
+  await queue.enqueue('s',['a0']);await tick();assert.equal(reads,1);
+  await queue.enqueue('s',['a1']);enrichment.details.start('a1');await tick();
   queue.clear();resolve(source('https://vacancies.example/job-offer/a1'));await tick();
   assert.equal(store.get('a1')?.details?.status,'succeeded');assert.equal(offers.get('a1')?.text,'Published React role');
   const first=queue.poll();assert.equal(queue.poll(first.after).jobs.length,0);
@@ -67,8 +67,8 @@ test('a failed automatic read keeps its error code as the reason, beside the mes
  const enrichment=createEnrichmentService(offers,store,{resolve:async url=>{throw errors[url.slice(-2)]!;}},()=>{assert.fail('no model');});
  const queue=createDetailQueue(queueStore,enrichment);
  try {
-  queue.enqueue('s',['a0','a1']);await tick();
-  queue.enqueue('s',['a2']);await tick();
+  await queue.enqueue('s',['a0','a1']);await tick();
+  await queue.enqueue('s',['a2']);await tick();
   const reasons=Object.fromEntries(queue.poll().items.map(item=>[item.offer.id,[item.autoDetailStatus,item.autoDetailStopReason]]));
   assert.deepEqual(reasons,{a0:['failed','unreadable_source'],a1:['failed','misconfigured'],a2:['failed','unknown']});
   assert.equal(store.get('a0')?.details?.error,'The offer contained no readable text.');
@@ -81,7 +81,7 @@ test('stop preserves active jobs for resume and clear discards the stopped queue
  const enrichment=createEnrichmentService(offers,store,{resolve:async url=>{reads++;return new Promise(resolve=>pending.push(()=>resolve(source(url))));}},()=>{assert.fail('no model');});
  const queue=createDetailQueue(queueStore,enrichment);
  try {
-  queue.enqueue('s',['a0','a1','a2']);await tick();assert.equal(queue.poll().running,2);assert.equal(queue.poll().queued,1);
+  await queue.enqueue('s',['a0','a1','a2']);await tick();assert.equal(queue.poll().running,2);assert.equal(queue.poll().queued,1);
   queue.stop();await tick();assert.equal(queue.poll().paused,true);assert.equal(queue.poll().running,0);assert.equal(queue.poll().queued,3);
   queue.clear();assert.equal(queue.poll().queued,0);assert.equal(queue.poll().running,0);
   queue.pause(false);await tick();assert.equal(reads,2);
@@ -94,7 +94,7 @@ test('listing and automatic detail workers share one durable request ledger',asy
  const queue=createDetailQueue(queueStore,enrichment,searches);
  try {
   assert.equal(searches.reserveRequest('s','search'),true);
-  queue.enqueue('s',['a0','a1']);await tick();
+  await queue.enqueue('s',['a0','a1']);await tick();
   assert.equal(reads,1);
   const jobs=queue.poll().jobs;
   assert.equal(jobs.find(job=>job.offerId==='a1')?.stopReason,'request_budget');
@@ -112,7 +112,7 @@ test('internal detail capacity requeue refunds its reservation',async()=>{
  try {
   // Occupy all three detail-service slots explicitly before the two queue workers start.
   enrichment.details.start('a2');enrichment.details.start('a3');enrichment.details.start('a4');
-  queue.enqueue('s',['a0']);await tick();
+  await queue.enqueue('s',['a0']);await tick();
   assert.equal(searches.requestUsage('s').total,0);
   assert.equal(queue.poll().queued,1);
  } finally {queue.close();enrichment.close();db.close();}
@@ -147,11 +147,45 @@ test('refetch cancels and drains only its search jobs and allows fresh enqueue',
  const enrichment=createEnrichmentService(offers,store,{resolve:async()=>new Promise(()=>{})},()=>{assert.fail('no model');});
  const queue=createDetailQueue(queueStore,enrichment,searches);
  try {
-  queue.enqueue('s',['a0','a1','a2']); queue.enqueue('other',['a4']); await tick();
+  await queue.enqueue('s',['a0','a1','a2']); await queue.enqueue('other',['a4']); await tick();
   await queue.cancelSearch('s');
   assert.equal(queue.poll().jobs.filter(job=>job.searchId==='s').length,0);
   assert.equal(queue.poll().jobs.find(job=>job.searchId==='other')?.status,'queued');
-  queue.enqueue('s',['a0']); await tick();
+  await queue.enqueue('s',['a0']); await tick();
   assert.equal(queue.poll().jobs.find(job=>job.offerId==='a0')?.status,'running');
  } finally {queue.close();enrichment.close();await tick();db.close();}
+});
+
+test('a row only a browser listed is read when a provider covers its page, and the queue says what it queued',async()=>{
+ const {db,offers,store,queueStore,searches}=setup();const read:string[]=[];
+ offers.sight([{id:'b0',url:'https://vacancies.example/job-offer/b0',text:''}],1);
+ searches.create('other','React',['vacancies']);searches.add('other',[{offer:offers.get('b0')!}]);
+ for(const [id,version] of [['a0','browser:listing'],['a1','browser:listing'],['a2','browser:v1'],['a3','listing:feed:1']] as const) store.write({offerId:id,id:`e-${id}`,status:'idle',updatedAt:1,extractorVersion:version});
+ const covered=(id:string)=>`https://vacancies.example/job-offer/${id}`;
+ const reader={resolve:async(url:string)=>{read.push(url);return source(url);},covers:async(urls:readonly string[])=>new Set(urls.filter(url=>[covered('a0'),covered('a2'),covered('a3')].includes(url)))};
+ const enrichment=createEnrichmentService(offers,store,reader,()=>{assert.fail('no model');});
+ const queue=createDetailQueue(queueStore,enrichment,searches);
+ try {
+  // A full browser capture and a feed description keep their own refresh flows, covered or not.
+  assert.deepEqual(await queue.enqueue('s',['a0','a1','a2','a3']),['a0']);await tick();await tick();
+  assert.deepEqual(read,[covered('a0')]);
+  assert.equal(offers.get('a0')?.position,'React Engineer');assert.equal(store.get('a0')?.details?.status,'succeeded');
+  await assert.rejects(queue.enqueue('s',['a1','b0']),/does not belong/);
+  assert.deepEqual(await queue.enqueue('s',['b0','a1'],true),[]);
+  const blind=createDetailQueue(createDetailQueueStore(db),createEnrichmentService(offers,store,{resolve:reader.resolve},()=>{assert.fail('no model');}));
+  try { store.write({offerId:'a1',id:'e-a1',status:'idle',updatedAt:2,extractorVersion:'browser:listing'});assert.deepEqual(await blind.enqueue('s',['a1']),[]); }
+  finally {blind.close();}
+ } finally {queue.close();enrichment.close();db.close();}
+});
+
+test('a listing-only browser row asks its reader; a captured page still needs the browser to refresh',async()=>{
+ const {db,offers,store}=setup();
+ store.write({offerId:'a0',id:'e-a0',status:'idle',updatedAt:1,extractorVersion:'browser:listing'});
+ offers.save({...offers.get('a1')!,text:'Captured in the browser'});store.write({offerId:'a1',id:'e-a1',status:'idle',updatedAt:1,extractorVersion:'browser:v1'});
+ const enrichment=createEnrichmentService(offers,store,{resolve:async()=>{throw new OperationError('unreadable_source','No enabled provider offers a detail recipe for this source.');}},()=>{assert.fail('no model');});
+ try {
+  enrichment.details.start('a0');await tick();await tick();
+  assert.equal(store.get('a0')?.details?.status,'failed');assert.match(store.get('a0')?.details?.error??'',/No enabled provider/);
+  assert.throws(()=>enrichment.details.start('a1',true),/Cvitae Browser Companion/);
+ } finally {enrichment.close();db.close();}
 });

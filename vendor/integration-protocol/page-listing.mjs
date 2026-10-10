@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { semanticDetailRecipeSchema, semanticRuleSchema } from './semantic-dom.mjs';
+import { semanticDetailRecipeSchema, semanticFieldSchema, semanticRuleSchema } from './semantic-dom.mjs';
 const base = semanticDetailRecipeSchema.shape;
 const pointer = z.string().max(500).regex(/^(?:\/(?:[^~]|~[01])*)?$/);
 const text = z.string().min(1).max(500);
@@ -37,6 +37,14 @@ export const pageListingRecipeSchema = z.object({ kind: z.literal('page-listing-
     }).strict().refine(data => data.acknowledgement === 'optional' || data.page !== undefined && (data.pages !== undefined || data.total !== undefined && data.pageSize !== undefined)),
     z.object({ kind:z.literal('dom'), root:base.root, items:base.root, title:z.array(semanticRuleSchema).min(1).max(8), url:z.array(semanticRuleSchema).min(1).max(8),
       paginationLinks:base.root.optional(), empty:base.root.optional(),
+      // Card facts need the page-listing-fields-v1 capability. Title and URL stay
+      // relative to the item, so a client without it still reads the same cards.
+      card:z.array(z.literal('parent')).min(1).max(3).optional(),
+      fields:z.object({ company:semanticFieldSchema.optional(), location:semanticFieldSchema.optional(), work_mode:semanticFieldSchema.optional(),
+        contract_type:semanticFieldSchema.optional(), employment_type:semanticFieldSchema.optional(), seniority:semanticFieldSchema.optional(),
+        required_skills:semanticFieldSchema.optional(),
+      }).strict().optional(),
+      salaries:z.array(semanticRuleSchema).min(1).max(8).optional(),
     }).strict(),
   ]), maxPages:z.number().int().min(1).max(5),
 }).strict().refine(recipe => recipe.listing.keyword.kind !== 'taxonomy' || recipe.data.kind === 'embedded');

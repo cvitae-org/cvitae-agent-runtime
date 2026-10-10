@@ -312,6 +312,11 @@ export interface OfferReader {
    * and the only way forward is for a person to paste the text.
    */
   resolve(url: string, call: EffectCall): Promise<ResolvedOffer>;
+  /**
+   * The URLs `resolve` would read with a configured source, decided before any
+   * request. A reader without it is never asked for a row only a browser listed.
+   */
+  covers?(urls: readonly string[], signal: AbortSignal): Promise<ReadonlySet<string>>;
 }
 
 /* ------------------------------------------------------------------ sites */

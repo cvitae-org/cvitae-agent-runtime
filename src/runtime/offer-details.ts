@@ -6,6 +6,8 @@ import type { OfferReader, OfferStore } from '../contracts/index.js';
 import { OperationError } from '../contracts/index.js';
 
 type Pending = { controller: AbortController; consumers: Set<symbol>; explicit?: symbol; promise: Promise<void> };
+/** Written by a browser import that saw only the listing row. */
+const listingOnly = 'browser:listing';
 
 /** Public source collection; never resolves a model or requires a CV. */
 export const createOfferDetailsService = (offers: OfferStore, store: EnrichmentStore, reader: OfferReader,
@@ -33,7 +35,8 @@ export const createOfferDetailsService = (offers: OfferStore, store: EnrichmentS
   const acquire = (id: string, force: boolean, explicit: boolean): { pending?: Pending; consumer?: symbol } => {
     if (closed) throw new OperationError('details_closed', 'Detail fetching is unavailable.');
     const previous = state(id);
-    if (previous.extractorVersion?.startsWith('browser:') && (force || !offers.get(id)?.text.trim())) throw new OperationError('browser_capture_required', 'Open the offer in your browser and import its details with Cvitae Browser Companion.');
+    // A listing-only row has no capture to protect; the reader says when no provider reads its page.
+    if (previous.extractorVersion?.startsWith('browser:') && previous.extractorVersion !== listingOnly && (force || !offers.get(id)?.text.trim())) throw new OperationError('browser_capture_required', 'Open the offer in your browser and import its details with Cvitae Browser Companion.');
     if (force && previous.extractorVersion?.startsWith('listing:')) throw new OperationError('unsupported_source', 'This description comes from the source job feed. Refresh the search to update this offer.');
     let pending = active.get(id);
     if (!pending && !force && fresh(id)) {
@@ -81,6 +84,16 @@ export const createOfferDetailsService = (offers: OfferStore, store: EnrichmentS
   };
   return {
     running(id: string) { return active.has(id); },
+    /** Listing-only browser rows whose page a configured provider reads without a browser. */
+    async readable(ids: readonly string[], signal: AbortSignal): Promise<ReadonlySet<string>> {
+      const urls = new Map(ids.flatMap(id => {
+        const offer = offers.get(id);
+        return store.get(id)?.extractorVersion === listingOnly && offer?.url && !offer.text.trim() ? [[id, offer.url] as const] : [];
+      }));
+      if (!urls.size || !reader.covers) return new Set();
+      const covered = await reader.covers([...new Set(urls.values())], signal);
+      return new Set([...urls].filter(([, url]) => covered.has(url)).map(([id]) => id));
+    },
     start(id: string, force = false) {
       if (force && state(id).status === 'analyzing') throw new OperationError('details_busy', 'Wait for analysis to finish before refreshing its source.');
       acquire(id, force, true); return state(id);

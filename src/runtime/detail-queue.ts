@@ -14,6 +14,7 @@ export const createDetailQueue = (store: DetailQueueStore, enrichment: ReturnTyp
  const active = new Map<string, AbortController>();
  const pending = new Map<string, Promise<void>>();
  const stopping = new Set<string>();
+ const lifetime = new AbortController();
  let closed = false; let timer: ReturnType<typeof setTimeout> | undefined;
  store.recover();
  const schedule = () => { if (!closed && !timer) { timer=setTimeout(() => {timer=undefined;pump();},250); timer.unref(); } };
@@ -53,12 +54,17 @@ export const createDetailQueue = (store: DetailQueueStore, enrichment: ReturnTyp
    await Promise.allSettled(waits);
    store.forgetCancelledSearch?.(searchId);
   },
-  enqueue(searchId: string, ids: readonly string[]) { store.enqueue(searchId,ids); pump(); },
+  /** Returns the offers queued. `members` skips offers outside the search instead of refusing the batch. */
+  async enqueue(searchId: string, ids: readonly string[], members = false) {
+   const readable = await enrichment.details.readable(ids,lifetime.signal);
+   if (closed) return [];
+   const queued = store.enqueue(searchId,ids,{readable,members}); pump(); return queued;
+  },
   poll(after=0) { const page=store.poll(after); return {...page,items:page.jobs.map(job=>(()=>{const result=enrichment.get(job.offerId);return {...result,offer:{...result.offer,text:''},autoDetailStatus:job.status,autoDetailStopReason:job.stopReason,...(job.searchId&&requests?{searchId:job.searchId,requestUsage:requests.requestUsage(job.searchId)}:{})};})())}; },
   pause(value: boolean) { store.pause(value); if (!value) pump(); },
   stop() { store.pause(true); for (const [id,controller] of active) { stopping.add(id); store.set(id,'queued'); controller.abort(); } },
   clear() { store.pause(true); store.clearQueued(); for (const [id,controller] of active) { stopping.delete(id); store.set(id,'cancelled'); controller.abort(); } },
   cancel(id: string) { const controller=active.get(id); if (controller) controller.abort(); store.set(id,'cancelled'); },
-  close() { closed=true;if(timer)clearTimeout(timer);for(const controller of active.values())controller.abort(); }
+  close() { closed=true;lifetime.abort();if(timer)clearTimeout(timer);for(const controller of active.values())controller.abort(); }
  };
 };

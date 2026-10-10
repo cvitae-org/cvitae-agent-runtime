@@ -404,7 +404,7 @@ export const createDispatch = (harness: Harness, options: DispatchOptions = {}):
     'discovery.boards': async () => ok(await harness.discovery.boards()),
     'offers.note.get': ({ offerId }) => ok({ note: harness.offerNotes.get(offerId) }),
     'offers.note.save': ({ offerId, text, revision }) => ok({ note: harness.offerNotes.save(offerId, text, revision) }),
-    'discovery.details.auto.enqueue': ({ searchId, offerIds }) => { harness.detailQueue.enqueue(searchId,offerIds.filter(id=>!harness.discoverySearches.suppressed(searchId,id))); return ok({ queued:true }); },
+    'discovery.details.auto.enqueue': async ({ searchId, offerIds }) => { const queued=await harness.detailQueue.enqueue(searchId,offerIds.filter(id=>!harness.discoverySearches.suppressed(searchId,id))); return ok({ queued:queued.length>0, count:queued.length }); },
     'discovery.details.auto.poll': ({ after }) => ok(harness.detailQueue.poll(after)),
     'discovery.details.auto.pause': ({ paused }) => { harness.detailQueue.pause(paused); return ok({ paused }); },
     'discovery.details.auto.stop': () => { harness.detailQueue.stop(); return ok({ paused:true }); },

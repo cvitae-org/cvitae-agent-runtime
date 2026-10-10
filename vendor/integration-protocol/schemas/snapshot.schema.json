@@ -3592,6 +3592,732 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 400
+                          },
+                          "card": {
+                            "minItems": 1,
+                            "maxItems": 3,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "const": "parent"
+                            }
+                          },
+                          "fields": {
+                            "type": "object",
+                            "properties": {
+                              "company": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "location": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "work_mode": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "contract_type": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "employment_type": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "seniority": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "required_skills": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "salaries": {
+                            "minItems": 1,
+                            "maxItems": 8,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "selector": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 400
+                                },
+                                "text": {
+                                  "minItems": 1,
+                                  "maxItems": 20,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 2000
+                                  }
+                                },
+                                "steps": {
+                                  "maxItems": 3,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "enum": [
+                                      "parent",
+                                      "next",
+                                      "following",
+                                      "children"
+                                    ]
+                                  }
+                                },
+                                "within": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 400
+                                },
+                                "firstChild": {
+                                  "type": "boolean"
+                                },
+                                "omit": {
+                                  "maxItems": 10,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 400
+                                  }
+                                },
+                                "attribute": {
+                                  "type": "string",
+                                  "enum": [
+                                    "href",
+                                    "content",
+                                    "datetime"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "selector"
+                              ],
+                              "additionalProperties": false
+                            }
                           }
                         },
                         "required": [
@@ -6883,6 +7609,732 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 400
+                          },
+                          "card": {
+                            "minItems": 1,
+                            "maxItems": 3,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "const": "parent"
+                            }
+                          },
+                          "fields": {
+                            "type": "object",
+                            "properties": {
+                              "company": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "location": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "work_mode": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "contract_type": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "employment_type": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "seniority": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "required_skills": {
+                                "type": "object",
+                                "properties": {
+                                  "rules": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "selector": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "text": {
+                                          "minItems": 1,
+                                          "maxItems": 20,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "steps": {
+                                          "maxItems": 3,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "enum": [
+                                              "parent",
+                                              "next",
+                                              "following",
+                                              "children"
+                                            ]
+                                          }
+                                        },
+                                        "within": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 400
+                                        },
+                                        "firstChild": {
+                                          "type": "boolean"
+                                        },
+                                        "omit": {
+                                          "maxItems": 10,
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          }
+                                        },
+                                        "attribute": {
+                                          "type": "string",
+                                          "enum": [
+                                            "href",
+                                            "content",
+                                            "datetime"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "selector"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "multiple": {
+                                    "type": "boolean"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "rules"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "salaries": {
+                            "minItems": 1,
+                            "maxItems": 8,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "selector": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 400
+                                },
+                                "text": {
+                                  "minItems": 1,
+                                  "maxItems": 20,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 2000
+                                  }
+                                },
+                                "steps": {
+                                  "maxItems": 3,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "enum": [
+                                      "parent",
+                                      "next",
+                                      "following",
+                                      "children"
+                                    ]
+                                  }
+                                },
+                                "within": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 400
+                                },
+                                "firstChild": {
+                                  "type": "boolean"
+                                },
+                                "omit": {
+                                  "maxItems": 10,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 400
+                                  }
+                                },
+                                "attribute": {
+                                  "type": "string",
+                                  "enum": [
+                                    "href",
+                                    "content",
+                                    "datetime"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "selector"
+                              ],
+                              "additionalProperties": false
+                            }
                           }
                         },
                         "required": [
