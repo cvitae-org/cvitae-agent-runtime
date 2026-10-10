@@ -33,7 +33,7 @@ const { cvDocumentSchema } = await import(`${R}/src/capabilities/cv/document.ts`
 const { scratch } = await import(`${R}/scripts/support/db.ts`);
 
 // The last chat request the runtime sent, to read the numbered blocks from.
-let lastPrompt = '';
+let lastPrompt: string;
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
