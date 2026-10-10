@@ -1,0 +1,2082 @@
+{
+ "date": "2026-10-09",
+ "model": "gemma4:12b",
+ "runtime": "master f75f129",
+ "rounds": 3,
+ "results": [
+  {
+   "index": 0,
+   "arm": "tools",
+   "id": "acme",
+   "language": "en",
+   "question": "What did I achieve at Acme?",
+   "seconds": 25.3,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Acme, where you were a Senior Engineer, you achieved the following:\n* You rewrote the billing pipeline in Go, which cut invoice latency by 60% (Senior Engineer at Acme).\n* You tuned PostgreSQL queries and partitioning for the invoices table (Senior Engineer at Acme).",
+   "calls": [
+    "search_profile({\"query\":\"experience at Acme\",\"limit\":6})"
+   ],
+   "refs": [
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/globex~engineer",
+    "included tool:search_profile overview/role_description"
+   ]
+  },
+  {
+   "index": 1,
+   "arm": "once",
+   "id": "acme",
+   "language": "en",
+   "question": "What did I achieve at Acme?",
+   "seconds": 20.8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Acme, where you served as a Senior Engineer, you rewrote the billing pipeline in Go, which reduced invoice latency by 60%. Additionally, you tuned PostgreSQL queries and partitioning for the invoices table.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 2,
+   "arm": "selected",
+   "id": "acme",
+   "language": "en",
+   "question": "What did I achieve at Acme?",
+   "seconds": 9.8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Acme as a Senior Engineer, you rewrote the billing pipeline in Go, which cut invoice latency by 60%, and tuned PostgreSQL queries and partitioning for the invoices table.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 3,
+   "arm": "auto",
+   "id": "acme",
+   "language": "en",
+   "question": "What did I achieve at Acme?",
+   "seconds": 11.8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Acme, where you served as a Senior Engineer, you rewrote the billing pipeline in Go, which reduced invoice latency by 60%. You also tuned PostgreSQL queries and partitioning for the invoices table.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto overview/role_description"
+   ]
+  },
+  {
+   "index": 4,
+   "arm": "tools",
+   "id": "acme",
+   "language": "pl",
+   "question": "Co osiągnęłam w Acme?",
+   "seconds": 17.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W firmie Acme, jako Senior Engineer, osiągnęłaś następujące sukcesy:\n\n*   Przepisałaś potok rozliczeniowy (billing pipeline) w języku Go, co pozwoliło na skrócenie opóźnień w wystawianiu faktur o 60%.\n*   Zoptymalizowałaś zapytania PostgreSQL oraz zastosowałaś partycjonowanie dla tabeli faktur.",
+   "calls": [
+    "search_profile({\"query\":\"Acme\",\"limit\":6})"
+   ],
+   "refs": [
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/globex~engineer",
+    "included tool:search_profile overview/role_description"
+   ]
+  },
+  {
+   "index": 5,
+   "arm": "once",
+   "id": "acme",
+   "language": "pl",
+   "question": "Co osiągnęłam w Acme?",
+   "seconds": 14.2,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W pracy jako Senior Engineer w firmie Acme osiągnęłaś następujące sukcesy: przepisałaś potok rozliczeniowy (billing pipeline) w języku Go, co pozwoliło na skrócenie opóźnień w wystawianiu faktur o 60%, oraz zoptymalizowałaś zapytania PostgreSQL oraz partycjonowanie tabeli faktur.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 6,
+   "arm": "selected",
+   "id": "acme",
+   "language": "pl",
+   "question": "Co osiągnęłam w Acme?",
+   "seconds": 22.6,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W roli Senior Engineer w Acme przepisałaś potok rozliczeń (billing pipeline) w języku Go, co pozwoliło na skrócenie opóźnienia faktur o 60%. W tej samej roli w Acme zoptymalizowałaś zapytania PostgreSQL oraz partycjonowanie dla tabeli faktur (invoices table).",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 7,
+   "arm": "auto",
+   "id": "acme",
+   "language": "pl",
+   "question": "Co osiągnęłam w Acme?",
+   "seconds": 19.9,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W pracy jako Senior Engineer w firmie Acme przepisałaś pipeline rozliczeń (billing pipeline) w języku Go, co pozwoliło na skrócenie opóźnień faktur o 60%. Ponadto, jako Senior Engineer w Acme, zoptymalizowałaś zapytania PostgreSQL oraz partycjonowanie dla tabeli faktur.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/globex~engineer",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto overview/role_description",
+    "included ground:auto experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 8,
+   "arm": "tools",
+   "id": "globex",
+   "language": "en",
+   "question": "Which technologies did I use at Globex?",
+   "seconds": 12.3,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Globex, you used TypeScript and React to build the internal design system.",
+   "calls": [
+    "search_profile({\"query\":\"Globex technologies\",\"limit\":6})"
+   ],
+   "refs": [
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included tool:search_profile experience/globex~engineer",
+    "included tool:search_profile overview/role_description",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 9,
+   "arm": "once",
+   "id": "globex",
+   "language": "en",
+   "question": "Which technologies did I use at Globex?",
+   "seconds": 10.4,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Globex, you used TypeScript and React as an Engineer.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 10,
+   "arm": "selected",
+   "id": "globex",
+   "language": "en",
+   "question": "Which technologies did I use at Globex?",
+   "seconds": 6.8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Globex, you used TypeScript and React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 11,
+   "arm": "auto",
+   "id": "globex",
+   "language": "en",
+   "question": "Which technologies did I use at Globex?",
+   "seconds": 8.6,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Globex, you used TypeScript and React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval overview/role_description",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto overview/role_description"
+   ]
+  },
+  {
+   "index": 12,
+   "arm": "tools",
+   "id": "globex",
+   "language": "pl",
+   "question": "Jakich technologii używałam w Globex?",
+   "seconds": 10.3,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W firmie Globex używałaś TypeScripta oraz Reacta, których wykorzystałaś do stworzenia wewnętrznego systemu projektowania (design system).",
+   "calls": [
+    "search_profile({\"query\":\"Globex\",\"limit\":6})"
+   ],
+   "refs": [
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included tool:search_profile experience/globex~engineer",
+    "included tool:search_profile overview/role_description",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 13,
+   "arm": "once",
+   "id": "globex",
+   "language": "pl",
+   "question": "Jakich technologii używałam w Globex?",
+   "seconds": 10.3,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W pracy jako Engineer w Globex używałaś technologii TypeScript oraz React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 14,
+   "arm": "selected",
+   "id": "globex",
+   "language": "pl",
+   "question": "Jakich technologii używałam w Globex?",
+   "seconds": 8.6,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W roli Engineer w Globex używałaś technologii TypeScript oraz React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 15,
+   "arm": "auto",
+   "id": "globex",
+   "language": "pl",
+   "question": "Jakich technologii używałam w Globex?",
+   "seconds": 12.4,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W pracy jako Engineer w firmie Globex używałaś technologii TypeScript oraz React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/acme~senior-engineer",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto overview/role_description",
+    "included ground:auto experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 16,
+   "arm": "tools",
+   "id": "languages",
+   "language": "en",
+   "question": "What level of English do I have?",
+   "seconds": 9.2,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You have a C1 level of English, according to the languages section of your CV.",
+   "calls": [
+    "read_cv({\"section\":\"languages\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included tool:read_cv languages/polish",
+    "included tool:read_cv languages/english"
+   ]
+  },
+  {
+   "index": 17,
+   "arm": "once",
+   "id": "languages",
+   "language": "en",
+   "question": "What level of English do I have?",
+   "seconds": 23.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You have a C1 level of English.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once languages/polish",
+    "included ground:once languages/english"
+   ]
+  },
+  {
+   "index": 18,
+   "arm": "selected",
+   "id": "languages",
+   "language": "en",
+   "question": "What level of English do I have?",
+   "seconds": 3.9,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Your English level is C1.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once languages/polish",
+    "included ground:once languages/english"
+   ]
+  },
+  {
+   "index": 19,
+   "arm": "auto",
+   "id": "languages",
+   "language": "en",
+   "question": "What level of English do I have?",
+   "seconds": 17.2,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Based on the languages section of your CV, you have a C1 level of English.",
+   "calls": [
+    "read_cv({\"section\":\"languages\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "included ground:auto overview/role_description",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto experience/globex~engineer",
+    "included tool:read_cv languages/polish",
+    "included tool:read_cv languages/english"
+   ]
+  },
+  {
+   "index": 20,
+   "arm": "tools",
+   "id": "languages",
+   "language": "pl",
+   "question": "Na jakim poziomie znam angielski?",
+   "seconds": 10.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Twoj poziom znajomości języka angielskiego to C1, zgodnie z informacjami zawartymi w sekcji języków Twojego CV.",
+   "calls": [
+    "read_cv({\"section\":\"languages\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included tool:read_cv languages/polish",
+    "included tool:read_cv languages/english"
+   ]
+  },
+  {
+   "index": 21,
+   "arm": "once",
+   "id": "languages",
+   "language": "pl",
+   "question": "Na jakim poziomie znam angielski?",
+   "seconds": 8.7,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Twój poziom znajomości języka angielskiego to C1 (według sekcji Language).",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once languages/polish",
+    "included ground:once languages/english"
+   ]
+  },
+  {
+   "index": 22,
+   "arm": "selected",
+   "id": "languages",
+   "language": "pl",
+   "question": "Na jakim poziomie znam angielski?",
+   "seconds": 11.2,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Twój poziom znajomości języka angielskiego to C1.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once languages/polish",
+    "included ground:once languages/english"
+   ]
+  },
+  {
+   "index": 23,
+   "arm": "auto",
+   "id": "languages",
+   "language": "pl",
+   "question": "Na jakim poziomie znam angielski?",
+   "seconds": 21.6,
+   "failure": "",
+   "empty": false,
+   "right": false,
+   "trapped": false,
+   "correct": false,
+   "answer": "Twoje CV nie zawiera informacji na temat poziomu znajomości języka angielskiego.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto overview/role_description"
+   ]
+  },
+  {
+   "index": 24,
+   "arm": "tools",
+   "id": "education",
+   "language": "en",
+   "question": "Where did I study and what degree did I get?",
+   "seconds": 12,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You studied at AGH University of Krakow, where you earned an MSc Computer Science degree between 2012 and 2017.",
+   "calls": [
+    "read_cv({\"section\":\"education\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included tool:read_cv education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 25,
+   "arm": "once",
+   "id": "education",
+   "language": "en",
+   "question": "Where did I study and what degree did I get?",
+   "seconds": 12.9,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You studied at AGH University of Krakow, where you earned an MSc in Computer Science.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 26,
+   "arm": "selected",
+   "id": "education",
+   "language": "en",
+   "question": "Where did I study and what degree did I get?",
+   "seconds": 8.2,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You earned an MSc Computer Science from AGH University of Krakow.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 27,
+   "arm": "auto",
+   "id": "education",
+   "language": "en",
+   "question": "Where did I study and what degree did I get?",
+   "seconds": 37.1,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You studied at AGH University of Krakow, where you obtained an MSc in Computer Science (according to your education records).",
+   "calls": [
+    "read_cv({\"section\":\"education\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval experience/acme~senior-engineer",
+    "included ground:auto overview/role_description",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto experience/acme~senior-engineer",
+    "included tool:read_cv education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 28,
+   "arm": "tools",
+   "id": "education",
+   "language": "pl",
+   "question": "Gdzie studiowałam i jaki mam dyplom?",
+   "seconds": 20.9,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Zgodnie z Twoim CV, studiowałaś na AGH University of Krakow, gdzie uzyskałaś stopień MSc Computer Science (magister informatyki).",
+   "calls": [
+    "read_cv({\"section\":\"education\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included tool:read_cv education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 29,
+   "arm": "once",
+   "id": "education",
+   "language": "pl",
+   "question": "Gdzie studiowałam i jaki mam dyplom?",
+   "seconds": 16.8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Studowałaś na AGH University of Krakow (Akademia Górniczo-Zaglodnicka w Krakowie), gdzie uzyskałaś tytuł magistra w dziedzinie Computer Science (Informatyki) w latach 2012–2017.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 30,
+   "arm": "selected",
+   "id": "education",
+   "language": "pl",
+   "question": "Gdzie studiowałam i jaki mam dyplom?",
+   "seconds": 13.2,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Studia odbyłaś na AGH University of Krakow (Education), a uzyskany dyplom to MSc Computer Science (Education).",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "included ground:once education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 31,
+   "arm": "auto",
+   "id": "education",
+   "language": "pl",
+   "question": "Gdzie studiowałam i jaki mam dyplom?",
+   "seconds": 24.3,
+   "failure": "",
+   "empty": false,
+   "right": false,
+   "trapped": false,
+   "correct": false,
+   "answer": "Twoje CV nie zawiera informacji o tym, gdzie studiowałaś ani jaki dyplom posiadasz.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:85e77377-123f-4487-b1e7-e06cea91896e",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval overview/role_description",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto overview/role_description"
+   ]
+  },
+  {
+   "index": 32,
+   "arm": "tools",
+   "id": "acme",
+   "language": "en",
+   "question": "What did I achieve at Acme?",
+   "seconds": 15.8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Acme, where you served as a Senior Engineer, you achieved the following:\n\n*   You rewrote the billing pipeline in Go, which reduced invoice latency by 60%.\n*   You tuned PostgreSQL queries and partitioning for the invoices table.",
+   "calls": [
+    "search_profile({\"query\":\"work history at Acme\",\"limit\":6})"
+   ],
+   "refs": [
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/globex~engineer",
+    "included tool:search_profile overview/role_description"
+   ]
+  },
+  {
+   "index": 33,
+   "arm": "once",
+   "id": "acme",
+   "language": "en",
+   "question": "What did I achieve at Acme?",
+   "seconds": 11.8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Acme, where you served as a Senior Engineer, you rewrote the billing pipeline in Go, which reduced invoice latency by 60%, and tuned PostgreSQL queries and partitioning for the invoices table.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 34,
+   "arm": "selected",
+   "id": "acme",
+   "language": "en",
+   "question": "What did I achieve at Acme?",
+   "seconds": 10.3,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "As a Senior Engineer at Acme, you rewrote the billing pipeline in Go, which cut invoice latency by 60%. You also tuned PostgreSQL queries and partitioning for the invoices table while serving as a Senior Engineer at Acme.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 35,
+   "arm": "auto",
+   "id": "acme",
+   "language": "en",
+   "question": "What did I achieve at Acme?",
+   "seconds": 11.4,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Acme, where you worked as a Senior Engineer from 2021 to the present, you rewrote the billing pipeline in Go, which reduced invoice latency by 60%, and tuned PostgreSQL queries and partitioning for the invoices table.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto overview/role_description"
+   ]
+  },
+  {
+   "index": 36,
+   "arm": "tools",
+   "id": "acme",
+   "language": "pl",
+   "question": "Co osiągnęłam w Acme?",
+   "seconds": 14.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W firmie Acme, jako Senior Engineer, osiągnęłaś następujące sukcesy:\n*   Przepisałaś potok bilingowy w języku Go, co pozwoliło na skrócenie opóźnień w wystawianiu faktur o 60%.\n*   Zoptymalizowałaś zapytania PostgreSQL oraz partycję tabeli faktur (invoices table).",
+   "calls": [
+    "read_cv({\"section\":\"experience\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:read_cv experience/acme~senior-engineer",
+    "included tool:read_cv experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 37,
+   "arm": "once",
+   "id": "acme",
+   "language": "pl",
+   "question": "Co osiągnęłam w Acme?",
+   "seconds": 14.3,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W pracy jako Senior Engineer w Acme osiągnęłaś następujące sukcesy:\n\n*   Przepisałaś potok rozliczeniowy (billing pipeline) w języku Go, co pozwoliło na skrócenie opóźnienia faktur o 60%.\n*   Zoptymalizowałaś zapytania PostgreSQL oraz wprowadziłeś/aś partycjonowanie dla tabeli faktur (invoices table).",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 38,
+   "arm": "selected",
+   "id": "acme",
+   "language": "pl",
+   "question": "Co osiągnęłam w Acme?",
+   "seconds": 15.9,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W roli Senior Engineer w firmie Acme przepisałaś arkę (pipeline) rozliczeniową w języku Go, co pozwoliło na skrócenie opóźnień faktur o 60%. Dodatkowo, jako Senior Engineer w firmie Acme, zoptymalizowałaś zapytania PostgreSQL oraz partycjonowanie tabeli faktur.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 39,
+   "arm": "auto",
+   "id": "acme",
+   "language": "pl",
+   "question": "Co osiągnęłam w Acme?",
+   "seconds": 17.2,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W roli Senior Engineer w firmie Acme osiągnęłaś następujące sukcesy:\n\n*   Przepisałaś proces przetwarzania płatności (billing pipeline) w języku Go, co pozwoliło na skrócenie czasu generowania faktur o 60%.\n*   Zoptymalizowałaś zapytania PostgreSQL oraz zastosowałaś partycjonowanie dla tabeli faktur (invoices table).",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/globex~engineer",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto overview/role_description",
+    "included ground:auto experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 40,
+   "arm": "tools",
+   "id": "globex",
+   "language": "en",
+   "question": "Which technologies did I use at Globex?",
+   "seconds": 9.8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Globex, you used TypeScript and React to build the internal design system.",
+   "calls": [
+    "search_profile({\"query\":\"Globex technologies\",\"limit\":6})"
+   ],
+   "refs": [
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:search_profile experience/globex~engineer",
+    "included tool:search_profile overview/role_description",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 41,
+   "arm": "once",
+   "id": "globex",
+   "language": "en",
+   "question": "Which technologies did I use at Globex?",
+   "seconds": 18.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Globex, where you worked as an Engineer from 2018 to 2021, you used TypeScript and React to build the internal design system.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 42,
+   "arm": "selected",
+   "id": "globex",
+   "language": "en",
+   "question": "Which technologies did I use at Globex?",
+   "seconds": 4.7,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Globex, you used TypeScript and React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 43,
+   "arm": "auto",
+   "id": "globex",
+   "language": "en",
+   "question": "Which technologies did I use at Globex?",
+   "seconds": 9.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Globex, you used TypeScript and React to build the internal design system.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval overview/role_description",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto overview/role_description"
+   ]
+  },
+  {
+   "index": 44,
+   "arm": "tools",
+   "id": "globex",
+   "language": "pl",
+   "question": "Jakich technologii używałam w Globex?",
+   "seconds": 18.8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W pracy jako Engineer w Globex używałaś technologii TypeScript oraz React, wykorzystując je do budowy wewnętrznego systemu projektowania (design system).",
+   "calls": [
+    "search_profile({\"query\":\"Globex technologies\",\"limit\":6})"
+   ],
+   "refs": [
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:search_profile experience/globex~engineer",
+    "included tool:search_profile overview/role_description",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 45,
+   "arm": "once",
+   "id": "globex",
+   "language": "pl",
+   "question": "Jakich technologii używałam w Globex?",
+   "seconds": 10.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W firmie Globex, pracując jako Engineer, używałaś technologii TypeScript oraz React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 46,
+   "arm": "selected",
+   "id": "globex",
+   "language": "pl",
+   "question": "Jakich technologii używałam w Globex?",
+   "seconds": 9.1,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W roli Engineer w Globex używałaś technologii TypeScript oraz React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 47,
+   "arm": "auto",
+   "id": "globex",
+   "language": "pl",
+   "question": "Jakich technologii używałam w Globex?",
+   "seconds": 9.2,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W firmie Globex używałaś technologii TypeScript oraz React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/acme~senior-engineer",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto overview/role_description",
+    "included ground:auto experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 48,
+   "arm": "tools",
+   "id": "languages",
+   "language": "en",
+   "question": "What level of English do I have?",
+   "seconds": 9.2,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You have a C1 level of English, according to your CV.",
+   "calls": [
+    "read_cv({\"section\":\"languages\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:read_cv languages/polish",
+    "included tool:read_cv languages/english"
+   ]
+  },
+  {
+   "index": 49,
+   "arm": "once",
+   "id": "languages",
+   "language": "en",
+   "question": "What level of English do I have?",
+   "seconds": 8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You have a C1 level of English, according to your CV.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once languages/polish",
+    "included ground:once languages/english"
+   ]
+  },
+  {
+   "index": 50,
+   "arm": "selected",
+   "id": "languages",
+   "language": "en",
+   "question": "What level of English do I have?",
+   "seconds": 3.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Your English level is C1.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once languages/polish",
+    "included ground:once languages/english"
+   ]
+  },
+  {
+   "index": 51,
+   "arm": "auto",
+   "id": "languages",
+   "language": "en",
+   "question": "What level of English do I have?",
+   "seconds": 8.4,
+   "failure": "",
+   "empty": false,
+   "right": false,
+   "trapped": false,
+   "correct": false,
+   "answer": "I do not have information about your level of English in your CV.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "included ground:auto overview/role_description",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 52,
+   "arm": "tools",
+   "id": "languages",
+   "language": "pl",
+   "question": "Na jakim poziomie znam angielski?",
+   "seconds": 10.7,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Twój poziom znajomości języka angielskiego to C1, zgodnie z sekcją \"languages\" w Twoim CV.",
+   "calls": [
+    "read_cv({\"section\":\"languages\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:read_cv languages/polish",
+    "included tool:read_cv languages/english"
+   ]
+  },
+  {
+   "index": 53,
+   "arm": "once",
+   "id": "languages",
+   "language": "pl",
+   "question": "Na jakim poziomie znam angielski?",
+   "seconds": 17.7,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Twój poziom znajomości języka angielskiego to C1, zgodnie z informacjami zawartymi w Twoim CV.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once languages/polish",
+    "included ground:once languages/english"
+   ]
+  },
+  {
+   "index": 54,
+   "arm": "selected",
+   "id": "languages",
+   "language": "pl",
+   "question": "Na jakim poziomie znam angielski?",
+   "seconds": 20,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Znasz język angielski na poziomie C1, zgodnie z informacją w sekcji Language, English.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once languages/polish",
+    "included ground:once languages/english"
+   ]
+  },
+  {
+   "index": 55,
+   "arm": "auto",
+   "id": "languages",
+   "language": "pl",
+   "question": "Na jakim poziomie znam angielski?",
+   "seconds": 26.5,
+   "failure": "",
+   "empty": false,
+   "right": false,
+   "trapped": false,
+   "correct": false,
+   "answer": "Twoje CV nie zawiera informacji na temat poziomu znajomości języka angielskiego.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto overview/role_description"
+   ]
+  },
+  {
+   "index": 56,
+   "arm": "tools",
+   "id": "education",
+   "language": "en",
+   "question": "Where did I study and what degree did I get?",
+   "seconds": 12,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You studied at AGH University of Krakow and received an MSc in Computer Science.",
+   "calls": [
+    "read_cv({\"section\":\"education\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:read_cv education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 57,
+   "arm": "once",
+   "id": "education",
+   "language": "en",
+   "question": "Where did I study and what degree did I get?",
+   "seconds": 13,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You studied at AGH University of Krakow, where you obtained an MSc in Computer Science (Education).",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 58,
+   "arm": "selected",
+   "id": "education",
+   "language": "en",
+   "question": "Where did I study and what degree did I get?",
+   "seconds": 5.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You studied at AGH University of Krakow, where you earned an MSc in Computer Science.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 59,
+   "arm": "auto",
+   "id": "education",
+   "language": "en",
+   "question": "Where did I study and what degree did I get?",
+   "seconds": 36.8,
+   "failure": "",
+   "empty": false,
+   "right": false,
+   "trapped": false,
+   "correct": false,
+   "answer": "The provided information does not mention where you studied or what degree you obtained.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval experience/acme~senior-engineer",
+    "included ground:auto overview/role_description",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 60,
+   "arm": "tools",
+   "id": "education",
+   "language": "pl",
+   "question": "Gdzie studiowałam i jaki mam dyplom?",
+   "seconds": 15.6,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Studowałaś na AGH University of Krakow, gdzie uzyskałaś stopień MSc Computer Science.",
+   "calls": [
+    "read_cv({\"section\":\"education\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:read_cv education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 61,
+   "arm": "once",
+   "id": "education",
+   "language": "pl",
+   "question": "Gdzie studiowałam i jaki mam dyplom?",
+   "seconds": 16.9,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Studowałaś na AGH University of Krakow, gdzie uzyskałaś stopień magistra (MSc) w dziedzinie Computer Science w latach 2012-2017.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 62,
+   "arm": "selected",
+   "id": "education",
+   "language": "pl",
+   "question": "Gdzie studiowałam i jaki mam dyplom?",
+   "seconds": 9,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Studiowałaś na AGH University of Krakow, gdzie uzyskałaś dyplom MSc Computer Science.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 63,
+   "arm": "auto",
+   "id": "education",
+   "language": "pl",
+   "question": "Gdzie studiowałam i jaki mam dyplom?",
+   "seconds": 21.1,
+   "failure": "",
+   "empty": false,
+   "right": false,
+   "trapped": false,
+   "correct": false,
+   "answer": "Twoje CV nie zawiera informacji o tym, gdzie studiowałaś ani jaki masz dyplom.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval overview/role_description",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto overview/role_description"
+   ]
+  },
+  {
+   "index": 64,
+   "arm": "tools",
+   "id": "acme",
+   "language": "en",
+   "question": "What did I achieve at Acme?",
+   "seconds": 13.9,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Acme, where you were a Senior Engineer, you rewrote the billing pipeline in Go, which reduced invoice latency by 60%, and tuned PostgreSQL queries and partitioning for the invoices table.",
+   "calls": [
+    "read_cv({\"section\":\"experience\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:read_cv experience/acme~senior-engineer",
+    "included tool:read_cv experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 65,
+   "arm": "once",
+   "id": "acme",
+   "language": "en",
+   "question": "What did I achieve at Acme?",
+   "seconds": 12,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Acme, where you served as a Senior Engineer, you achieved the following:\n\n*   You rewrote the billing pipeline in Go, which reduced invoice latency by 60%.\n*   You tuned PostgreSQL queries and partitioning for the invoices table.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 66,
+   "arm": "selected",
+   "id": "acme",
+   "language": "en",
+   "question": "What did I achieve at Acme?",
+   "seconds": 10,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Acme as a Senior Engineer, you rewrote the billing pipeline in Go, which cut invoice latency by 60%. Additionally, you tuned PostgreSQL queries and partitioning for the invoices table.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 67,
+   "arm": "auto",
+   "id": "acme",
+   "language": "en",
+   "question": "What did I achieve at Acme?",
+   "seconds": 14.3,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Acme, where you served as a Senior Engineer, you rewrote the billing pipeline in Go, which cut invoice latency by 60% and involved tuning PostgreSQL queries and partitioning for the invoices table.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto overview/role_description"
+   ]
+  },
+  {
+   "index": 68,
+   "arm": "tools",
+   "id": "acme",
+   "language": "pl",
+   "question": "Co osiągnęłam w Acme?",
+   "seconds": 17.2,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W firmie Acme, na stanowisku Senior Engineer, osiągnęłaś następujące sukcesy:\n* Przepisałaś potok bilingowy (billing pipeline) w języku Go, co pozwoliło na skrócenie opóźnień w wystawianiu faktur o 60%.\n* Zoptymalizowałaś zapytania PostgreSQL oraz partycjonowanie dla tabeli faktur (invoices table).",
+   "calls": [
+    "search_profile({\"query\":\"Acme\",\"limit\":6})"
+   ],
+   "refs": [
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/globex~engineer",
+    "included tool:search_profile overview/role_description"
+   ]
+  },
+  {
+   "index": 69,
+   "arm": "once",
+   "id": "acme",
+   "language": "pl",
+   "question": "Co osiągnęłam w Acme?",
+   "seconds": 19.1,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W firmie Acme, jako Senior Engineer, osiągnęłaś następujące sukcesy:\n\n*   Przepisałaś rurociąg rozliczeniowy (billing pipeline) w języku Go, co pozwoliło na skrócenie opóźnień w wystawianiu faktur o 60%.\n*   Zoptymalizowałaś zapytania PostgreSQL oraz wprowadziłaś partycjonowanie dla tabeli faktur (invoices table).",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 70,
+   "arm": "selected",
+   "id": "acme",
+   "language": "pl",
+   "question": "Co osiągnęłam w Acme?",
+   "seconds": 18.1,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W roli Senior Engineer w firmie Acme przepisałaś potok bilingowy w języku Go, co pozwoliło na skrócenie opóźnienia faktur o 60%. Dodatkowo, jako Senior Engineer w firmie Acme, zoptymalizowałaś zapytania PostgreSQL oraz partycjonowanie tabeli faktur.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 71,
+   "arm": "auto",
+   "id": "acme",
+   "language": "pl",
+   "question": "Co osiągnęłam w Acme?",
+   "seconds": 23.6,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W roli Senior Engineer w firmie Acme przepisałaś potok rozliczeń (billing pipeline) w języku Go, co pozwoliło na skrócenie opóźnień w wystawianiu faktur o 60%. Dodatkowo, jako Senior Engineer w Acme, zoptymalizowałaś zapytania PostgreSQL oraz partycjonowanie tabeli faktur (invoices table).",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/globex~engineer",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto overview/role_description",
+    "included ground:auto experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 72,
+   "arm": "tools",
+   "id": "globex",
+   "language": "en",
+   "question": "Which technologies did I use at Globex?",
+   "seconds": 10.9,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Globex, where you worked as an Engineer, you used TypeScript and React to build the internal design system.",
+   "calls": [
+    "search_profile({\"query\":\"Globex technologies\",\"limit\":6})"
+   ],
+   "refs": [
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:search_profile experience/globex~engineer",
+    "included tool:search_profile overview/role_description",
+    "included tool:search_profile experience/acme~senior-engineer",
+    "included tool:search_profile experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 73,
+   "arm": "once",
+   "id": "globex",
+   "language": "en",
+   "question": "Which technologies did I use at Globex?",
+   "seconds": 17.7,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Globex, you used TypeScript and React to build the internal design system.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 74,
+   "arm": "selected",
+   "id": "globex",
+   "language": "en",
+   "question": "Which technologies did I use at Globex?",
+   "seconds": 6.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Globex, you used TypeScript and React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 75,
+   "arm": "auto",
+   "id": "globex",
+   "language": "en",
+   "question": "Which technologies did I use at Globex?",
+   "seconds": 10.9,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "At Globex, you used TypeScript and React to build the internal design system.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval overview/role_description",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto overview/role_description"
+   ]
+  },
+  {
+   "index": 76,
+   "arm": "tools",
+   "id": "globex",
+   "language": "pl",
+   "question": "Jakich technologii używałam w Globex?",
+   "seconds": 11.6,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W Globex jako Engineer używałaś technologii TypeScript oraz Reacta.",
+   "calls": [
+    "read_cv({\"section\":\"experience\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:read_cv experience/acme~senior-engineer",
+    "included tool:read_cv experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 77,
+   "arm": "once",
+   "id": "globex",
+   "language": "pl",
+   "question": "Jakich technologii używałam w Globex?",
+   "seconds": 10.9,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W pracy jako Engineer w Globex (2018–2021) używałaś technologii TypeScript oraz React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 78,
+   "arm": "selected",
+   "id": "globex",
+   "language": "pl",
+   "question": "Jakich technologii używałam w Globex?",
+   "seconds": 7.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W roli Engineer w firmie Globex używałaś technologii TypeScript oraz React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 79,
+   "arm": "auto",
+   "id": "globex",
+   "language": "pl",
+   "question": "Jakich technologii używałam w Globex?",
+   "seconds": 12.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "W pracy jako Engineer w firmie Globex używałaś technologii TypeScript oraz React.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/acme~senior-engineer",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto overview/role_description",
+    "included ground:auto experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 80,
+   "arm": "tools",
+   "id": "languages",
+   "language": "en",
+   "question": "What level of English do I have?",
+   "seconds": 10,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Based on your CV, your English level is C1.",
+   "calls": [
+    "read_cv({\"section\":\"languages\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:read_cv languages/polish",
+    "included tool:read_cv languages/english"
+   ]
+  },
+  {
+   "index": 81,
+   "arm": "once",
+   "id": "languages",
+   "language": "en",
+   "question": "What level of English do I have?",
+   "seconds": 8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You have a C1 level of English, according to the language section of your CV.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once languages/polish",
+    "included ground:once languages/english"
+   ]
+  },
+  {
+   "index": 82,
+   "arm": "selected",
+   "id": "languages",
+   "language": "en",
+   "question": "What level of English do I have?",
+   "seconds": 4.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You have a C1 level of English.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once languages/polish",
+    "included ground:once languages/english"
+   ]
+  },
+  {
+   "index": 83,
+   "arm": "auto",
+   "id": "languages",
+   "language": "en",
+   "question": "What level of English do I have?",
+   "seconds": 15.5,
+   "failure": "",
+   "empty": false,
+   "right": false,
+   "trapped": false,
+   "correct": false,
+   "answer": "The provided CV parts do not mention your level of English.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "included ground:auto overview/role_description",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto experience/globex~engineer"
+   ]
+  },
+  {
+   "index": 84,
+   "arm": "tools",
+   "id": "languages",
+   "language": "pl",
+   "question": "Na jakim poziomie znam angielski?",
+   "seconds": 10.9,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Twoj poziom znajomości języka angielskiego to C1 wg informacji zawartych w sekcji \"languages\" Twojego CV.",
+   "calls": [
+    "read_cv({\"section\":\"languages\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:read_cv languages/polish",
+    "included tool:read_cv languages/english"
+   ]
+  },
+  {
+   "index": 85,
+   "arm": "once",
+   "id": "languages",
+   "language": "pl",
+   "question": "Na jakim poziomie znam angielski?",
+   "seconds": 6.8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Znasz język angielski na poziomie C1.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once languages/polish",
+    "included ground:once languages/english"
+   ]
+  },
+  {
+   "index": 86,
+   "arm": "selected",
+   "id": "languages",
+   "language": "pl",
+   "question": "Na jakim poziomie znam angielski?",
+   "seconds": 8.3,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Znasz język angielski na poziomie C1 (sekcja Language).",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once languages/polish",
+    "included ground:once languages/english"
+   ]
+  },
+  {
+   "index": 87,
+   "arm": "auto",
+   "id": "languages",
+   "language": "pl",
+   "question": "Na jakim poziomie znam angielski?",
+   "seconds": 11.1,
+   "failure": "",
+   "empty": false,
+   "right": false,
+   "trapped": false,
+   "correct": false,
+   "answer": "Twoje CV nie zawiera informacji na temat poziomu znajomości języka angielskiego.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval overview/role_description",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto overview/role_description"
+   ]
+  },
+  {
+   "index": 88,
+   "arm": "tools",
+   "id": "education",
+   "language": "en",
+   "question": "Where did I study and what degree did I get?",
+   "seconds": 12.1,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You studied at AGH University of Krakow and obtained an MSc in Computer Science.",
+   "calls": [
+    "read_cv({\"section\":\"education\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:read_cv education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 89,
+   "arm": "once",
+   "id": "education",
+   "language": "en",
+   "question": "Where did I study and what degree did I get?",
+   "seconds": 28.4,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You earned an MSc in Computer Science from the AGH University of Krakow.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 90,
+   "arm": "selected",
+   "id": "education",
+   "language": "en",
+   "question": "Where did I study and what degree did I get?",
+   "seconds": 4.8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "You earned an MSc in Computer Science from AGH University of Krakow.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 91,
+   "arm": "auto",
+   "id": "education",
+   "language": "en",
+   "question": "Where did I study and what degree did I get?",
+   "seconds": 13.7,
+   "failure": "",
+   "empty": false,
+   "right": false,
+   "trapped": false,
+   "correct": false,
+   "answer": "I do not have information about where you studied or what degree you received based on the provided details.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval overview/role_description",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval experience/acme~senior-engineer",
+    "included ground:auto overview/role_description",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto experience/acme~senior-engineer"
+   ]
+  },
+  {
+   "index": 92,
+   "arm": "tools",
+   "id": "education",
+   "language": "pl",
+   "question": "Gdzie studiowałam i jaki mam dyplom?",
+   "seconds": 18.7,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Studowałaś na AGH University of Krakow, gdzie uzyskałaś stopień MSc Computer Science.",
+   "calls": [
+    "read_cv({\"section\":\"education\",\"offset\":0,\"limit\":5})"
+   ],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included tool:read_cv education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 93,
+   "arm": "once",
+   "id": "education",
+   "language": "pl",
+   "question": "Gdzie studiowałam i jaki mam dyplom?",
+   "seconds": 15.5,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Studowałaś na AGH University of Krakow, gdzie uzyskałaś stopień magisterski (MSc) w dziedzinie Computer Science w latach 2012–2017.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 94,
+   "arm": "selected",
+   "id": "education",
+   "language": "pl",
+   "question": "Gdzie studiowałam i jaki mam dyplom?",
+   "seconds": 9.8,
+   "failure": "",
+   "empty": false,
+   "right": true,
+   "trapped": false,
+   "correct": true,
+   "answer": "Studiowałaś na AGH University of Krakow (Education), gdzie uzyskałaś stopień MSc Computer Science (Education).",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "included ground:once education/agh-university-of-krakow~msc-computer-science"
+   ]
+  },
+  {
+   "index": 95,
+   "arm": "auto",
+   "id": "education",
+   "language": "pl",
+   "question": "Gdzie studiowałam i jaki mam dyplom?",
+   "seconds": 15.5,
+   "failure": "",
+   "empty": false,
+   "right": false,
+   "trapped": false,
+   "correct": false,
+   "answer": "Nie ma informacji o Twoim wykształceniu ani posiadanych dyplomach w Twoim CV.",
+   "calls": [],
+   "refs": [
+    "read port:documents cv:78e90277-9c97-43f2-a294-efe705faa8fd",
+    "read port:retrieval experience/globex~engineer",
+    "read port:retrieval experience/acme~senior-engineer",
+    "read port:retrieval overview/role_description",
+    "included ground:auto experience/globex~engineer",
+    "included ground:auto experience/acme~senior-engineer",
+    "included ground:auto overview/role_description"
+   ]
+  }
+ ]
+}

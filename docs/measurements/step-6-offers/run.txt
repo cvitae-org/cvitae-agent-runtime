@@ -1,0 +1,34 @@
+# round 1 (smoke, N=1)
+en cite=False 317.1s Northwind>Contoso>Fabrikam>Tailspin>Litware markers=0 cited=0 unresolved=0
+en cite=True 339.5s Northwind>Contoso>Fabrikam>Tailspin>Litware markers=24 cited=10 unresolved=0
+pl cite=False 147.1s Northwind>Contoso>Fabrikam>Tailspin>Litware markers=0 cited=0 unresolved=0
+pl cite=True 273.3s Northwind>Contoso>Fabrikam>Tailspin>Litware markers=28 cited=9 unresolved=0
+# rounds 2-8
+ 1/28 en cite=false 98.4s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+ 2/28 en cite=true  395.7s - first=false partial=false markers=35 supported=23 cited=10 unresolved=0
+ 3/28 pl cite=false 220.6s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+ 4/28 pl cite=true  100.7s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=32 supported=20 cited=8 unresolved=0
+ 5/28 en cite=false 118s Northwind>Contoso>Tailspin>Litware>Fabrikam first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+ 6/28 en cite=true  188.1s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=25 supported=25 cited=10 unresolved=0
+ 7/28 pl cite=false 239.9s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+ 8/28 pl cite=true  154.8s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=36 supported=26 cited=9 unresolved=0
+ 9/28 en cite=false 324s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+10/28 en cite=true  353.1s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=29 supported=29 cited=10 unresolved=0
+11/28 pl cite=false 59.4s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+12/28 pl cite=true  170.2s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=24 supported=15 cited=9 unresolved=0
+13/28 en cite=false 290.3s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+14/28 en cite=true  508.3s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=25 supported=25 cited=10 unresolved=0
+15/28 pl cite=false 133.3s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+16/28 pl cite=true  310s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=37 supported=21 cited=9 unresolved=0
+17/28 en cite=false 206.4s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+18/28 en cite=true  212s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=33 supported=21 cited=10 unresolved=0
+19/28 pl cite=false 181.3s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+20/28 pl cite=true  261.5s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=29 supported=24 cited=9 unresolved=0
+21/28 en cite=false 92.3s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+22/28 en cite=true  285.5s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=25 supported=22 cited=10 unresolved=0
+23/28 pl cite=false 106.9s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+24/28 pl cite=true  103.8s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=37 supported=24 cited=9 unresolved=0
+25/28 en cite=false 316.2s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+26/28 en cite=true  366.9s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=42 supported=41 cited=10 unresolved=0
+27/28 pl cite=false 58.3s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=0 supported=0 cited=0 unresolved=0
+28/28 pl cite=true  290.3s Northwind>Contoso>Fabrikam>Tailspin>Litware first=true partial=true markers=30 supported=19 cited=9 unresolved=0
