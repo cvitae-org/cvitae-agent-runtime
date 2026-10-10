@@ -95,7 +95,8 @@ off and on, 8 chats each: 32, each a fresh runtime.
   16/16, no empty answer, 0 of 263 numbers unresolved, and no answer called the
   contract a level.
 
-Decided: the one shape that is built stays, and `cite` works on this model, so
-it can be offered; whether it is on by default is yours to decide, since it adds
-about half to the wait. Not decided here: the plan shapes B and C were never
-built, and no hosted model was asked.
+Decided: the one shape that is built stays, and `cite` is on by default in
+Studio (2026-10-10), since its numbers held; the price is about half again the
+wait, and the person can turn it off. The runtime's default stays off: a client
+that does not ask gets no numbers. Not decided here: the plan shapes B and C
+were never built, and no hosted model was asked.
