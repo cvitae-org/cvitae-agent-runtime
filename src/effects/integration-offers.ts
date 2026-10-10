@@ -14,24 +14,34 @@ export function createIntegrationOfferReader(providers: IntegrationProviders, op
 } = {}): OfferReader {
   const read = createDiscoveryTransport(options), now = options.now ?? Date.now;
   const failure = (message: string): never => { throw new OperationError('unreadable_source', message); };
+  type Resolved = Awaited<ReturnType<IntegrationProviders['resolve']>>;
+  const available = (resolved: Resolved, source: ScopedIntegration) => connectionEnabled(providers, source) && Date.parse(source.validUntil) > now()
+    && source.source.health.status !== 'drift' && !resolved.providers.find(provider => provider.connectionId === source.reference.connectionId)?.snapshot?.revokedRecipes.some(recipe => recipe.sourceId === source.reference.sourceId && recipe.revision === source.source.revision);
+  /** The one source whose detail recipe reads this URL, or why there is none. */
+  const select = (resolved: Resolved, url: string, hint?: IntegrationOfferHint): { source: ScopedIntegration } | { problem: string } => {
+    const candidates = resolved.sources.filter(source => available(resolved, source) && source.source.detailRecipe
+      && (!hint || source.key === hint.sourceKey) && domOfferMatches(source.source.detailRecipe, url));
+    const priority = (source: ScopedIntegration) => providers.connections().find(connection => connection.id === source.reference.connectionId)!.priority;
+    candidates.sort((a,b) => priority(a) - priority(b));
+    if (!candidates.length) return { problem: 'No enabled provider offers a detail recipe for this source. Open the offer in a browser or configure its provider.' };
+    if (!hint && candidates.length > 1 && priority(candidates[0]!) === priority(candidates[1]!)) return { problem: 'Several providers cover this offer. Import it from the desired provider search first.' };
+    return { source: candidates[0]! };
+  };
   const reader: OfferReader = {
+    async covers(urls, signal) {
+      const resolved = await providers.resolve(signal);
+      return new Set(urls.filter(url => 'source' in select(resolved, url, options.lookup?.(url))));
+    },
     async resolve(url, call): Promise<ResolvedOffer> {
-      const hint = options.lookup?.(url), resolved = await providers.resolve(call.signal);
-      const available = (source: ScopedIntegration) => connectionEnabled(providers, source) && Date.parse(source.validUntil) > now()
-        && source.source.health.status !== 'drift' && !resolved.providers.find(provider => provider.connectionId === source.reference.connectionId)?.snapshot?.revokedRecipes.some(recipe => recipe.sourceId === source.reference.sourceId && recipe.revision === source.source.revision);
-      const candidates = resolved.sources.filter(source => available(source) && source.source.detailRecipe
-        && (!hint || source.key === hint.sourceKey) && domOfferMatches(source.source.detailRecipe, url));
-      const priority = (source: ScopedIntegration) => providers.connections().find(connection => connection.id === source.reference.connectionId)!.priority;
-      candidates.sort((a,b) => priority(a) - priority(b));
-      if (!candidates.length) return failure('No enabled provider offers a detail recipe for this source. Open the offer in a browser or configure its provider.');
-      if (!hint && candidates.length > 1 && priority(candidates[0]!) === priority(candidates[1]!)) return failure('Several providers cover this offer. Import it from the desired provider search first.');
-      const source = candidates[0]!, recipe = source.source.detailRecipe!, integration = executionFor(source, recipe.kind);
+      const hint = options.lookup?.(url), resolved = await providers.resolve(call.signal), selected = select(resolved, url, hint);
+      if ('problem' in selected) return failure(selected.problem);
+      const source = selected.source, recipe = source.source.detailRecipe!, integration = executionFor(source, recipe.kind);
       const acquisitionSignal = AbortSignal.any([call.signal, providers.signal(source.reference.connectionId)!]);
       const response = await read('/v1/discovery/recipes/detail', acquisitionSignal, { board: source.key, url, expectedId: hint?.externalId,
         recipe, validUntil: source.validUntil, binding: { connectionId: source.reference.connectionId, sourceId: source.reference.sourceId } });
       call.signal.throwIfAborted();
       const latest = await providers.resolve(call.signal), current = latest.sources.find(item => item.key === source.key);
-      if (!current?.source.detailRecipe || Date.parse(current.validUntil) <= now() || !available(source) || current.source.health.status === 'drift'
+      if (!current?.source.detailRecipe || Date.parse(current.validUntil) <= now() || !available(resolved, source) || current.source.health.status === 'drift'
         || latest.providers.find(provider => provider.connectionId === source.reference.connectionId)?.snapshot?.revokedRecipes.some(entry => entry.sourceId === recipe.sourceId && entry.revision === recipe.revision)) return failure('This provider or recipe was withdrawn during detail collection.');
       const result = z.object({status:z.literal('ok'),data:z.unknown(),requestCount:z.number().int().min(0).max(2)}).safeParse(response.body);
       if (!response.ok || !result.success) return failure('The local collector could not verify this offer with the selected provider recipe.');

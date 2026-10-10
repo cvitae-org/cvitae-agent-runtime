@@ -133,6 +133,24 @@ test('Board fetches provider-linked browser listings, retries a previous failure
   }finally{h.close();await s.close();}
 });
 
+test('a provider-pinned listing import queues the detail read its provider covers',async()=>{
+  const s=await setup(),key=sourceKey('independent','vacancies');let calls=0;
+  const reader=createIntegrationOfferReader(s.providers,{url:'http://127.0.0.1:8787',token:'x'.repeat(32),lookup:()=>({sourceKey:key,externalId:'R-1'}),fetch:async()=>{
+    calls++;return Response.json({status:'ok',requestCount:1,data:readDomDetail(detail,fixture.detailHtml,url)});
+  }});
+  const h=createHarness({databasePath:':memory:',env:{},scraperUrl:'',integrationProviders:s.providers,offerReader:reader});
+  try{
+    const target={tabId:1,documentId:randomUUID(),url:listingUrl},session='studio:'+randomUUID();
+    const pin=await h.browser.dispatch(session,'browser.recipe',{target,sourceKey:key}) as {recipe:BrowserRecipe;recipeToken:string};
+    const capture=validateCapture({version:1,url:listingUrl,kind:'listing',recipe:{sourceId:listing.sourceId,revision:listing.revision},items:readDomListing(listing,fixture.listingHtml,listingUrl).items},pin.recipe);
+    const preview=await h.browser.dispatch(session,'capture.preview',{target,capture,recipeToken:pin.recipeToken}) as {captureId:string};
+    const receipt=await h.browser.dispatch(session,'import.commit',{target,captureId:preview.captureId,operationId:randomUUID(),selected:[0]}) as ImportReceipt;
+    const id=receipt.offerIds[0]!;
+    for(let n=0;n<100 && h.enrichment.get(id).enrichment?.details?.status!=='succeeded';n++)await new Promise(resolve=>setTimeout(resolve,10));
+    assert.equal(calls,1);assert.match(h.offers.get(id)!.text,/scientific instruments/);assert.equal(h.offers.get(id)!.company,'Example Laboratory');
+    assert.equal(h.detailQueue.poll().jobs.find(job=>job.offerId===id)?.status,'succeeded');
+  }finally{h.close();await s.close();}
+});
 test('Board never authorizes HTTP from a legacy browser listing or a disabled/missing provider recipe',async()=>{
   for(const mode of ['legacy','disabled','no-detail'] as const){
     const s=await setup(),key=sourceKey('independent','vacancies');let calls=0;

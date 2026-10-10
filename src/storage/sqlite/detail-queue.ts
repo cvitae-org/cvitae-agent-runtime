@@ -9,15 +9,17 @@ export const createDetailQueueStore = (db: Db): DetailQueueStore => {
  const set = (id: string, status: DetailJobStatus, stopReason?: DetailJob['stopReason']) => { db.prepare('UPDATE discovery_detail_queue SET status=?,stop_reason=?,revision=? WHERE offer_id=?').run(status,stopReason??null,sequence(),id); };
  const paused = () => !!(db.prepare('SELECT paused FROM discovery_detail_queue_state WHERE id=1').get() as {paused:number}).paused;
  return {
-  enqueue: db.transaction((searchId: string, ids: readonly string[]) => {
+  enqueue: db.transaction((searchId: string, requested: readonly string[], options: { readable?: ReadonlySet<string>; members?: boolean } = {}) => {
    const belongs = db.prepare("SELECT 1 FROM discovery_search_members m JOIN discovery_searches s ON s.id=m.search_id WHERE m.search_id=? AND m.offer_id=? AND s.status='ready'");
+   const ids = options.members ? requested.filter(id => belongs.get(searchId,id)) : requested;
    if (ids.some(id => !belongs.get(searchId,id))) throw new OperationError('offer_out_of_scope','An offer does not belong to this saved search.');
    const existing = db.prepare('SELECT status FROM discovery_detail_queue WHERE offer_id=?');
    const pending = (db.prepare("SELECT count(*) AS n FROM discovery_detail_queue WHERE status IN ('queued','running')").get() as {n:number}).n;
    const unique = [...new Set(ids)].filter(id => {
-    // Feed and browser captures are refreshed through their acquisition flow.
+    // Feed and browser captures are refreshed through their acquisition flow,
+    // except a listing row whose page a provider reads.
     const source = db.prepare('SELECT value FROM offer_enrichments WHERE offer_id=?').get(id) as {value:string}|undefined;
-    if (source && /^(listing|browser):/.test((JSON.parse(source.value) as {extractorVersion?:string}).extractorVersion??'')) return false;
+    if (source && /^(listing|browser):/.test((JSON.parse(source.value) as {extractorVersion?:string}).extractorVersion??'') && !options.readable?.has(id)) return false;
     const prior=existing.get(id) as {status:string}|undefined;
     if(!prior) return true;
     if(prior.status!=='succeeded') return false;
@@ -28,6 +30,7 @@ export const createDetailQueueStore = (db: Db): DetailQueueStore => {
    });
    if (pending + unique.length > 10000) throw new OperationError('details_queue_full','The detail queue is full. Wait for current offers to finish.');
    for (const id of unique) db.prepare("INSERT INTO discovery_detail_queue(offer_id,search_id,status,stop_reason,revision) VALUES(?,?,'queued',NULL,?) ON CONFLICT(offer_id) DO UPDATE SET search_id=excluded.search_id,status='queued',stop_reason=NULL,revision=excluded.revision").run(id,searchId,sequence());
+   return unique;
   }).immediate,
   forgetCancelledSearch: (searchId: string) => { db.prepare("DELETE FROM discovery_detail_queue WHERE search_id=? AND status IN ('cancelled','failed')").run(searchId); },
   forSearch: (searchId: string) => db.prepare("SELECT offer_id AS offerId,search_id AS searchId,status,revision FROM discovery_detail_queue WHERE search_id=? AND status IN ('queued','running')").all(searchId) as DetailJob[],

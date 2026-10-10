@@ -21,7 +21,7 @@ on:
 env:
   # The scrapper commit the runtime is checked against: the one Studio pins
   # beside it in its scripts/siblings.json. Move the two together.
-  SCRAPPER_REF: e04ad097f1b3a062495d3c54be8523b3544a9027
+  SCRAPPER_REF: 78e133c72f32c593cbc3023bb2fcb2c1e57cf8c3
 
 jobs:
   check:

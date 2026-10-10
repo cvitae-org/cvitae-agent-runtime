@@ -50,7 +50,7 @@ test('two providers retain separate identities, source keys, credentials, sequen
   for (const request of requests) {
     assert.equal(request.init?.redirect, 'error');
     assert.deepEqual(JSON.parse(request.init?.body as string), { protocol: 'job-integrations', schemaVersion: 2,
-      client: { id: 'cvitae-studio', version: '0.1.0' }, capabilities: ['http-json-v1', 'embedded-json-v1', 'external-link', 'host-routing-v1', 'dom-listing-v1', 'dom-detail-v1', 'page-listing-v1', 'dom-detail-v2', 'sitemap-v1'], scope, knownRevision: null });
+      client: { id: 'cvitae-studio', version: '0.1.0' }, capabilities: ['http-json-v1', 'embedded-json-v1', 'external-link', 'host-routing-v1', 'dom-listing-v1', 'dom-detail-v1', 'page-listing-v1', 'page-listing-fields-v1', 'dom-detail-v2', 'sitemap-v1'], scope, knownRevision: null });
     assert.equal((request.init?.headers as Record<string, string>).Authorization, request.url === first.connection.resolveUrl ? 'Bearer private-token' : undefined);
   }
   const files = await readdir(directory); assert.equal(files.length, 2);

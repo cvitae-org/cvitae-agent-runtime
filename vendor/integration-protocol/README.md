@@ -81,13 +81,16 @@ Snapshots contain at most 128 sources and 1,000 revocations, last at most 14 day
 and advertise refresh intervals from five minutes to one day. This protocol
 does not prescribe maintenance schedules or require provider admin endpoints.
 The portable engines are `http-json-v1`, `embedded-json-v1`, `dom-listing-v1`,
-`dom-detail-v1` and `sitemap-v1`. Listing recipes use `recipe`, browser listings
-use `browserRecipe`, and optional `detailRecipe` supplies one-offer extraction
-for HTTP and browser execution. DOM listings used by both transports must have
-identical definitions. CSS selectors and taxonomy maps are bounded data. Required
-identity, search acknowledgement and pagination checks prevent stale/ambiguous
-pages from becoming successful captures. Sitemap results carry provisional slug
-titles and explicitly bounded coverage. No engine executes downloaded code.
+`page-listing-v1`, `dom-detail-v1`, `dom-detail-v2` and `sitemap-v1`. Listing
+recipes use `recipe`, browser listings use `browserRecipe`, and optional
+`detailRecipe` supplies one-offer extraction for HTTP and browser execution.
+Page-listing card facts (`card`, `fields`, `salaries`) reach only clients that
+advertise `page-listing-fields-v1`; older clients receive titles and URLs. DOM
+listings used by both transports must have identical definitions. CSS selectors
+and taxonomy maps are bounded data. Required identity, search acknowledgement and
+pagination checks prevent stale/ambiguous pages from becoming successful
+captures. Sitemap results carry provisional slug titles and explicitly bounded
+coverage. No engine executes downloaded code.
 
 Run `npm test` in this package to exercise the included synthetic conformance
 fixtures: unfamiliar identities/scopes, strict schemas, exact-byte signatures,

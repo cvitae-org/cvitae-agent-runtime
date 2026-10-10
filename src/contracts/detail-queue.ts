@@ -8,7 +8,12 @@ export type DetailJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'c
  */
 export type DetailJob = { offerId: string; searchId?: string; status: DetailJobStatus; revision: number; stopReason?: string };
 export interface DetailQueueStore {
-  enqueue(searchId: string, ids: readonly string[]): void;
+  /**
+   * Returns the offers it queued. Browser and feed captures are skipped unless
+   * `readable` names them; offers outside the search throw unless `members` is set,
+   * which skips them instead.
+   */
+  enqueue(searchId: string, ids: readonly string[], options?: { readable?: ReadonlySet<string>; members?: boolean }): string[];
   forgetCancelledSearch?(searchId: string): void;
   forSearch?(searchId: string): DetailJob[];
   next(): DetailJob | undefined;

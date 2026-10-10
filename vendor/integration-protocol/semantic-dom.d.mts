@@ -16,6 +16,28 @@ export const semanticRuleSchema: z.ZodObject<{
         datetime: "datetime";
     }>>;
 }, z.core.$strict>;
+export const semanticFieldSchema: z.ZodObject<{
+    rules: z.ZodArray<z.ZodObject<{
+        selector: z.ZodString;
+        text: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        steps: z.ZodOptional<z.ZodArray<z.ZodEnum<{
+            parent: "parent";
+            next: "next";
+            following: "following";
+            children: "children";
+        }>>>;
+        within: z.ZodOptional<z.ZodString>;
+        firstChild: z.ZodOptional<z.ZodBoolean>;
+        omit: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        attribute: z.ZodOptional<z.ZodEnum<{
+            href: "href";
+            content: "content";
+            datetime: "datetime";
+        }>>;
+    }, z.core.$strict>>;
+    multiple: z.ZodOptional<z.ZodBoolean>;
+    values: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+}, z.core.$strict>;
 export const semanticDetailRecipeSchema: z.ZodObject<{
     kind: z.ZodLiteral<"dom-detail-v2">;
     sourceId: z.ZodString;
@@ -27,14 +49,14 @@ export const semanticDetailRecipeSchema: z.ZodObject<{
     identity: z.ZodObject<{
         part: z.ZodEnum<{
             prefix: "prefix";
-            segment: "segment";
             suffix: "suffix";
+            segment: "segment";
         }>;
         delimiter: z.ZodOptional<z.ZodString>;
         format: z.ZodEnum<{
             slug: "slug";
-            uuid: "uuid";
             integer: "integer";
+            uuid: "uuid";
         }>;
     }, z.core.$strict>;
     root: z.ZodString;

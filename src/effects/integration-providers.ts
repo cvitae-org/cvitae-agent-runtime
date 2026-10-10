@@ -20,7 +20,7 @@ export type IntegrationClientOptions = {
   cacheDirectory: string; resolveCredential?: (reference: string) => string | undefined | Promise<string | undefined>;
   fetch?: typeof globalThis.fetch; now?: () => number;
 };
-export const integrationCapabilities = ['http-json-v1', 'embedded-json-v1', 'external-link', 'host-routing-v1', 'dom-listing-v1', 'dom-detail-v1', 'page-listing-v1', 'dom-detail-v2', 'sitemap-v1'];
+export const integrationCapabilities = ['http-json-v1', 'embedded-json-v1', 'external-link', 'host-routing-v1', 'dom-listing-v1', 'dom-detail-v1', 'page-listing-v1', 'page-listing-fields-v1', 'dom-detail-v2', 'sitemap-v1'];
 const limit = 4_100_000;
 
 async function readBody(response: Response): Promise<unknown> {

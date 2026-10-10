@@ -459,7 +459,15 @@ export const createHarness = (options: CreateOptions = {}): Harness => {
   });
   const integrationDirectories = createIntegrationDirectories(createIntegrationDirectoryStore(db), integrations, {fetch:options.integrationFetch,now:options.now});
   const integrationProviders = integrations.providers;
-  const browser = createBrowserService(browserImports,options.now,integrationProviders);
+  // A listing import saves no description; queue the pages a provider reads. The
+  // import already succeeded, so a full queue leaves those rows listing-only.
+  const queueImported = <T extends {offerIds:string[];collectionId:string;targetSearchId?:string}>(receipt: T) => {
+    if (receipt.offerIds.length) void detailQueue.enqueue(receipt.targetSearchId ?? receipt.collectionId, receipt.offerIds, true).catch(() => undefined);
+    return receipt;
+  };
+  const browser = createBrowserService({...browserImports,
+    commit: (...args) => queueImported(browserImports.commit(...args)),
+    commitBatch: (...args) => queueImported(browserImports.commitBatch(...args))},options.now,integrationProviders);
   const integrationDiscovery = options.discoverySource ?? createIntegrationDiscovery(integrationProviders, {url:options.scraperUrl,token:scraperToken,now:options.now});
   const discovery = createDiscoveryService(catalogue,
     withDiscoveryMetadata(db, integrationDiscovery), options.now, discoverySearches);

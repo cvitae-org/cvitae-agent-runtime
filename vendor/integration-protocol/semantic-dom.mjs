@@ -14,7 +14,8 @@ export const semanticRuleSchema = z.object({
 }).strict();
 const rules = z.array(semanticRuleSchema).min(1).max(8);
 const valueMap = z.record(z.string().min(1).max(500), text).refine(value => Object.keys(value).length <= 100);
-const field = z.object({ rules, multiple: z.boolean().optional(), values: valueMap.optional() }).strict();
+export const semanticFieldSchema = z.object({ rules, multiple: z.boolean().optional(), values: valueMap.optional() }).strict();
+const field = semanticFieldSchema;
 const fields = z.object({ title: field, company: field.optional(), location: field.optional(),
   work_mode: field.optional(), contract_type: field.optional(), employment_type: field.optional(),
   seniority: field.optional(), company_size: field.optional(), start_date: field.optional(),

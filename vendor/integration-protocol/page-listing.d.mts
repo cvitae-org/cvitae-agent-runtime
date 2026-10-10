@@ -456,6 +456,181 @@ export const pageListingRecipeSchema: z.ZodObject<{
         }, z.core.$strict>>;
         paginationLinks: z.ZodOptional<z.ZodString>;
         empty: z.ZodOptional<z.ZodString>;
+        card: z.ZodOptional<z.ZodArray<z.ZodLiteral<"parent">>>;
+        fields: z.ZodOptional<z.ZodObject<{
+            company: z.ZodOptional<z.ZodObject<{
+                rules: z.ZodArray<z.ZodObject<{
+                    selector: z.ZodString;
+                    text: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    steps: z.ZodOptional<z.ZodArray<z.ZodEnum<{
+                        parent: "parent";
+                        next: "next";
+                        following: "following";
+                        children: "children";
+                    }>>>;
+                    within: z.ZodOptional<z.ZodString>;
+                    firstChild: z.ZodOptional<z.ZodBoolean>;
+                    omit: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    attribute: z.ZodOptional<z.ZodEnum<{
+                        href: "href";
+                        content: "content";
+                        datetime: "datetime";
+                    }>>;
+                }, z.core.$strict>>;
+                multiple: z.ZodOptional<z.ZodBoolean>;
+                values: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+            }, z.core.$strict>>;
+            location: z.ZodOptional<z.ZodObject<{
+                rules: z.ZodArray<z.ZodObject<{
+                    selector: z.ZodString;
+                    text: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    steps: z.ZodOptional<z.ZodArray<z.ZodEnum<{
+                        parent: "parent";
+                        next: "next";
+                        following: "following";
+                        children: "children";
+                    }>>>;
+                    within: z.ZodOptional<z.ZodString>;
+                    firstChild: z.ZodOptional<z.ZodBoolean>;
+                    omit: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    attribute: z.ZodOptional<z.ZodEnum<{
+                        href: "href";
+                        content: "content";
+                        datetime: "datetime";
+                    }>>;
+                }, z.core.$strict>>;
+                multiple: z.ZodOptional<z.ZodBoolean>;
+                values: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+            }, z.core.$strict>>;
+            work_mode: z.ZodOptional<z.ZodObject<{
+                rules: z.ZodArray<z.ZodObject<{
+                    selector: z.ZodString;
+                    text: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    steps: z.ZodOptional<z.ZodArray<z.ZodEnum<{
+                        parent: "parent";
+                        next: "next";
+                        following: "following";
+                        children: "children";
+                    }>>>;
+                    within: z.ZodOptional<z.ZodString>;
+                    firstChild: z.ZodOptional<z.ZodBoolean>;
+                    omit: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    attribute: z.ZodOptional<z.ZodEnum<{
+                        href: "href";
+                        content: "content";
+                        datetime: "datetime";
+                    }>>;
+                }, z.core.$strict>>;
+                multiple: z.ZodOptional<z.ZodBoolean>;
+                values: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+            }, z.core.$strict>>;
+            contract_type: z.ZodOptional<z.ZodObject<{
+                rules: z.ZodArray<z.ZodObject<{
+                    selector: z.ZodString;
+                    text: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    steps: z.ZodOptional<z.ZodArray<z.ZodEnum<{
+                        parent: "parent";
+                        next: "next";
+                        following: "following";
+                        children: "children";
+                    }>>>;
+                    within: z.ZodOptional<z.ZodString>;
+                    firstChild: z.ZodOptional<z.ZodBoolean>;
+                    omit: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    attribute: z.ZodOptional<z.ZodEnum<{
+                        href: "href";
+                        content: "content";
+                        datetime: "datetime";
+                    }>>;
+                }, z.core.$strict>>;
+                multiple: z.ZodOptional<z.ZodBoolean>;
+                values: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+            }, z.core.$strict>>;
+            employment_type: z.ZodOptional<z.ZodObject<{
+                rules: z.ZodArray<z.ZodObject<{
+                    selector: z.ZodString;
+                    text: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    steps: z.ZodOptional<z.ZodArray<z.ZodEnum<{
+                        parent: "parent";
+                        next: "next";
+                        following: "following";
+                        children: "children";
+                    }>>>;
+                    within: z.ZodOptional<z.ZodString>;
+                    firstChild: z.ZodOptional<z.ZodBoolean>;
+                    omit: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    attribute: z.ZodOptional<z.ZodEnum<{
+                        href: "href";
+                        content: "content";
+                        datetime: "datetime";
+                    }>>;
+                }, z.core.$strict>>;
+                multiple: z.ZodOptional<z.ZodBoolean>;
+                values: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+            }, z.core.$strict>>;
+            seniority: z.ZodOptional<z.ZodObject<{
+                rules: z.ZodArray<z.ZodObject<{
+                    selector: z.ZodString;
+                    text: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    steps: z.ZodOptional<z.ZodArray<z.ZodEnum<{
+                        parent: "parent";
+                        next: "next";
+                        following: "following";
+                        children: "children";
+                    }>>>;
+                    within: z.ZodOptional<z.ZodString>;
+                    firstChild: z.ZodOptional<z.ZodBoolean>;
+                    omit: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    attribute: z.ZodOptional<z.ZodEnum<{
+                        href: "href";
+                        content: "content";
+                        datetime: "datetime";
+                    }>>;
+                }, z.core.$strict>>;
+                multiple: z.ZodOptional<z.ZodBoolean>;
+                values: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+            }, z.core.$strict>>;
+            required_skills: z.ZodOptional<z.ZodObject<{
+                rules: z.ZodArray<z.ZodObject<{
+                    selector: z.ZodString;
+                    text: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    steps: z.ZodOptional<z.ZodArray<z.ZodEnum<{
+                        parent: "parent";
+                        next: "next";
+                        following: "following";
+                        children: "children";
+                    }>>>;
+                    within: z.ZodOptional<z.ZodString>;
+                    firstChild: z.ZodOptional<z.ZodBoolean>;
+                    omit: z.ZodOptional<z.ZodArray<z.ZodString>>;
+                    attribute: z.ZodOptional<z.ZodEnum<{
+                        href: "href";
+                        content: "content";
+                        datetime: "datetime";
+                    }>>;
+                }, z.core.$strict>>;
+                multiple: z.ZodOptional<z.ZodBoolean>;
+                values: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+            }, z.core.$strict>>;
+        }, z.core.$strict>>;
+        salaries: z.ZodOptional<z.ZodArray<z.ZodObject<{
+            selector: z.ZodString;
+            text: z.ZodOptional<z.ZodArray<z.ZodString>>;
+            steps: z.ZodOptional<z.ZodArray<z.ZodEnum<{
+                parent: "parent";
+                next: "next";
+                following: "following";
+                children: "children";
+            }>>>;
+            within: z.ZodOptional<z.ZodString>;
+            firstChild: z.ZodOptional<z.ZodBoolean>;
+            omit: z.ZodOptional<z.ZodArray<z.ZodString>>;
+            attribute: z.ZodOptional<z.ZodEnum<{
+                href: "href";
+                content: "content";
+                datetime: "datetime";
+            }>>;
+        }, z.core.$strict>>>;
     }, z.core.$strict>], "kind">;
     maxPages: z.ZodNumber;
 }, z.core.$strict>;
