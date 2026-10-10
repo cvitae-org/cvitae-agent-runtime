@@ -1,8 +1,12 @@
 # Studio integration: CV context protocol 2
 
-Runtime contracts are ready for Studio adoption. The PL/EN UI must remain gated
-until its providers, editors, imports, proposals, conversations and previews use
-these contracts together. This is not a declaration that Studio is integrated.
+Studio speaks this protocol: one CV per language, checked writes, proposals that
+survive a restart, conversations and runs. It asks `protocol.get` for
+`cv-contexts`, `checked-writes` and `durable-proposals` before it shows a CV, and
+refuses a runtime without them.
+
+What a run gave the model, and what a person leaves out of a conversation or puts
+into a message, is in `studio-grounding-protocol.md`.
 
 ## Startup and compatibility
 

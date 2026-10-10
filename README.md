@@ -93,6 +93,14 @@ pnpm cli capabilities
 pnpm cli run analyze_offer --url 'https://example.com/job/12345'
 ```
 
+The ones walked through below are the ones with something to explain. The rest
+do one job each: `edit_cv` applies a written instruction to one section of the
+stored CV and returns the proposal without saving it, `summarize_conversation`
+folds the turns that no longer fit into a note, `detect_offer_language` names
+the language of a saved posting, and `draft_application_fields` prepares answers
+for the fields of an application form it is shown, without opening or submitting
+anything.
+
 A capability's own flags are whatever its input schema declares — `analyze_offer`
 takes either a `--url` or `--offerText`, and a misspelled one comes back naming
 the field. `--json` prints the whole result, `--db` points at another file.
@@ -177,11 +185,15 @@ query, opens a path, fetches a URL or sends anything anywhere — so a loop that
 has been confused, by a vague question or by text inside a document it read,
 returns something unhelpful rather than mailing the CV somewhere.
 
-It answers about the CV alone. Saved offers are canonical rows rather than
-indexed text and no tool searches them, and promising an answer the tools cannot
-source is how a fluent invented one gets produced. It also needs a model that
-can call tools at all, which the small local ones that answer an extraction step
-five times faster cannot.
+No tool searches saved offers. They are canonical rows rather than indexed text,
+and promising an answer the tools cannot source is how a fluent invented one gets
+produced. A person can still ask which of their saved offers fit them best, by
+naming the offers in `input.grounding.offerIds`: the runtime turns each into a
+short card, finds the parts of the CV that mention what the offers ask for, and
+hands both to a model that is given no tools at all (see
+[What reaches a model](#what-reaches-a-model)). Asked the open way, it needs a
+model that can call tools, which the small local ones that answer an extraction
+step five times faster cannot.
 
 `draft_application` writes the application email for one offer:
 
@@ -425,6 +437,53 @@ pnpm cli approve 7f3a9c2 --deny
 
 A denial resumes the run too. The step asked, it has an answer, and what it does
 with a refusal is its own decision.
+
+## What reaches a model
+
+A chat in the desktop app is `ask_profile` run inside a conversation. While it
+runs, the runtime writes down every block the model was given, so an answer can
+be held against what it was based on afterwards. Around that record a person,
+rather than the model's tools, can decide what a message is made from:
+
+- **Leave out.** A piece of the CV, an earlier answer or a whole saved offer can
+  be excluded from a conversation. Excluded means unreachable: it is cut at the
+  ports a run reads through, so no tool has to remember to, and an earlier answer
+  built from it is held back too.
+- **Put in.** A piece can be pinned to every message of a conversation or
+  attached to one. With `reach: selected` the model gets those pieces and no
+  tools, which on a local model answered as well as the tools, and faster.
+- **Cap it.** A limit on the whole message, in characters, for a model with a
+  small window. Characters, because there is no tokenizer here and a token count
+  would be a guess dressed as a measurement.
+- **Look first.** `run.preview` shows a message as it will be sent, and
+  `approved` refuses to start it if what it would send has changed since.
+- **Compare offers.** Saved offers named in `input.grounding.offerIds` go in as
+  cards beside the CV's own words about their skills, to a model with no tools.
+  With `cite` every block is numbered and the answer cites the numbers; the
+  result names the block each number stands for, and lists apart any number that
+  stands for none.
+- **Aim an edit.** `edit_cv` takes one section by its ref and says what it
+  changed, and accepting it writes those changes and nothing else.
+- **Carry on.** A message that does not fit can have some pieces sent in a
+  shorter form instead of being refused, and the turns that fell out of the
+  window are folded into a note, leaving out what the conversation has since
+  excluded.
+- **Mask.** A hosted model is not sent the name, email, phone number and links
+  the CV states, and they are put back into what comes home. On by default for
+  hosted models, with no setting that turns it off; `strict` also takes out the
+  employers and schools. Masked text still describes a person, so the word is
+  mask, never anonymise.
+- **Ask before an import.** Reading a CV is the one call that needs the person's
+  details as they are, so a hosted provider may read the sources only when it is
+  the one the person agreed to. A local model always may.
+
+Each of these is a feature that `protocol.get` lists, and a message that uses
+none of them is sent byte for byte as before. The contract, channel by channel,
+is [docs/studio-grounding-protocol.md](docs/studio-grounding-protocol.md), beside
+[docs/studio-context-protocol.md](docs/studio-context-protocol.md) for CV
+contexts, conversations and runs. How a real model did with what is sent is in
+[docs/measurements/](docs/measurements/): attached pieces against tools, and
+offers compared with and without citations, with every answer kept.
 
 ## The database file
 
